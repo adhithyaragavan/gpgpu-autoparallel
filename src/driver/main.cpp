@@ -1,16 +1,18 @@
-// Day 0/1 starter: a trivial ClangTool that parses a file and walks the AST,
-// printing every ForStmt and CallExpr it finds. This is the "hello world"
-// checkpoint from the roadmap — once this builds and runs on a benchmark
-// file, the environment-setup risk is basically retired.
+// p05tool driver — wiring only.
+//
+// The tool parses a translation unit, runs the loop analysis over it, and
+// prints a report. All actual analysis lives in src/analysis/; codegen will
+// live in src/codegen/. Keep this file free of analysis logic.
 //
 // Build:
-//   mkdir build && cd build
-//   cmake -G Ninja .. -DCMAKE_PREFIX_PATH=<path to LLVM/Clang cmake config>
-//   ninja
+//   cmake -G Ninja -S . -B build -DCMAKE_PREFIX_PATH=<path to LLVM/Clang cmake config>
+//   ninja -C build
 // Run:
-//   ./p05tool ../benchmarks/example.c --
+//   ./build/p05tool benchmarks/example.c --
 
-#include "clang/AST/RecursiveASTVisitor.h"
+#include "analysis/LoopAnalysis.h"
+
+#include "clang/Frontend/CompilerInstance.h"
 #include "clang/Frontend/FrontendActions.h"
 #include "clang/Tooling/CommonOptionsParser.h"
 #include "clang/Tooling/Tooling.h"
@@ -21,49 +23,24 @@ using namespace clang::tooling;
 
 namespace {
 
-class LoopAndCallVisitor : public RecursiveASTVisitor<LoopAndCallVisitor> {
+class LoopAnalysisConsumer : public ASTConsumer {
 public:
-  explicit LoopAndCallVisitor(ASTContext *Context) : Context(Context) {}
-
-  bool VisitForStmt(ForStmt *FS) {
-    auto &SM = Context->getSourceManager();
-    llvm::outs() << "Found ForStmt at "
-                 << FS->getBeginLoc().printToString(SM) << "\n";
-    return true;
-  }
-
-  bool VisitCallExpr(CallExpr *CE) {
-    if (const FunctionDecl *Callee = CE->getDirectCallee()) {
-      llvm::outs() << "  Found call to '" << Callee->getNameAsString()
-                   << "' at "
-                   << CE->getBeginLoc().printToString(
-                          Context->getSourceManager())
-                   << "\n";
-    }
-    return true;
-  }
-
-private:
-  ASTContext *Context;
-};
-
-class LoopAndCallConsumer : public ASTConsumer {
-public:
-  explicit LoopAndCallConsumer(ASTContext *Context) : Visitor(Context) {}
-
   void HandleTranslationUnit(ASTContext &Context) override {
-    Visitor.TraverseDecl(Context.getTranslationUnitDecl());
-  }
+    p05::LoopCollector Collector(Context);
+    Collector.TraverseDecl(Context.getTranslationUnitDecl());
 
-private:
-  LoopAndCallVisitor Visitor;
+    const std::vector<p05::LoopInfo> &Loops = Collector.getLoops();
+    llvm::outs() << "Analyzed " << Loops.size() << " loop(s).\n\n";
+    for (const p05::LoopInfo &LI : Loops)
+      p05::printLoopReport(llvm::outs(), LI);
+  }
 };
 
-class LoopAndCallAction : public ASTFrontendAction {
+class LoopAnalysisAction : public ASTFrontendAction {
 public:
   std::unique_ptr<ASTConsumer> CreateASTConsumer(CompilerInstance &CI,
-                                                  StringRef File) override {
-    return std::make_unique<LoopAndCallConsumer>(&CI.getASTContext());
+                                                 StringRef File) override {
+    return std::make_unique<LoopAnalysisConsumer>();
   }
 };
 
@@ -82,5 +59,5 @@ int main(int argc, const char **argv) {
   ClangTool Tool(OptionsParser.getCompilations(),
                  OptionsParser.getSourcePathList());
 
-  return Tool.run(newFrontendActionFactory<LoopAndCallAction>().get());
+  return Tool.run(newFrontendActionFactory<LoopAnalysisAction>().get());
 }

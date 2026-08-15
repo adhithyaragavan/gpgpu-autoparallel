@@ -16,7 +16,11 @@ add_definitions(${LLVM_DEFINITIONS})
 
 add_executable(p05tool
   src/driver/main.cpp
+  src/analysis/LoopAnalysis.cpp
 )
+
+# Project headers are included as "analysis/LoopInfo.h" etc.
+target_include_directories(p05tool PRIVATE ${CMAKE_SOURCE_DIR}/src)
 
 target_link_libraries(p05tool
   PRIVATE

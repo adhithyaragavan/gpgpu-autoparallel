@@ -24,13 +24,22 @@ analysis and source-to-source rewriting with much lower setup risk and far bette
 ## Current phase
 
 <!-- UPDATE THIS LINE EVERY DAY -->
-Not started — Day 0 / environment setup.
+Day 2 done — loop detection classifies every `ForStmt` as CONSTANT_BOUND / VARIABLE_BOUND /
+UNRECOGNIZED, extracts trip counts where statically determinable, and records per-loop body callees.
+Analysis lives in `src/analysis/`; `main.cpp` is wiring only. Next: call graph + interprocedural
+side-effect check (Week 1).
 
 ## Key decisions made so far
 
 <!-- Add one line per real decision as you make it. Mirror these into NOTES.md with more detail. -->
 - Using Clang LibTooling, not ROSE (see above).
-- (nothing else decided yet)
+- Constant bounds are detected by constant *folding* (`Expr::EvaluateAsInt`), not by matching integer
+  literals — so `const int N = 512` counts as a constant bound.
+- Loop classification and trip count are independent: a CONSTANT_BOUND loop can still have an unknown
+  trip count (variable start value). Consumers check `LoopInfo::TripCount`, never infer it from the kind.
+- A function call in the bound expression makes a loop UNRECOGNIZED, not variable-bound.
+- Unresolvable indirect calls in a loop body are tracked explicitly (`HasIndirectCall`), since they must
+  block parallelization later.
 
 ## Repo layout
 
