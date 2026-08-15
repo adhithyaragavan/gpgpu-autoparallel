@@ -24,10 +24,12 @@ analysis and source-to-source rewriting with much lower setup risk and far bette
 ## Current phase
 
 <!-- UPDATE THIS LINE EVERY DAY -->
-Day 2 done — loop detection classifies every `ForStmt` as CONSTANT_BOUND / VARIABLE_BOUND /
-UNRECOGNIZED, extracts trip counts where statically determinable, and records per-loop body callees.
-Analysis lives in `src/analysis/`; `main.cpp` is wiring only. Next: call graph + interprocedural
-side-effect check (Week 1).
+Aug 16 (Day 2 of DAY_BY_DAY.md) — Day 3's trip-count goal is done a day early. Loop detection
+classifies every `ForStmt` as CONSTANT_BOUND / VARIABLE_BOUND / UNRECOGNIZED, extracts trip counts
+where statically determinable, and records per-loop body callees. Analysis lives in `src/analysis/`;
+`main.cpp` is wiring only. Remaining for Day 3-4: finalize the 2-3 benchmark set (only `example.c`
+plus the two loop-shape test files exist so far). Next: Day 5, Clang `CallGraph` to resolve
+loop-body calls across function boundaries.
 
 ## Key decisions made so far
 
