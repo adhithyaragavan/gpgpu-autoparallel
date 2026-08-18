@@ -17,6 +17,7 @@ add_definitions(${LLVM_DEFINITIONS})
 add_executable(p05tool
   src/driver/main.cpp
   src/analysis/LoopAnalysis.cpp
+  src/analysis/CallResolver.cpp
 )
 
 # Project headers are included as "analysis/LoopInfo.h" etc.
@@ -29,4 +30,5 @@ target_link_libraries(p05tool
   clangASTMatchers
   clangRewrite
   clangFrontend
+  clangAnalysis
 )

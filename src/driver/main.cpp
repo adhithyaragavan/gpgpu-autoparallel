@@ -10,6 +10,7 @@
 // Run:
 //   ./build/p05tool benchmarks/example.c --
 
+#include "analysis/CallResolver.h"
 #include "analysis/LoopAnalysis.h"
 
 #include "clang/Frontend/CompilerInstance.h"
@@ -29,10 +30,14 @@ public:
     p05::LoopCollector Collector(Context);
     Collector.TraverseDecl(Context.getTranslationUnitDecl());
 
+    p05::CallResolver Resolver(Context);
+
     const std::vector<p05::LoopInfo> &Loops = Collector.getLoops();
     llvm::outs() << "Analyzed " << Loops.size() << " loop(s).\n\n";
-    for (const p05::LoopInfo &LI : Loops)
+    for (const p05::LoopInfo &LI : Loops) {
       p05::printLoopReport(llvm::outs(), LI);
+      p05::printCallChains(llvm::outs(), LI, Resolver);
+    }
   }
 };
 

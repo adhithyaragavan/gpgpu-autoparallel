@@ -91,4 +91,77 @@ done yet — it is body analysis, deferred to the Week 2 safety pass, and flagge
 
 ---
 
+### Day 4 — Benchmark set finalized: three demo programs, not just test fixtures
+
+**Decision:** The 2-3 program demo set is `example.c`, `saxpy.c`, `small_update.c`.
+`loop_shapes.c`/`loop_unrecognized.c` stay as classifier unit-test fixtures, not
+part of the demo set — they exist to exercise loop-shape edge cases, not to tell
+an end-to-end story.
+
+**Reasoning:** The three demo programs are deliberately spread across the axis
+Week 2's profitability heuristic needs to discriminate on, while keeping the
+"call inside the hot loop" shape constant across all three (that's the headline
+case a naive intraprocedural parallelizer misses):
+- `example.c` — moderate size (1000), the original Day 0 sanity case.
+- `saxpy.c` — classic BLAS kernel, large trip count (65536), dense/coalesced
+  access. Expected to land clearly GPU-profitable.
+- `small_update.c` — trip count 8. Safe to parallelize (pure helper, no
+  aliasing), but expected to land NOT profitable — kernel-launch/transfer
+  overhead would dwarf the work. Without this case, the profitability heuristic
+  has nothing to say no to, and "safe implies offload" would go unfalsified.
+
+**Alternative considered:** Pulling from PolyBench/C or Rodinia. Rejected for
+now — hand-written kernels are small enough to fully understand and modify
+(needed once codegen and profitability land), and SAXPY is a real, recognizable
+kernel rather than a toy, so it doesn't cost the demo credibility.
+
+---
+
+### Day 5-6 — Interprocedural resolution via clang::CallGraph, keyed by FunctionDecl, not by loop
+
+**Decision:** Added `CallResolver` (`src/analysis/CallResolver.h/.cpp`), wrapping
+`clang::CallGraph`. It exposes `getDirectCallees(FunctionDecl*)` (one hop, deduplicated) and
+`getReachable(FunctionDecl*)` (transitive BFS closure, with `HasOpaqueCallee` and `HasRecursion`
+flags). Queried by `FunctionDecl*`, not stored as a new field on `LoopInfo`. Days 5 and 6 were done
+together rather than split, since every demo benchmark's loop-body callee (`scale`, `axpy_elem`,
+`clamp_unit`) is a leaf — one-hop resolution alone would have produced nothing distinguishable
+from the `LoopInfo::Callees` list Day 2 already built, making it unverifiable on its own.
+
+**Reasoning:** "What does function X call" is a fact about X, not about any particular loop —
+several loops can share a callee, and once the walk is transitive, several other functions can
+reach it too. Keying by `FunctionDecl*` lets one `clang::CallGraph`, built once per translation
+unit, answer every query, and mirrors the `LoopKind`/`TripCount` precedent from Day 2: two facts
+that are genuinely separate should not be collapsed into one record just because they're usually
+asked about together.
+
+**Implementation detail worth recording:** `clang::CallGraph::getOrInsertNode` canonicalizes the
+`Decl*` it stores nodes under, but the paired `getNode` lookup does a raw map find with no
+canonicalization (confirmed against upstream `clang/lib/Analysis/CallGraph.cpp`). Since
+`CallExpr::getDirectCallee()` — what `LoopInfo::Callees` is built from — can return a
+non-canonical redeclaration, a naive `CG.getNode(someCallee)` can silently return null for a
+function that plainly has calls, indistinguishable from "calls nothing." `CallResolver`
+canonicalizes both the query input and every returned callee explicitly.
+
+**Cycle detection is a separate 3-color DFS, not a BFS "already visited" flag.** The original plan
+sketch described marking `HasRecursion` whenever the BFS walk re-encountered an already-discovered
+function. That is wrong: two independent functions calling a shared helper (a diamond — `a` and
+`b` both call `c`, no cycle) revisits `c` the same way a genuine cycle would, so the naive check
+would flag ordinary shared helpers as recursive. Caught during the adversarial self-review, not
+during initial implementation. Fixed by running a dedicated DFS with three-state coloring
+(on-stack / done / unvisited) that only flags an edge back to a function *still on the current
+path* — a true back-edge — never a re-visit of a function already fully explored via a different
+path.
+
+**Alternative considered:** A `TransitiveCallees` field on `LoopInfo`. Rejected for the same reason
+given above — it duplicates data whenever two loops share a callee and gives the Day 6 walker
+nowhere natural to live independent of any one loop.
+
+**Scope note:** This layer produces reachability facts only (how many functions, how deep, any
+opaque body, any recursion) — no side-effect or safety judgment. That is Week 2 (Days 8-10).
+`tests/call_chains.c` was added as a dedicated fixture (2-level chain, 3-level chain, opaque
+callee, mutual recursion) since no benchmark in the 3-program demo set exercises more than one
+call hop.
+
+---
+
 <!-- Add new entries below as you build. -->

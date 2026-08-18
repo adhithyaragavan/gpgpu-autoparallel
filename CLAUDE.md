@@ -24,12 +24,17 @@ analysis and source-to-source rewriting with much lower setup risk and far bette
 ## Current phase
 
 <!-- UPDATE THIS LINE EVERY DAY -->
-Aug 16 (Day 2 of DAY_BY_DAY.md) — Day 3's trip-count goal is done a day early. Loop detection
-classifies every `ForStmt` as CONSTANT_BOUND / VARIABLE_BOUND / UNRECOGNIZED, extracts trip counts
-where statically determinable, and records per-loop body callees. Analysis lives in `src/analysis/`;
-`main.cpp` is wiring only. Remaining for Day 3-4: finalize the 2-3 benchmark set (only `example.c`
-plus the two loop-shape test files exist so far). Next: Day 5, Clang `CallGraph` to resolve
-loop-body calls across function boundaries.
+Aug 18 (Days 5-6 of DAY_BY_DAY.md, done together) — Loop detection classifies every `ForStmt`
+and records per-loop body callees (Days 1-4, see git history). Interprocedural call resolution now
+sits on top: `CallResolver` (`src/analysis/CallResolver.h/.cpp`) wraps `clang::CallGraph`, keyed by
+`FunctionDecl*` rather than by loop, exposing a one-hop query (`getDirectCallees`) and a transitive
+BFS walk with a 3-color-DFS cycle guard (`getReachable`). Reports reachability facts only —
+`HasOpaqueCallee` (a reachable function with no visible body in this TU) and `HasRecursion` — no
+safety judgment yet. Verified against `tests/call_chains.c` (2-level chain, 3-level chain, opaque
+callee, mutual recursion) plus an adversarial review pass (diamond shapes, multi-length paths,
+self-recursion) that confirmed no false-positive recursion flags and correct shortest-path depths.
+Next: Day 7 buffer, then Days 8-10 — coarse side-effect check (does a reachable function write
+through a pointer arg or touch a global) on top of this reachability layer.
 
 ## Key decisions made so far
 
