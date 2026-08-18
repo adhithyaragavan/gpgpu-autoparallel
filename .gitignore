@@ -4,6 +4,8 @@ build/
 compile_commands.json
 .cache/
 
-# Local AI-assistant context, not for the public repo
+# Local reference/planning docs, not for the public repo
 CLAUDE.md
 CLAUDE_CODE_WORKFLOW.md
+ROADMAP.md
+DAY_BY_DAY.md

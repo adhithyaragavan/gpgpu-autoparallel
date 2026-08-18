@@ -1,7 +1,6 @@
 # P05 — Automatic Parallelizing Compiler for GPGPU with Interprocedural Analysis
 
-SegFault 2026 hackathon project. See `ROADMAP.md` for the build plan and `NOTES.md` for the
-running design-decision log.
+SegFault 2026 hackathon project. See `NOTES.md` for the running design-decision log.
 
 ## Quick start
 
@@ -17,7 +16,7 @@ directory of your LLVM/Clang installation (e.g. wherever `ClangConfig.cmake` liv
 
 ## Status
 
-**Aug 18 (Days 5-6 of `DAY_BY_DAY.md`, done together) — interprocedural call resolution.**
+**Aug 18 (Days 5-6, done together) — interprocedural call resolution.**
 
 The tool classifies every `for` loop it finds as one of:
 
