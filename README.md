@@ -1,7 +1,7 @@
 # P05 — Automatic Parallelizing Compiler for GPGPU with Interprocedural Analysis
 
-SegFault 2026 hackathon project. See `CLAUDE.md` for project context, `ROADMAP.md` for the build
-plan, and `NOTES.md` for the running design-decision log.
+SegFault 2026 hackathon project. See `ROADMAP.md` for the build plan and `NOTES.md` for the
+running design-decision log.
 
 ## Quick start
 

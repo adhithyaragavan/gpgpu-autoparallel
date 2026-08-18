@@ -1,6 +1,6 @@
 # P05 Roadmap — Automatic Parallelizing Compiler for GPGPU (Clang LibTooling-based)
 
-Assumptions: solo builder, systems/CS background but new to compiler internals, ~5 weeks (Aug 15 – Sept 19), building with Claude Code as a coding partner while genuinely learning the concepts. Adjust the daily load to whatever hours/day you actually have — the week boundaries matter more than the day boundaries.
+Assumptions: solo builder, systems/CS background but new to compiler internals, ~5 weeks (Aug 15 – Sept 19), building with an AI coding assistant as a pairing partner while genuinely learning the concepts. Adjust the daily load to whatever hours/day you actually have — the week boundaries matter more than the day boundaries.
 
 **Tooling change from the original brief:** the brief suggests building on ROSE, but ROSE's value there is mainly its built-in parsing support for programs that *already* contain CUDA/OpenMP/UPC constructs. Since P05's actual input is plain sequential C/C++ (you're *generating* OpenMP pragmas, not parsing existing GPU code), that advantage doesn't apply here, and ROSE's build overhead is a disproportionate risk for a solo 5-week build. This plan uses **Clang LibTooling** instead: same source-level AST analysis and source-to-source rewriting capability, dramatically easier setup, much better docs. Note this substitution and the reasoning explicitly in your writeup — it's a defensible engineering call, not a corner cut.
 
@@ -33,7 +33,7 @@ This brief has four hard subsystems: interprocedural whole-program analysis, GPU
 
 **Learn this week:** call graphs and how they're built from an AST; the concept of "may-alias" vs "must-alias" and why aliasing is *the* reason interprocedural analysis is hard; what makes a loop "parallel-safe" (no loop-carried dependence) at a basic level — read up on loop-carried dependence before you write the safety check.
 
-**Claude Code usage note:** lean on it hardest this week for Clang AST API discovery (matcher syntax, visitor method names, `CallGraph` usage) — ask it to find the right node types and traversal patterns, but write the actual safety-check *logic* yourself or in tight collaboration, since that logic is the intellectual core of the project and you need to be able to explain it cold in the finale Q&A.
+**AI-pairing usage note:** lean on it hardest this week for Clang AST API discovery (matcher syntax, visitor method names, `CallGraph` usage) — ask it to find the right node types and traversal patterns, but write the actual safety-check *logic* yourself or in tight collaboration, since that logic is the intellectual core of the project and you need to be able to explain it cold in the finale Q&A.
 
 ---
 
@@ -79,7 +79,7 @@ This brief has four hard subsystems: interprocedural whole-program analysis, GPU
 
 ---
 
-## How to use Claude Code well for this (not just "vibe" it)
+## How to use an AI coding assistant well for this (not just "vibe" it)
 
 1. **Treat it as a fast API/docs lookup + boilerplate writer, not a design authority.** Clang's AST API is large — this is exactly where an AI pairing tool earns its keep (finding the right matcher, the right visitor method, the right `Rewriter` call). But the *decisions* — what counts as parallel-safe, how the profitability heuristic is weighted, what to simplify — should be ones you make and can explain, because that's what gets probed in judging and what you'll actually claim on your resume.
 
@@ -87,7 +87,7 @@ This brief has four hard subsystems: interprocedural whole-program analysis, GPU
 
 3. **Use it to explain unfamiliar code back to you, not just write code.** After it generates an AST-visitor or `Rewriter`-based codegen block, ask it to explain *why* it structured it that way and what would break if you changed X. That turns "vibe coding" into actual learning, and it's cheap to do — a few extra prompts per session.
 
-4. **Keep a running "decisions and simplifications" log as you go**, ideally in a `NOTES.md` in the repo — including the ROSE→LibTooling call. Ask Claude Code to help you draft entries whenever you make a real design call. This becomes your writeup almost for free, and it's the artifact that makes the project defensible rather than just "AI wrote a compiler."
+4. **Keep a running "decisions and simplifications" log as you go**, ideally in a `NOTES.md` in the repo — including the ROSE→LibTooling call. Ask your AI pairing tool to help you draft entries whenever you make a real design call. This becomes your writeup almost for free, and it's the artifact that makes the project defensible rather than just "AI wrote a compiler."
 
 5. **Use separate, scoped sessions/prompts per subsystem** (call-graph analysis, profitability heuristic, codegen) rather than one giant "build the whole compiler" prompt. Compiler correctness is local-reasoning-heavy; smaller, well-specified asks produce more reliable code and are much easier for you to review.
 

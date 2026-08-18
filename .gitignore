@@ -3,3 +3,7 @@ build/
 *.out
 compile_commands.json
 .cache/
+
+# Local AI-assistant context, not for the public repo
+CLAUDE.md
+CLAUDE_CODE_WORKFLOW.md
