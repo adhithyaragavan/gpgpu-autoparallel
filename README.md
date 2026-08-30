@@ -16,7 +16,7 @@ directory of your LLVM/Clang installation (e.g. wherever `ClangConfig.cmake` liv
 
 ## Status
 
-**Aug 18 (Days 5-6, done together) — interprocedural call resolution.**
+**Days 8-10 — interprocedural safety analysis.**
 
 The tool classifies every `for` loop it finds as one of:
 
@@ -43,10 +43,28 @@ and `benchmarks/loop_unrecognized.c` (8 loops, all flagged, distinct reasons) �
 `tests/call_chains.c` fixture (a 2-level chain, a 3-level chain, a call with no visible body, and
 mutual recursion). Both directions matter: a classifier that only ever says yes proves nothing.
 
-**Known gap:** nothing yet checks that a loop body leaves the induction variable alone, so
-`for (int i = 0; i < n; i++) { i = 0; }` currently classifies as a clean loop. That is body
-analysis, deferred to the Week 2 safety pass and marked `TODO` in `src/analysis/LoopInfo.h`. It
-must land before codegen emits any pragma.
+On top of that, `SafetyAnalyzer` (`src/analysis/SafetyAnalysis.h/.cpp`) turns those reachability
+facts into a per-loop verdict — `SAFE` / `UNKNOWN` / `UNSAFE`, a tri-state rather than a bool, so
+"the analysis cannot see this far" (an opaque callee, an indirect call, recursion) is never
+conflated with "a hazard was actually found." Two independent hazard sources feed it: whether any
+function reachable from the loop's callees writes through a pointer parameter or touches a
+global/`static` (coarse and call-site-independent — flagged regardless of which argument a given
+call site passed), and whether the loop's own body reassigns its induction variable or carries a
+dependence across iterations (every array/pointer access, read or write, must be indexed by exactly
+the induction variable — this closes the two `TODO`s that were previously open in
+`src/analysis/LoopInfo.h`).
 
-Next: Day 7 buffer, then Days 8-10 — coarse side-effect check (does a reachable function write
-through a pointer arg or touch a global) on top of the reachability layer above.
+Verified against a new `tests/safety_cases.c` fixture (twelve loops, every safe/unsafe/unknown
+category, matched pairs in both directions) plus all three demo benchmarks landing `SAFE`. An
+adversarial pass done directly against the built tool (not a subagent — the review channel hit
+repeated infrastructure failures) found and fixed one real overclaim: the body-dependence rule is
+sound for two references to the *same* array, but not across *distinct* pointer parameters that
+might alias with a nonzero shift (`a[i] = b[i] + 1.0` verifies `SAFE` even though a caller passing
+`b == a + 1` makes it a real cross-iteration hazard). That is now documented as the layer's real,
+unverified assumption — see `SafetyAnalysis.h` and the Day 8-10 entry in `NOTES.md` — rather than
+silently left as an overclaimed guarantee. A second, non-dangerous finding from the same pass: 2D
+access (`m[i][j]`) is currently always flagged `UNSAFE`, a completeness gap rather than a soundness
+one, left undone since no current benchmark is 2D.
+
+Next: Days 11-13 — the GPU-profitability heuristic (trip count, data volume, access pattern,
+compute intensity) for loops that verify `SAFE`.

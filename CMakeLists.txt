@@ -18,6 +18,7 @@ add_executable(p05tool
   src/driver/main.cpp
   src/analysis/LoopAnalysis.cpp
   src/analysis/CallResolver.cpp
+  src/analysis/SafetyAnalysis.cpp
 )
 
 # Project headers are included as "analysis/LoopInfo.h" etc.

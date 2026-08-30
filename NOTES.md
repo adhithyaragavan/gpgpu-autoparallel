@@ -164,4 +164,88 @@ call hop.
 
 ---
 
+### Day 8-10 — Safety analysis: tri-state verdict, coarse callee effects, and a strict body-dependence rule
+
+**Decision:** Added `SafetyAnalyzer` (`src/analysis/SafetyAnalysis.h/.cpp`), which turns
+`CallResolver`'s reachability facts into a per-loop `SafetyVerdict` (`Safe` / `Unknown` / `Unsafe`,
+not a bool). Two independent hazard sources feed it:
+
+1. **Interprocedural** — `FunctionEffects`, computed per function from its own body only and
+   memoized: does it write through a pointer parameter, or touch a global/`static`? Folded across
+   every callee `LoopInfo::Callees` records and everything `CallResolver::getReachable` says is
+   transitively reachable from them, so a global write three call-hops down is caught, not just a
+   direct callee's own writes.
+2. **Intraprocedural** — the loop body itself: does it reassign its own induction variable, and is
+   every array/pointer access in the body (read *or* write) indexed by exactly the induction
+   variable? This closes the two TODOs left open in `LoopInfo.h` since Day 2.
+
+**Reasoning — tri-state, not bool:** `Unknown` (opaque callee body, indirect call, recursion, an
+unresolvable write target) and `Unsafe` (a hazard actually *found*) block parallelization
+identically downstream, so the split costs nothing in soundness — but collapsing them would repeat
+the exact mistake `HasIndirectCall` and `HasOpaqueCallee` were already careful not to make:
+conflating "cannot see" with "looked and found nothing wrong."
+
+**Reasoning — call-site-independent effects:** a function is flagged for writing through *some*
+pointer parameter regardless of which argument any particular call site passed for it. This is what
+lets the interprocedural half stay coarse with zero alias analysis between call sites, at the cost of
+flagging some genuinely safe calls (see over-approximations below) — a precision-for-soundness trade
+in the conservative direction only, matching ROADMAP.md's explicit sanctioning of a coarse
+"writes through a pointer arg or touches a global" check over real points-to analysis.
+
+**Reasoning — the body rule requires *every* access, not just writes, to equal the induction
+variable:** this is what makes it sound without alias analysis for two references to the *same*
+object — element i and element i' of one array can only be the same location when i == i', full
+stop, regardless of what else in the program aliases that array. A weaker rule checking only write
+targets would miss `y[i] = x[i - 1]` when x and y alias.
+
+**Adversarial review finding (self-run, not a subagent — see below):** that same soundness argument
+does *not* extend to two *distinct* pointer/array parameters that might alias each other with a
+nonzero shift. Constructed and empirically confirmed:
+
+```c
+void alias_shift_hazard(double *a, double *b, int n) {
+  for (int i = 0; i < n; i++) a[i] = b[i] + 1.0;   // verifies SAFE
+}
+```
+
+If a caller ever passes `b == a + 1`, this is `a[i] = a[i+1] + 1.0` in disguise: iteration `k` reads
+`a[k+1]`, iteration `k+1` later writes `a[k+1]` — a real cross-iteration RAW hazard, invisible to
+this checker because it never reasons about whether two *different* parameters could alias. The
+original header comment claimed unconditional soundness; it was wrong and has been corrected to
+state the real, unverified assumption this whole layer rests on: distinct pointer/array parameters
+don't alias (the same promise C's `restrict` keyword makes explicit, here made implicitly). Verifying
+it for real is exactly the points-to analysis ROADMAP.md already scoped out — not fixed, only
+honestly documented.
+
+A second finding from the same pass, in the safe direction (a completeness gap, not a soundness
+one): any 2D-style access (`m[i][j]`, `a[i*cols+j]`) inside a loop properly nested over `i` then `j`
+verifies `UNSAFE` for both loops, because the outer subscript's index is `j` (or an affine
+expression), never the bare induction variable of the loop being judged — this layer has no notion
+of "belongs to a properly nested inner loop." No 2D loop nest can currently verify SAFE. Not fixed:
+none of the three demo benchmarks are 2D, and doing it properly is a real scope increase, not a bug
+fix — logged here so it isn't forgotten if a future benchmark needs it.
+
+**Process note:** the background review subagent failed three times in a row on transient
+infrastructure errors (a sleep interrupt, then a persistent self-signed-certificate/connectivity
+error) before producing any output. Rather than keep retrying a broken channel, the adversarial pass
+was done directly — construct hostile snippets by hand, run them through `./build/p05tool`, compare
+actual output against hand-derived expected behavior. Both findings above came from that pass, which
+is the same standard the Day 5-6 review applied to catch the diamond-vs-cycle bug in `CallResolver`.
+
+**Verification:** all three demo benchmarks (`example.c`, `saxpy.c`, `small_update.c`) verify SAFE,
+including their `main()` init loops. `tests/safety_cases.c` — a new fixture, twelve loops covering
+every category (safe pure/transitive-pure/body-local-temp; unsafe direct/transitive global write,
+pointer-param write, induction-variable reassignment, neighbor access, scatter write, reduction;
+unknown opaque callee, unknown indirect call) — matches its expected-verdict comments exactly.
+`tests/call_chains.c`'s opaque-callee and mutual-recursion cases land `UNKNOWN`; its two- and
+three-level pure chains land `SAFE`. `benchmarks/loop_shapes.c`'s existing `LoopKind` classifications
+are unchanged; its one genuinely loop-carried case (`a[i] = a[i + 1]`, reading a neighbor) now
+correctly reports `UNSAFE` as new information layered on top, not a regression of the shape check.
+
+**Alternative considered:** a plain `bool IsSafe`. Rejected for the tri-state reasoning above — the
+distinction is free to keep and answers "how do you know it's safe?" far better in the finale Q&A
+than a verdict that can't tell "checked and it's clean" from "couldn't check."
+
+---
+
 <!-- Add new entries below as you build. -->

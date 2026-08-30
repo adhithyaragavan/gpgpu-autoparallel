@@ -12,6 +12,7 @@
 
 #include "analysis/CallResolver.h"
 #include "analysis/LoopAnalysis.h"
+#include "analysis/SafetyAnalysis.h"
 
 #include "clang/Frontend/CompilerInstance.h"
 #include "clang/Frontend/FrontendActions.h"
@@ -31,12 +32,14 @@ public:
     Collector.TraverseDecl(Context.getTranslationUnitDecl());
 
     p05::CallResolver Resolver(Context);
+    p05::SafetyAnalyzer Safety(Resolver);
 
     const std::vector<p05::LoopInfo> &Loops = Collector.getLoops();
     llvm::outs() << "Analyzed " << Loops.size() << " loop(s).\n\n";
     for (const p05::LoopInfo &LI : Loops) {
       p05::printLoopReport(llvm::outs(), LI);
       p05::printCallChains(llvm::outs(), LI, Resolver);
+      p05::printSafetyReport(llvm::outs(), Safety.analyzeLoop(LI));
     }
   }
 };

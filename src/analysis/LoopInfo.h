@@ -116,11 +116,14 @@ struct LoopInfo {
   unsigned Col = 0;
 };
 
-// TODO(week2, safety): none of this verifies that the induction variable is
-// left alone by the loop body. `for (int i = 0; i < n; i++) { ...; i = 0; }`
-// classifies as a clean VariableBound loop here. That check is body analysis
-// and belongs with the safety pass — but it is a hard prerequisite for emitting
-// any pragma, so it must land before codegen does.
+// Whether the loop body leaves the induction variable alone, and whether it
+// carries a dependence across iterations (an array/pointer access not
+// indexed by exactly the induction variable, or a scalar written outside the
+// set of variables declared fresh in the body) is not this file's concern —
+// that is body analysis, and lives in the Week 2 safety pass
+// (src/analysis/SafetyAnalysis.h, SafetyAnalyzer::analyzeLoop). A LoopInfo
+// alone is a shape classification, not a safety verdict; consumers must run
+// it through SafetyAnalyzer before trusting it enough to emit a pragma.
 //
 // TODO(week2, safety): unsigned wraparound and signed-overflow semantics of the
 // bound are ignored; trip counts assume the loop terminates normally.
