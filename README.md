@@ -16,7 +16,7 @@ directory of your LLVM/Clang installation (e.g. wherever `ClangConfig.cmake` liv
 
 ## Status
 
-**Days 8-10 — interprocedural safety analysis.**
+**Days 11-13 — GPU-profitability heuristic.**
 
 The tool classifies every `for` loop it finds as one of:
 
@@ -66,5 +66,39 @@ silently left as an overclaimed guarantee. A second, non-dangerous finding from 
 access (`m[i][j]`) is currently always flagged `UNSAFE`, a completeness gap rather than a soundness
 one, left undone since no current benchmark is 2D.
 
-Next: Days 11-13 — the GPU-profitability heuristic (trip count, data volume, access pattern,
-compute intensity) for loops that verify `SAFE`.
+On top of that, `ProfitabilityAnalyzer` (`src/analysis/Profitability.h/.cpp`) turns a `SAFE` loop's
+shape, its array accesses, and its interprocedural arithmetic-operation count into an
+`OffloadTarget` — `GPU_OFFLOAD`, `CPU_PARALLEL`, or `SEQUENTIAL`, a three-way split rather than the
+binary profitable/not-profitable the roadmap originally sketched, because "safe but only 8
+iterations" is a real, distinct case from "safe and worth threading". The decision is a
+roofline-style cost model (`t_seq`/`t_cpu`/`t_gpu`, argmin) driven by a documented `MachineModel`
+struct — launch overhead, PCIe/DRAM/GPU bandwidth, CPU/GPU throughput, core count — with every one
+of its six parameters overridable from the command line (`--pcie-bandwidth`, `--gpu-throughput`,
+etc.), so the decision can be re-run against different hardware assumptions rather than trusted on
+faith. The reported gate cascade (ops/iteration, data/iteration, intensity vs. this machine's
+break-even, the three modelled times) is a rendering of that same computation, not a second,
+independently hand-set set of thresholds.
+
+Working the model's own arithmetic before building around it surfaced that the default
+`MachineModel` implies a break-even arithmetic intensity of ~2.85 flop/byte, and **all three
+existing demo benchmarks sit 10-50x below it** — `saxpy.c` included, despite an earlier version of
+its own header comment calling it "the headline GPU-profitable case" (SAXPY is textbook
+memory-bound; that comment was wrong and has been corrected). A fourth benchmark,
+`benchmarks/compute_heavy.c` (40 fused multiply-adds per element, 5.0 flop/byte), was added so the
+tool has at least one loop that clears the bar and verifies unconditional `GPU_OFFLOAD` — Days
+14-16's GPU codegen path needs a real input. For loops with a parameter (not compile-time-constant)
+bound — most of the existing SAFE benchmark set, including `example.c`'s headline cross-function
+loop — the model still gives a real answer via a solved crossover trip count rather than a guess or
+an automatic demotion: `GPU_OFFLOAD if (n >= T)`, with `T` derived algebraically from the same six
+machine parameters (`tests/profitability_cases.c`'s `gpu_conditional_case` verifies `T = 8192`),
+rendered in Week 3 as OpenMP's own `if()` clause.
+
+Verified against a new `tests/profitability_cases.c` fixture (six loops — unconditional and
+conditional `GPU_OFFLOAD`, two `CPU_PARALLEL` cases, `SEQUENTIAL`, and a known-`UNSAFE` loop
+confirming profitability never runs on anything the safety pass didn't clear) plus all four demo
+benchmarks, every verdict matching hand-derived numbers to three decimal places. No regression in
+any Days 2-10 classification or safety verdict.
+
+Next: Days 14-16 — `Rewriter`-based pragma insertion for the GPU-offload path
+(`#pragma omp target teams distribute parallel for` with `map()` clauses already built by
+`ProfitabilityAnalyzer::analyzeLoop`'s `ArrayRegion` list).

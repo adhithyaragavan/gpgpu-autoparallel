@@ -19,6 +19,7 @@ add_executable(p05tool
   src/analysis/LoopAnalysis.cpp
   src/analysis/CallResolver.cpp
   src/analysis/SafetyAnalysis.cpp
+  src/analysis/Profitability.cpp
 )
 
 # Project headers are included as "analysis/LoopInfo.h" etc.

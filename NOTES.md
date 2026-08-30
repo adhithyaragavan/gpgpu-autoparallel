@@ -248,4 +248,106 @@ than a verdict that can't tell "checked and it's clean" from "couldn't check."
 
 ---
 
+### Day 11-13 — GPU-profitability heuristic: a cost model, not a score
+
+**Decision:** Added `ProfitabilityAnalyzer` (`src/analysis/Profitability.h/.cpp`), which turns a
+SAFE loop's shape, data-access, and interprocedural op-count facts into an `OffloadTarget`
+(`GpuOffload` / `CpuParallel` / `Sequential` — three-valued for the same reason `SafetyVerdict` is:
+"safe but eight iterations" is a real, distinct case from "safe and worth threading", not a
+degenerate corner of the binary GPU/CPU split the roadmap originally sketched). The decision is a
+roofline-style cost model — `t_seq`, `t_cpu`, `t_gpu` computed from a documented `MachineModel`
+struct (launch overhead, PCIe/DRAM/GPU bandwidth, CPU/GPU throughput, core count), target =
+argmin — rather than the weighted feature score ROADMAP.md's original wording suggested. The
+reported gate cascade (work, transfer, intensity, verdict) is a *rendering* of that same
+computation: every threshold printed is derived from `MachineModel`, not a second, independently
+hand-picked set of numbers to defend. All six `MachineModel` fields are `llvm::cl::opt` overrides
+(`--pcie-bandwidth`, `--gpu-throughput`, etc.), so "is this just tuned to your benchmarks?" is
+answered by re-running with different hardware, not by argument — confirmed empirically:
+`--pcie-bandwidth=64` (an NVLink-class link) flips `saxpy.c` from `CPU_PARALLEL` to `GPU_OFFLOAD`
+on the same loop, same analysis.
+
+**The finding that shaped the plan:** working the model's arithmetic *before* writing benchmarks
+around it (the adversarial-review habit applied one step earlier than usual) surfaced that the
+default `MachineModel` implies a break-even arithmetic intensity of **~2.85 flop/byte** — the flop
+count divided by bytes moved across PCIe, below which the transfer cost always dominates no matter
+how large the loop. All three existing demo benchmarks sit 10-50x below that wall:
+`example.c`/`process` (0.06), `saxpy.c` (0.08 — despite its own header comment, written in Week 1,
+calling it "the headline GPU-profitable case"; SAXPY being memory-bound is a textbook result, not
+an artifact of this model, and that comment was wrong and has been corrected). `small_update.c`
+never gets the chance to be memory-bound — its trip count of 8 loses to `Sequential` outright.
+**No benchmark existing before this pass was GPU-profitable under an honest model.** Two
+consequences, both acted on: `benchmarks/compute_heavy.c` was added — a straight-line 40-FMA
+helper (80 flops against 16 bytes, 5.0 flop/byte) that clears the wall and verifies an
+unconditional `GPU_OFFLOAD` — so Days 14-16's codegen has a real input for its GPU path; and
+`saxpy.c`'s role in the demo story flips from "the GPU case" to "the case that proves the tool
+doesn't just offload everything safe", which is a *better* fit for the brief's actual success
+criterion than the original framing was.
+
+**Reasoning — symbolic bounds get a solved threshold, not a guess or a demotion:** most SAFE loops
+in the existing benchmark/fixture set have a parameter bound (`example.c`'s `process`, most of
+`safety_cases.c`), so treating "trip count unknown" as an automatic CPU fallback would silently
+punish the project's own headline cross-function demo case for having a symbolic bound rather than
+for being unprofitable. Instead: because flops(n) and bytes(n) are both proportional to n at a
+fixed per-element ratio, whichever term wins each target's `max(compute, memory)` is the same for
+every n > 0 — so each side collapses to one linear function of n, and the GPU/CPU crossover has an
+exact closed form (`n* = (KernelLaunchUs - ThreadStartUs) / (rate_cpu - rate_gpu)`) rather than
+needing a numeric search. Rounded up to a power of two, that becomes `GPU_OFFLOAD if (n >= T)`,
+rendered in Week 3 as OpenMP's own `if()` clause — a spec feature, not new machinery.
+`tests/profitability_cases.c`'s `gpu_conditional_case` (the same 80-flop kernel as
+`compute_heavy.c`, but with a parameter bound) verifies `T = 8192`, solved from `n* ≈ 4966.9`.
+
+**Reasoning — stride needs no gate of its own:** a loop with step `s` touches `T` elements but
+*spans* `T·s` of index space, and a `map()` clause covering a strided access has to map the whole
+span. Charging `TransferBytes` on the span while `TouchedBytes` (the DRAM-traffic term used for
+`t_seq`/`t_cpu`) stays on the true touched count means poor coalescing shows up automatically as
+transfer cost the model already prices, with no separate hand-set stride penalty to defend.
+`tests/profitability_cases.c`'s `strided_case` (step 16, 65536 touched elements spanning
+1,048,576) verifies `CPU_PARALLEL` with the GPU path dominated by a 1.4ms transfer term — 16x the
+unstrided cost on the same touched-element count.
+
+**Reasoning — scatter access needs no gate either, for a different reason:** it cannot reach this
+pass at all. `SafetyAnalyzer` already requires every array access to be indexed by exactly the
+induction variable, so `data[idx[i]]`-style scatter is already `UNSAFE` before profitability runs.
+The "access pattern" feature ROADMAP.md's Week 2 note asked for is therefore mostly pre-filtered by
+the safety pass; what is left of it here is stride, handled above.
+
+**Reasoning — the interprocedural op count is the genuinely load-bearing half, same shape of
+argument as Days 8-10's transitive safety walk:** `example.c`'s loop body is
+`data[i] = scale(data[i], factor)` — zero arithmetic operators visible without crossing the call
+boundary into `scale`. A profitability pass that stopped at the loop body would price every
+call-wrapped kernel at 0 flops/iteration and always decline it, for the wrong reason. `getOpCount`
+is memoized per function (mirroring `SafetyAnalyzer::getEffects`) and folded across
+`CallResolver::getReachable`'s transitive set the same way `FunctionEffects` is.
+
+**Known limitations, documented rather than hidden (full list in `Profitability.h`):** op counts
+are static — a loop or branch inside a callee is counted once, not trip-count times, so
+`compute_heavy.c`'s `heavy_elem` had to be written straight-line rather than as a loop, and this is
+a real lower-bound risk for any future control-flow-heavy benchmark. All operations are weighted
+equally (a divide costs the same as an add). Cache reuse across iterations isn't modelled. Mapped
+regions always start at index 0, so a loop over `[1000, 2000)` would map 2000 elements, not 1000 —
+none of the current benchmarks have a nonzero start, so this hasn't bitten yet. And the six
+`MachineModel` defaults are order-of-magnitude estimates for a generic discrete PCIe GPU, not
+measurements of any real device — the CLI overrides are the honest answer to that, not a claim the
+defaults are correct.
+
+**Verification:** all four demo benchmarks now report a profitability verdict —
+`example.c`/`process` and both `saxpy.c` loops and `small_update.c` all correctly decline GPU
+(`CPU_PARALLEL` or `SEQUENTIAL`), `compute_heavy.c`/`heavy_transform` lands unconditional
+`GPU_OFFLOAD`. New fixture `tests/profitability_cases.c` (six loops: unconditional `GPU_OFFLOAD`,
+conditional `GPU_OFFLOAD if (n >= 8192)`, two `CPU_PARALLEL` cases — low-intensity and strided —
+`SEQUENTIAL` at trip 8, and a known-`UNSAFE` loop confirming the safety gate blocks profitability
+outright rather than pricing and declining it) matches every expected verdict exactly, numbers
+hand-derived before running the tool and confirmed to match to three decimal places. No regression
+in `benchmarks/loop_shapes.c`/`loop_unrecognized.c`'s `LoopKind` classifications or
+`tests/safety_cases.c`/`tests/call_chains.c`'s `SafetyVerdict`s — all unchanged from Days 8-10.
+
+**Alternative considered:** a weighted 0-1 feature score (trip count, data volume, intensity,
+pattern each normalized and summed against a cutoff), the option ROADMAP.md's original wording most
+directly suggested. Rejected because the weights would be the least defensible numbers in the
+entire project — "why is trip count weighted 0.35?" has no better answer than "it seemed
+reasonable" — whereas every number the cost model produces traces back to one of six named,
+sourced, overridable machine parameters.
+
+---
+
 <!-- Add new entries below as you build. -->

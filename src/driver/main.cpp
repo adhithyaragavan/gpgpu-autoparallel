@@ -12,6 +12,7 @@
 
 #include "analysis/CallResolver.h"
 #include "analysis/LoopAnalysis.h"
+#include "analysis/Profitability.h"
 #include "analysis/SafetyAnalysis.h"
 
 #include "clang/Frontend/CompilerInstance.h"
@@ -27,29 +28,60 @@ namespace {
 
 class LoopAnalysisConsumer : public ASTConsumer {
 public:
+  explicit LoopAnalysisConsumer(p05::MachineModel Machine)
+      : Machine(Machine) {}
+
   void HandleTranslationUnit(ASTContext &Context) override {
     p05::LoopCollector Collector(Context);
     Collector.TraverseDecl(Context.getTranslationUnitDecl());
 
     p05::CallResolver Resolver(Context);
     p05::SafetyAnalyzer Safety(Resolver);
+    p05::ProfitabilityAnalyzer Profitability(Resolver, Context, Machine);
 
     const std::vector<p05::LoopInfo> &Loops = Collector.getLoops();
     llvm::outs() << "Analyzed " << Loops.size() << " loop(s).\n\n";
     for (const p05::LoopInfo &LI : Loops) {
       p05::printLoopReport(llvm::outs(), LI);
       p05::printCallChains(llvm::outs(), LI, Resolver);
-      p05::printSafetyReport(llvm::outs(), Safety.analyzeLoop(LI));
+      p05::LoopSafety SafetyVerdict = Safety.analyzeLoop(LI);
+      p05::printSafetyReport(llvm::outs(), SafetyVerdict);
+      p05::printProfitabilityReport(
+          llvm::outs(), Profitability.analyzeLoop(LI, SafetyVerdict));
     }
   }
+
+private:
+  p05::MachineModel Machine;
 };
 
 class LoopAnalysisAction : public ASTFrontendAction {
 public:
+  explicit LoopAnalysisAction(p05::MachineModel Machine) : Machine(Machine) {}
+
   std::unique_ptr<ASTConsumer> CreateASTConsumer(CompilerInstance &CI,
                                                  StringRef File) override {
-    return std::make_unique<LoopAnalysisConsumer>();
+    return std::make_unique<LoopAnalysisConsumer>(Machine);
   }
+
+private:
+  p05::MachineModel Machine;
+};
+
+/// Factory binding the MachineModel (read from cl::opt flags once, after
+/// CommonOptionsParser has parsed argv) into every LoopAnalysisAction the
+/// tool creates — one per input file.
+class LoopAnalysisActionFactory : public FrontendActionFactory {
+public:
+  explicit LoopAnalysisActionFactory(p05::MachineModel Machine)
+      : Machine(Machine) {}
+
+  std::unique_ptr<FrontendAction> create() override {
+    return std::make_unique<LoopAnalysisAction>(Machine);
+  }
+
+private:
+  p05::MachineModel Machine;
 };
 
 } // namespace
@@ -67,5 +99,6 @@ int main(int argc, const char **argv) {
   ClangTool Tool(OptionsParser.getCompilations(),
                  OptionsParser.getSourcePathList());
 
-  return Tool.run(newFrontendActionFactory<LoopAnalysisAction>().get());
+  LoopAnalysisActionFactory Factory(p05::machineModelFromFlags());
+  return Tool.run(&Factory);
 }
