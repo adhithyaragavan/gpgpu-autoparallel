@@ -143,18 +143,32 @@ private:
 
 } // namespace
 
-static llvm::cl::OptionCategory ToolCategory("p05tool options");
-
 int main(int argc, const char **argv) {
+  // All of this tool's own flags — -rewrite, -o, and every MachineModel
+  // override — are registered against p05::optionCategory(). Passing that
+  // same category here, rather than a second tool-local one, is what keeps
+  // them visible in --help at all: CommonOptionsParser hides every cl::opt
+  // not in the category it's given, so a second category would silently
+  // bury both today's new flags and Days 11-13's nine machine-model
+  // overrides — the ones the profitability model's own header comment calls
+  // "the honest mitigation" for its parameters not being measured.
   auto ExpectedParser =
-      CommonOptionsParser::create(argc, argv, ToolCategory);
+      CommonOptionsParser::create(argc, argv, p05::optionCategory());
   if (!ExpectedParser) {
     llvm::errs() << ExpectedParser.takeError();
     return 1;
   }
   CommonOptionsParser &OptionsParser = ExpectedParser.get();
-  ClangTool Tool(OptionsParser.getCompilations(),
-                 OptionsParser.getSourcePathList());
+  std::vector<std::string> Sources = OptionsParser.getSourcePathList();
+
+  if (!RewriteOutputPath.empty() && Sources.size() > 1) {
+    llvm::errs() << "p05tool: -o names a single file and cannot be used "
+                    "with more than one input; drop -o and let each file "
+                    "get its own <name>.omp.c, or run one input at a time\n";
+    return 1;
+  }
+
+  ClangTool Tool(OptionsParser.getCompilations(), Sources);
 
   LoopAnalysisActionFactory Factory(p05::machineModelFromFlags());
   return Tool.run(&Factory);

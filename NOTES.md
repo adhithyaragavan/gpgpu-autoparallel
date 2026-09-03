@@ -399,4 +399,70 @@ an explicit "host-fallback build only" scope cut, and that decision belongs to D
 it destroys the sequential baseline the repo layout is built around keeping alongside the tool's
 output, and complicates the exact diff-based verification this pass depends on for correctness.
 
+---
+
+### Day 14 (cont.) — adversarial review of the pragma-insertion commit found eight real bugs; all fixed
+
+**Decision:** Ran an adversarial review agent against the just-committed `OmpRewriter` diff before
+calling Day 14 done, per standing practice. It found eight reproducible correctness bugs — two of
+them capable of emitting a pragma whose `map()` clause describes the wrong memory region, which
+`-fsyntax-only` cannot catch because the C is syntactically valid either way. All eight are fixed
+in a follow-up commit; a ninth item (`-rewrite`/`-o` and the nine `MachineModel` flags all hidden
+from `--help`) was fixed alongside them since the one-line cause was the same category mismatch.
+
+**The two data-correctness bugs, both in `Profitability.cpp`'s extent computation, not the new
+codegen file — the review is what made them observable as wrong emitted code rather than latent:**
+- A loop bounded by `<=` (`for (i = 0; i <= 99; i++)`, 100 iterations) mapped only 99 elements —
+  the extent text was the bound's literal value, silently one short of the trip count whenever the
+  comparison was inclusive. Fixed: `Extent` is bumped by one when `LI.CmpOp == BO_LE`, on both the
+  constant- and parameter-bound paths.
+- A descending loop (`for (i = N-1; i >= 0; i--)`) mapped `[0:0]` — its "bound" is the *lower*
+  limit, not an element count, and the extent model has no representation for that. Rather than
+  extend the model under review pressure, `OmpRewriter::rewriteLoop` now declines any loop whose
+  `CmpOp` is `BO_GT`/`BO_GE` and records why; reversed-traversal mapping is future work.
+
+**The six codegen-file bugs, all in `OmpRewriter.cpp`:**
+- The nested-loop guard used a strict `<` on end locations, so brace-less nesting
+  (`for (...) for (...) body;`, where both `ForStmt`s share an end location) went undetected and
+  produced invalid doubly-nested `target teams`. Fixed to an inclusive `contains()` test, shared
+  now between the lexical-nesting check and the new dynamic-nesting check below.
+- The pragma was inserted assuming `for` starts its own line. `if (c) for (...)` and a single-line
+  function body both put a `#pragma` mid-line, which does not parse. Fixed with a `startsOwnLine`
+  check (walks backward from the loop's `SourceLocation` to the nearest `\n`, failing on any
+  non-whitespace) that only prepends a newline when the assumption doesn't hold — the common
+  already-own-line case stays exactly as compact as before (verified byte-identical against the
+  original `compute_heavy.omp.c`).
+- Nothing stopped a function whose *own body contains* an offloaded loop from also being wrapped in
+  `declare target` when called from a second offloaded loop — a target region invoked from inside
+  another target region, invisible to `-fsyntax-only` because the nesting is dynamic (through a
+  call), not lexical. `finalize()` now checks each `declare target` candidate's source range against
+  every already-annotated loop's location and declines with a named reason.
+- `InsertTextBefore`/`InsertTextAfterToken`'s `bool` returns (true on failure) were ignored at every
+  call site. A macro-generated closing brace (`#define ENDF }`) reproduced this concretely: the
+  opening `declare target` pragma was inserted, the closing one silently wasn't, and everything to
+  EOF ended up inside an unclosed device region. Both declare-target inserts are now pre-validated
+  with `Rewriter::isRewritable` before either runs (avoiding a half-applied pair), and the loop
+  pragma's own insert is checked and skipped-with-reason on failure rather than assumed to succeed.
+- `-o` with more than one input file silently let each translation unit overwrite the last one's
+  output while printing a success line for both. `main` now rejects `-o` outright when the tool's
+  source path list has more than one entry.
+- `PendingDeclareTargets` is a `DenseSet<FunctionDecl*>`, so `finalize()`'s iteration order — and
+  therefore the declare-target report lines — depended on pointer values rather than the program.
+  Fixed by sorting into source order before processing; verified identical across five consecutive
+  runs on a fixture with five declare-target candidates spanning two offloaded loops.
+
+**Verification:** every fix reproduced from a failing case first (kept under
+`/private/tmp/.../scratchpad/rev/`, not committed — throwaway fixtures, not benchmarks), then
+re-checked passing after the fix, then the full nine-input regression sweep re-run end to end: the
+*only* line that changed from the pre-review baseline is the intended `a[0:99]` → `a[0:100]` fix:
+identical everywhere else, `compute_heavy.omp.c` regenerates byte-for-byte identical to the original
+commit's version, and all four correct-refusal benchmarks still refuse.
+
+**Reasoning for fixing all eight rather than triaging to "good enough for a demo":** every one of
+them is silent — wrong output or an invalid file with no diagnostic pointing at the cause, which is
+the worst failure mode for something that is about to be handed to an actual OpenMP offload compiler
+on Day 15. A loop that gets skipped-with-a-reason is a known gap; a loop that gets a `map(from:
+out[0:0])` and compiles clean is a bug someone finds by getting wrong numbers out of a device run,
+possibly well into Day 15 or later, with much less signal about where it came from.
+
 <!-- Add new entries below as you build. -->

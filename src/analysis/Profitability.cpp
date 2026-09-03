@@ -26,7 +26,11 @@ llvm::StringRef toString(OffloadTarget T) {
 }
 
 llvm::cl::OptionCategory &optionCategory() {
-  static llvm::cl::OptionCategory Cat("p05tool profitability options");
+  // Shared by every p05tool flag, not just the MachineModel overrides this
+  // file owns — main.cpp registers -rewrite/-o here too, and passes this
+  // same category to CommonOptionsParser, so nothing the tool defines ends
+  // up hidden from --help.
+  static llvm::cl::OptionCategory Cat("p05tool options");
   return Cat;
 }
 
@@ -334,9 +338,18 @@ ProfitabilityAnalyzer::analyzeLoop(const LoopInfo &LI, const LoopSafety &Safety)
   // always the loop's own bound text, never the trip count: the map always
   // starts at index 0 regardless of the loop's start value (a documented
   // limitation, not an oversight — see the header comment).
+  //
+  // The bound text alone is the element count only for `<`; `for (i = 0; i
+  // <= N; i++)` touches N+1 elements, so a bare `N` would under-map by one
+  // and leave the last iteration's access outside the mapped region on a
+  // real device. Bumped by one for LE, on both the constant- and
+  // parameter-bound paths, so codegen's map() clause always matches this
+  // loop's actual index range.
+  bool Inclusive = LI.CmpOp == BO_LE;
   std::string Extent = (LI.Kind == LoopKind::ConstantBound && LI.ConstBound)
-                            ? std::to_string(*LI.ConstBound)
-                            : LI.BoundText;
+                            ? std::to_string(*LI.ConstBound + (Inclusive ? 1 : 0))
+                            : (Inclusive ? "(" + LI.BoundText + ") + 1"
+                                        : LI.BoundText);
   for (ArrayRegion &R : V.Regions)
     R.ExtentText = Extent;
 

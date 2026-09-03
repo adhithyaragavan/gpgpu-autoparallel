@@ -17,9 +17,11 @@
 // CPU_PARALLEL loops (`#pragma omp parallel for`) are Days 17-18's work, not
 // today's — see DAY_BY_DAY.md. rewriteLoop is a no-op for anything other than
 // an Evaluated GpuOffload verdict; SEQUENTIAL and CPU_PARALLEL loops, and
-// anything the safety gate blocked, pass through untouched and are recorded
-// in RewriteSummary::Skipped so the report says so rather than staying silent
-// about it.
+// anything the safety gate blocked, pass through silently, the same way they
+// were never offered to this pass at all — RewriteSummary::Skipped is
+// reserved for a loop that *was* eligible (GpuOffload, Evaluated) and was
+// still declined, for one of the reasons below. That distinction matters for
+// the report: every Skipped line names an actual gap, not routine scope.
 //
 // ---------------------------------------------------------------------------
 // The pragma
