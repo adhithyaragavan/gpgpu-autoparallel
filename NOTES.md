@@ -350,4 +350,53 @@ sourced, overridable machine parameters.
 
 ---
 
+### Day 14 — GPU pragma insertion: sibling file, declare target folded in, if(target:) guard
+
+**Decision:** New `src/codegen/OmpRewriter`, wired behind a `-rewrite` flag, acts only on
+`Evaluated && GpuOffload` verdicts. It writes to a sibling `<name>.omp.c` rather than in place, and
+in the same pass wraps every transitively reachable callee of an offloaded loop in
+`#pragma omp declare target` / `end declare target` — pulled forward from Days 15-16's scope. The
+guard clause on a conditional verdict is emitted as `if(target: <GuardExpr>)`, not a bare `if(...)`.
+
+**Reasoning:** The map clauses and guard condition are read straight off
+`ProfitabilityVerdict::Regions` / `GuardExpr` — no second walk of the loop body, which is exactly
+what Days 11-13 built those fields to make possible. Sibling-file output keeps the sequential
+baseline diffable per this file's repo-layout convention, and means `-rewrite`'s absence leaves
+every existing report byte-identical (verified against all nine benchmark/test inputs). Folding
+`declare target` in now — rather than deferring it to Day 15 — means Day 15 starts from an actual
+compile attempt instead of a guaranteed failure on the first call inside a target region: a target
+construct cannot call a function without a device-side compilation, and `CallResolver::getReachable`
+already produces the exact transitive set needed, the same walk `ProfitabilityAnalyzer::getOpCount`
+makes. The `target:` modifier on `if` is required rather than stylistic — `target teams distribute
+parallel for` is a combined construct where more than one constituent directive accepts `if`, so an
+unqualified `if()` is ambiguous about which one it gates. That said, since the guarded construct
+runs entirely on the host when the condition is false, this doubles as today's only taste of the
+CPU-parallel path, without pre-empting Days 17-18's own pragma for genuinely `CPU_PARALLEL` verdicts.
+
+Four cases are declined and recorded in `RewriteSummary::Skipped` rather than silently skipped or
+mishandled, matching how `HasIndirectCall` and `SafetyVerdict::Unknown` are surfaced upstream: a
+loop not written in the main file (LoopCollector has no such filter), a loop whose location is a
+macro expansion (Rewriter's source-location model doesn't support rewriting there), a loop
+lexically nested inside one already annotated (nested `target teams` is invalid OpenMP — untested
+by current benchmarks, but free to guard against), and a callee with no main-file definition
+(cannot be wrapped, and Day 15 will need another way to make it available to the device build).
+
+**Verification:** all nine benchmark/test inputs produce byte-identical reports with `-rewrite`
+omitted. `benchmarks/compute_heavy.c -rewrite` emits exactly the pragma the analysis report already
+printed (`map(from: out[0:65536]) map(to: in[0:65536])`) with `heavy_elem` wrapped in
+`declare target`. `tests/profitability_cases.c -rewrite` emits both the unconditional case and
+`if(target: n >= 8192)` on the parameter-bound case, matching `GPU_OFFLOAD if (n >= 8192)` in the
+report exactly; its known-`UNSAFE` loop is correctly left untouched. `saxpy.c`, `example.c`,
+`small_update.c`, and `tests/safety_cases.c` all correctly annotate zero loops and write no file.
+Both rewritten files pass `clang -fsyntax-only -fopenmp` cleanly.
+
+**Known gap, deferred to Day 15 on purpose:** this machine has `libomp.dylib` (host OpenMP) but no
+`libomptarget` and no discrete GPU, so a `-fsyntax-only` host-side parse is the strongest check
+available locally — actually linking and running a device binary needs either different hardware or
+an explicit "host-fallback build only" scope cut, and that decision belongs to Day 15, not today.
+
+**Alternative considered:** in-place rewriting via `Rewriter::overwriteChangedFiles()`. Rejected —
+it destroys the sequential baseline the repo layout is built around keeping alongside the tool's
+output, and complicates the exact diff-based verification this pass depends on for correctness.
+
 <!-- Add new entries below as you build. -->
