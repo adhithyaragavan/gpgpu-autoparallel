@@ -7,6 +7,13 @@
 #            the sequential baseline? (On this machine, with no
 #            libomptarget and no GPU, the "device" the target region runs
 #            on is the host itself -- conformant OpenMP, not a hack.)
+#            Two sub-checks: tier1-diff is a coarse smoke check (the
+#            printed checksum, sum(arr), matches) and tier1-exact (Day 19)
+#            is the authoritative one -- every element of the output array,
+#            dumped raw by passing a path as argv[1] to the benchmark,
+#            compared bit-for-bit (scripts/compare_outputs.py). A checksum
+#            alone can't catch a swapped element pair or a pair of
+#            compensating errors; see NOTES.md (Day 19).
 #   Tier 2 - device codegen: does Clang's NVPTX backend accept the rewritten
 #            source as a *device* compilation unit, with every callee this
 #            file wraps in `declare target` actually present as a device
@@ -44,6 +51,21 @@ SYSROOT_ARGS=()
 [[ -n "$SDK" ]] && SYSROOT_ARGS=(-isysroot "$SDK")
 
 BENCHMARKS=(example saxpy small_update compute_heavy)
+
+# Day 19: element count of the raw double-array dump each benchmark's
+# main() optionally writes when given a path as argv[1] (see
+# benchmarks/*.c). A case statement, not an associative array -- macOS
+# ships bash 3.2, same reason results are logged to a plain file below
+# instead of a -A array.
+dump_count_for() {
+  case "$1" in
+    example) echo 1000 ;;
+    saxpy) echo 65536 ;;
+    small_update) echo 8 ;;
+    compute_heavy) echo 65536 ;;
+    *) echo 0 ;;
+  esac
+}
 
 # macOS ships bash 3.2 (no associative arrays), so results are logged as
 # "name|stage|status" lines to a plain file instead of a -A array.
@@ -102,6 +124,8 @@ for name in "${BENCHMARKS[@]}"; do
 
   if [[ "$total_pragmas" -eq 0 ]]; then
     record "$name" "tier1-omp" "SKIP: no parallelizable loop in this benchmark (every SAFE loop here was correctly ruled SEQUENTIAL by the cost model)"
+    record "$name" "tier1-diff" "SKIP: no parallelizable loop in this benchmark (every SAFE loop here was correctly ruled SEQUENTIAL by the cost model)"
+    record "$name" "tier1-exact" "SKIP: no parallelizable loop in this benchmark (every SAFE loop here was correctly ruled SEQUENTIAL by the cost model)"
     record "$name" "tier2" "SKIP: no rewritten source to compile for device"
     record "$name" "tier3" "SKIP: no map() clauses to verify"
     continue
@@ -114,7 +138,35 @@ for name in "${BENCHMARKS[@]}"; do
     if diff -q "$OUTDIR/$name.seq.out" "$OUTDIR/$name.omp.out" >/dev/null; then
       record "$name" "tier1-diff" "PASS (checksums match)"
     else
-      record "$name" "tier1-diff" "FAIL (checksums differ -- $(cat "$OUTDIR/$name.seq.out") vs $(cat "$OUTDIR/$name.omp.out"); correctness is Day 19's job, but note it now)"
+      record "$name" "tier1-diff" "FAIL (checksums differ -- $(cat "$OUTDIR/$name.seq.out") vs $(cat "$OUTDIR/$name.omp.out"))"
+    fi
+
+    # --- Tier 1 (cont.): exact per-element comparison (Day 19) ---
+    # tier1-diff above only proves the printed checksum (sum(arr)) matches --
+    # a plain additive sum can't distinguish a correct run from one with a
+    # swapped element pair or a pair of compensating errors. Rerun both
+    # binaries with a dump path as argv[1] and compare every element exactly.
+    dump_count="$(dump_count_for "$name")"
+    # Remove any stale dump left over from an earlier run first, same reason
+    # as the `rm -f "$omp_src"` above: neither binary invocation below has
+    # its exit status checked before this point in a way that would stop a
+    # stale file from being compared, so without this a binary that crashes
+    # here would silently leave the previous run's (valid) dump in place,
+    # and the compare would then falsely PASS against stale data instead of
+    # catching the failure.
+    rm -f "$OUTDIR/$name.seq.dump" "$OUTDIR/$name.omp.dump"
+    seq_dump_rc=0
+    "$seq_bin" "$OUTDIR/$name.seq.dump" >/dev/null 2>&1 || seq_dump_rc=$?
+    omp_dump_rc=0
+    "$omp_bin" "$OUTDIR/$name.omp.dump" >/dev/null 2>&1 || omp_dump_rc=$?
+    if [[ "$seq_dump_rc" -ne 0 || "$omp_dump_rc" -ne 0 ]]; then
+      record "$name" "tier1-exact" "FAIL (dump run failed -- seq exit $seq_dump_rc, omp exit $omp_dump_rc)"
+    elif python3 "$SCRIPT_DIR/compare_outputs.py" \
+         --seq "$OUTDIR/$name.seq.dump" --omp "$OUTDIR/$name.omp.dump" \
+         --count "$dump_count" >"$OUTDIR/$name.exact.txt" 2>&1; then
+      record "$name" "tier1-exact" "PASS ($(cat "$OUTDIR/$name.exact.txt"))"
+    else
+      record "$name" "tier1-exact" "FAIL ($(cat "$OUTDIR/$name.exact.txt"))"
     fi
   else
     record "$name" "tier1-omp" "FAIL (OpenMP build; see $OUTDIR/$name.omp.build.log)"

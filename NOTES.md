@@ -712,3 +712,134 @@ same underlying defect. A permanent regression fixture,
 confirmed byte-identical classification to before the fix on every existing benchmark and fixture — the
 defect had no prior exposure, so nothing else could have moved. `scripts/build_and_run.sh`'s full ladder
 re-run clean after the fix.
+
+### Day 19 — Exact per-element output comparison, replacing the checksum as the authoritative check
+
+**Decision:** `scripts/build_and_run.sh`'s `tier1-diff` stage only ever diffed each benchmark's
+printed stdout, which is a single scalar: `sum += arr[i]` over the whole output array, printed as
+`printf("%.12e")`. That's a real check, but a weak one — a plain additive sum cannot distinguish a
+correct run from one with a swapped element pair, a permutation, or a pair of compensating errors
+(`+δ` at index `i`, `-δ` at index `j`); all three leave the sum unchanged. This matters most for the
+two 65536-element benchmarks (`saxpy.c`, `compute_heavy.c`), where a subtle per-element bug is far
+more plausible to hide behind an unchanged sum than in `small_update.c`'s 8-element case. Added a
+genuine per-element comparison (`scripts/compare_outputs.py`) and a new `tier1-exact` stage that
+runs it, kept `tier1-diff` alongside it (demoted to a coarse smoke check in the script's header
+comment, not removed — it's cheap, exercises a different code path, and Days 15-18's NOTES.md
+entries already cite "checksums matched" as part of the recorded evidence chain).
+
+**How the benchmarks dump their output, and why this specific mechanism:** each benchmark's `main()`
+now optionally writes its raw output array (`fwrite`, no formatting) to a path given as `argv[1]`.
+Two constraints shaped this over the more obvious alternatives:
+
+1. It must not perturb what the tool has already verified about these files. `LoopCollector`
+   (`src/analysis/LoopAnalysis.h:24-35`) only overrides `VisitForStmt`, and never looks at a
+   `CallExpr` outside a loop body — so a single `fwrite` call placed after every existing `for` loop
+   in a benchmark is structurally invisible to the loop finder and everything downstream of it
+   (safety, profitability). It cannot become a new candidate loop in the tool's report, which is a
+   *stronger* inertness guarantee than Days 15-16's checksum loop, which did add a new (correctly
+   `UNSAFE`) loop to every benchmark's report. A per-element `fprintf` dump was considered and
+   rejected on ordinary engineering grounds — it needs either a new `for` loop (a direct violation)
+   or one unrolled call per element, which is absurd at 65536 elements; raw `fwrite` of the array's
+   own memory is the only "single call, no loop" mechanism that captures the whole array, and since
+   both binaries run on the same machine there's no endianness/format concern to handle.
+2. The trigger mechanism went through one real revision during implementation: an env var
+   (`P05_DUMP_PATH`, read via `getenv`) was the original plan, gated behind a new
+   `#include <stdlib.h>` next to the existing `<stdio.h>`. That fails the actual bar this change was
+   held to — a before/after diff of the tool's own `--rewrite` report on each benchmark had to be
+   *empty*, not "the same modulo shifted line numbers" — because inserting any new line above the
+   analyzed loops shifts every subsequent loop's reported `line:col` by one, even though nothing about
+   loop classification changed. Caught immediately by actually running that diff (not assumed) before
+   moving on. Fixed by switching to a CLI argument instead: `fopen`/`fwrite`/`fclose` are already
+   declared via each benchmark's existing `<stdio.h>` include, so the only change needed was editing
+   `int main()` to `int main(int argc, char **argv)` **in place** on its existing line — no line
+   insertion anywhere above the loops, hence a genuinely empty report diff. `getenv`/env-var-gating was
+   also considered as a fix (via a local `extern char *getenv(const char *);` declaration to avoid the
+   `<stdlib.h>` include) but rejected as needlessly hacky next to the argv approach, which is more
+   idiomatic C and reads naturally as "pass a dump path as an optional argument."
+
+**Why exact/bit-identical comparison, not a tolerance:** every rewritten loop in this benchmark set
+is element-independent (a map, no reduction), and the pre-existing checksum-based `tier1-diff` had
+already shown bit-identical results for every runnable benchmark. There's no known legitimate source
+of floating-point nondeterminism between the `-O2` and `-O2 -fopenmp` builds here (no FMA-contraction
+or reduction-ordering difference applies to a loop with no cross-iteration accumulation) to tolerate.
+If a real mismatch ever shows up, that's new information to investigate, not something to
+pre-emptively paper over with a tolerance chosen without evidence.
+
+**Why Python (`compare_outputs.py`) over `cmp`:** `cmp -l` reports byte offsets in octal, not an
+element index or the actual mismatched values — useless for debugging a real failure, which the task
+explicitly needs (first differing index, both values). Python3 is already a `build_and_run.sh`
+dependency via `scripts/check_maps.py` (Tier 3), so this adds no new toolchain dependency. Comparison
+uses `struct.pack(...) != struct.pack(...)` rather than `==`, so `NaN`/`-0.0` compare bit-for-bit
+rather than by IEEE-754 comparison semantics (`NaN != NaN`, `-0.0 == 0.0`), which would silently
+under- or over-report a mismatch for either value if it ever occurred.
+
+**Verified, not assumed:** before/after `p05tool` report diff on all four benchmark `.c` files
+(`example`, `saxpy`, `small_update`, `compute_heavy`) confirmed byte-for-byte empty after the argv
+fix, and a full regression run (no `--rewrite`) across every `benchmarks/`+`tests/` input confirmed
+no verdict anywhere moved. `compare_outputs.py` was sanity-checked directly against a deliberately
+corrupted dump (a single flipped double) before being wired into the script, to confirm it actually
+reports FAIL with the correct index/values rather than passing everything by construction.
+
+**Result:** `scripts/build_and_run.sh`'s full ladder, re-run end to end: `tier1-exact` PASSes for
+`example` (1000/1000 doubles exact), `saxpy` (65536/65536), and `compute_heavy` (65536/65536) — the
+two large benchmarks are exactly the ones this check adds genuinely new evidence for, since a
+checksum collision was only ever plausible at that size. `small_update` still has no `.omp` binary
+(unchanged fact from Days 17-18: its only `SAFE` loop is trip-count 8, correctly ruled `SEQUENTIAL`),
+so `tier1-exact` SKIPs for it with the same reason `tier1-omp` already gave — brought into line with
+the script's own stated philosophy ("every unavailable check prints an explicit SKIP with a reason"),
+which `tier1-diff`/the new `tier1-exact` weren't actually following for that branch before this
+change. No real correctness bug was found in the *analyzed pipeline* — expected, given the prior
+bit-identical checksums and the element-independent loop shapes, but this had to be run for real to
+say so, per CLAUDE.md's own "fix correctness bugs here, this is non-negotiable."
+
+### Day 19 (cont.) — adversarial review of the validation-tooling commit found one real bug, in the harness itself
+
+**Bug:** `scripts/build_and_run.sh`'s new `tier1-exact` block ran `"$seq_bin"`/`"$omp_bin"` with a dump
+path as their sole argument but never checked either invocation's exit status, and — unlike `$omp_src`
+a few lines above it (`rm -f "$omp_src"`, with a comment explaining exactly this class of problem for
+that file) — never removed a pre-existing `.seq.dump`/`.omp.dump` before running them. So a binary that
+crashes or otherwise fails to write its dump on a given run leaves the *previous* run's (valid) dump
+file sitting at the same path, and `compare_outputs.py` would then silently compare that stale file
+against the other binary's fresh output and report `PASS`, never noticing the current run produced
+nothing at all.
+
+**Caught by:** the adversarial-review subagent this repo's working conventions call for after any
+non-trivial implementation (same practice as Day 14 and Days 17-18). It reproduced the failure
+concretely rather than reasoning about it in the abstract: ran the full ladder once to populate a real
+`compute_heavy.omp.dump`, then substituted a fake binary that exits 139 (simulating a crash) in place
+of `omp_bin` and re-ran the script's exact `tier1-exact` logic — the stale dump from the earlier good
+run was compared against the sequential output and reported `PASS: 65536 doubles match exactly`, even
+though the "current" OpenMP run produced nothing.
+
+**Why this had no prior analogue to warn from:** the exact `rm -f "$omp_src"` pattern this bug
+recreates was already fixed once in this file, for a different file, during Days 15-16 (see that
+entry above) — but the fix wasn't generalized into a rule ("always clear a stage's output path before
+regenerating it, don't rely on it being absent") at the time, so the same shape of bug reappeared here
+when a second stage was added that also writes to a path across runs.
+
+**Fix:** `rm -f "$OUTDIR/$name.seq.dump" "$OUTDIR/$name.omp.dump"` immediately before both invocations
+(mirroring the existing `$omp_src` pattern directly), plus capturing each binary's exit status
+explicitly and recording a named `tier1-exact` `FAIL` ("dump run failed -- seq exit N, omp exit M")
+ahead of ever invoking `compare_outputs.py` when either is nonzero, rather than only relying on
+`compare_outputs.py`'s wrong-byte-length check to eventually notice a missing dump (that fallback also
+works, from a clean `$OUTDIR`, but produces a confusing Python traceback instead of a clear message,
+and doesn't fire at all against a stale file from a dirty `$OUTDIR` — which is exactly the failure mode
+that made this bug possible).
+
+**Verified:** re-ran the same reproduction (fake-crash `omp_bin` against a pre-existing valid dump)
+against the fixed script logic directly — now correctly reports `tier1-exact FAIL (dump run failed --
+seq exit 0, omp exit 139)` instead of a false `PASS`. Full ladder re-run clean afterward (all four
+benchmarks, same PASS/SKIP pattern as before the fix — the fix only changes behavior on a failure path
+that the normal run never exercises).
+
+Next: Day 20 — measure real wall-clock timing (sequential vs. gated-policy CPU/GPU pragmas), replacing
+`ProfitabilityAnalyzer`'s modelled microsecond estimates with actual measured numbers. No timing
+harness exists yet in this repo (confirmed: no `chrono`/`gettimeofday`/`clock_gettime`/`perf` usage
+anywhere in `scripts/` or `src/`). Worth noting ahead of that day: every benchmark here has a trip
+count of at most 65536 elements of straight-line double arithmetic, likely sub-millisecond total
+compute — process-level wall-clock timing (spawning `.seq`/`.omp` as separate processes and timing
+the whole run) would be dominated by process-startup noise, not the loop itself, so Day 20 will need
+to bracket just the analyzed loop's execution internally (e.g. `clock_gettime` around the existing
+call site, printed to stderr so it doesn't disturb `tier1-diff`'s stdout checksum) rather than time
+whole-process invocations — flagged now so Day 20 doesn't have to discover it from a flat, uninformative
+result.

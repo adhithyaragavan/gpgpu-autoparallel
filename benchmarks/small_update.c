@@ -20,7 +20,7 @@ void normalize(double *values) {
   }
 }
 
-int main() {
+int main(int argc, char **argv) {
   double values[8] = {-0.5, 0.2, 1.5, 0.7, -1.0, 0.9, 0.0, 2.0};
   normalize(values);
 
@@ -28,5 +28,25 @@ int main() {
   for (int i = 0; i < 8; i++)
     sum += values[i];
   printf("small_update checksum %.12e\n", sum);
+
+  // Day 19: optional raw dump of the final output array, when a dump path
+  // is given as argv[1] -- not an env var, and main()'s existing signature
+  // line is edited in place rather than a new #include being inserted
+  // above the loops, so this addition cannot shift any loop's reported
+  // line:col in the tool's report (getenv would need <stdlib.h>; fopen/
+  // fwrite/fclose are already declared via the existing <stdio.h>). A
+  // single fwrite -- not a loop -- so LoopCollector (which only visits
+  // ForStmt) never sees it; this cannot become a new candidate loop in the
+  // tool's report either. Lets scripts/compare_outputs.py do an exact
+  // per-element comparison against the sequential baseline, which the
+  // checksum above cannot: a swapped pair of elements, or two compensating
+  // errors, sums to the same total either way. See NOTES.md (Day 19).
+  if (argc > 1) {
+    FILE *f = fopen(argv[1], "wb");
+    if (f) {
+      fwrite(values, sizeof(double), 8, f);
+      fclose(f);
+    }
+  }
   return 0;
 }
