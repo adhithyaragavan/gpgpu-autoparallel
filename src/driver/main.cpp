@@ -35,7 +35,9 @@ namespace {
 llvm::cl::opt<bool>
     RewriteFlag("rewrite",
                llvm::cl::desc("Emit a sibling <name>.omp.c with OpenMP "
-                              "target-offload pragmas for GPU_OFFLOAD loops"),
+                              "target-offload pragmas for GPU_OFFLOAD loops "
+                              "and #pragma omp parallel for for "
+                              "CPU_PARALLEL loops"),
                llvm::cl::init(false), llvm::cl::cat(p05::optionCategory()));
 
 llvm::cl::opt<std::string> RewriteOutputPath(

@@ -245,6 +245,24 @@ struct ProfitabilityVerdict {
   /// threshold is solved from the cost model's crossover point, never picked.
   std::optional<std::string> GuardExpr;
 
+  /// Whether the model shows threading the host beating running the loop
+  /// sequentially. Computed for every Evaluated loop regardless of which
+  /// Target was ultimately chosen — codegen consults this on its own (e.g.
+  /// to decide whether a GPU loop declined for another reason may still
+  /// degrade to a CPU-threaded pragma), and must never emit `parallel for`
+  /// when this is false: that would be a pragma the cost model itself
+  /// contradicts.
+  bool CpuBeatsSeq = false;
+
+  /// The CPU-vs-sequential analogue of GuardExpr: set only when the trip
+  /// count is symbolic and threading beats sequential above some threshold
+  /// (CpuBeatsSeq is true but not unconditionally). Same closed form and
+  /// power-of-two rounding as GuardExpr, solved from where thread-start
+  /// overhead stops dominating. Empty when the trip count is statically
+  /// known — no runtime test is needed then, since t_cpu vs t_seq was
+  /// already decided numerically — or when CpuBeatsSeq holds for every n.
+  std::optional<std::string> CpuGuardExpr;
+
   std::vector<ArrayRegion> Regions;
 
   /// Per-iteration operation count, split so the report can show how much of

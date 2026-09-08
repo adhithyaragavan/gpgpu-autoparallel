@@ -415,6 +415,10 @@ ProfitabilityAnalyzer::analyzeLoop(const LoopInfo &LI, const LoopSafety &Safety)
         std::max(V.Costs.Flops * usPerFlop(CpuAggGFs),
                  V.Costs.TouchedBytes * usPerByte(Machine.DramBandwidthGBs));
     V.Costs.CpuUs = CpuCompute + Machine.ThreadStartUs;
+    // Known unconditionally at this trip count: no CpuGuardExpr is needed
+    // (or possible) — t_cpu vs t_seq was already decided numerically, not
+    // symbolically, for this specific N.
+    V.CpuBeatsSeq = V.Costs.CpuUs <= V.Costs.SeqUs;
 
     V.Costs.GpuLaunchUs = Machine.KernelLaunchUs;
     V.Costs.GpuTransferUs =
@@ -466,13 +470,59 @@ ProfitabilityAnalyzer::analyzeLoop(const LoopInfo &LI, const LoopSafety &Safety)
     double RateCpu =
         std::max(OpsPerIter * usPerFlop(CpuAggGFs),
                  BytesPerIter * usPerByte(Machine.DramBandwidthGBs));
+    // Single-core rate, for the same reason SeqUs uses SingleCoreDramShare
+    // in the concrete-trip branch above: one core cannot saturate DRAM.
+    double RateSeq =
+        std::max(OpsPerIter * usPerFlop(Machine.CpuThroughputGFs),
+                 BytesPerIter * usPerByte(Machine.DramBandwidthGBs *
+                                          Machine.SingleCoreDramShare));
 
     V.Reasons.push_back(
         "trip count symbolic (bound: " + LI.BoundText +
         "); per-element rate gpu=" + fmtUs(RateGpu) + "/iter, cpu=" +
-        fmtUs(RateCpu) + "/iter, fixed overhead launch=" +
-        fmtUs(Machine.KernelLaunchUs) +
+        fmtUs(RateCpu) + "/iter, seq=" + fmtUs(RateSeq) +
+        "/iter, fixed overhead launch=" + fmtUs(Machine.KernelLaunchUs) +
         " vs thread-start=" + fmtUs(Machine.ThreadStartUs));
+
+    // --- CPU-vs-sequential crossover, independent of the GPU decision below.
+    //
+    // t_seq(n) = RateSeq * n (no fixed overhead: nothing to start up)
+    // t_cpu(n) = RateCpu * n + ThreadStartUs
+    // Solving RateSeq*n = RateCpu*n + ThreadStartUs gives the same kind of
+    // closed-form crossover as the GPU guard below, just against a different
+    // pair of rates. When RateSeq <= RateCpu, threading is cheaper per
+    // element *and* pays no fixed cost advantage to offset — sequential
+    // already loses at every n, so CpuBeatsSeq holds unconditionally in that
+    // case too; it is only when RateSeq is strictly cheaper than RateCpu
+    // that ThreadStartUs can ever dominate, which is the case guarded below.
+    if (RateSeq > RateCpu) {
+      double NStarCpu = Machine.ThreadStartUs / (RateSeq - RateCpu);
+      V.CpuBeatsSeq = true;
+      if (NStarCpu > 0.0) {
+        int64_t TCpu = nextPow2(NStarCpu);
+        V.CpuGuardExpr = LI.BoundText + " >= " + std::to_string(TCpu);
+      }
+      V.Reasons.push_back(
+          "cpu-vs-seq: threading" +
+          (V.CpuGuardExpr ? (" pays off when (" + *V.CpuGuardExpr + ")")
+                          : std::string(" pays off unconditionally")) +
+          "; crossover n* = " + fmtNum(NStarCpu) +
+          (V.CpuGuardExpr ? ", rounded up to a power of two" : ""));
+    } else {
+      // RateSeq <= RateCpu: aggregate threading is not even cheaper per
+      // element than one core alone on this machine model, so no fixed-cost
+      // amortization at any n can make it pay. Distinct from the RateGpu <
+      // RateCpu case below, and checked independently — a machine model
+      // where GPU also loses to CPU (e.g. --cpu-cores=1) must not silently
+      // fall through to a CPU_PARALLEL verdict the numbers themselves
+      // contradict; that was a real gap this pass previously had, and
+      // dividing by (RateCpu - RateSeq) here would additionally be a
+      // divide-by-zero when they are equal.
+      V.CpuBeatsSeq = false;
+      V.Reasons.push_back(
+          "cpu-vs-seq: threading never beats sequential on this machine "
+          "model (rate_seq <= rate_cpu)");
+    }
 
     if (RateGpu < RateCpu) {
       double NStar = (Machine.KernelLaunchUs - Machine.ThreadStartUs) /
@@ -492,12 +542,29 @@ ProfitabilityAnalyzer::analyzeLoop(const LoopInfo &LI, const LoopSafety &Safety)
             "thread_start_us + rate_cpu*n, n* = " +
             fmtNum(NStar) + ", rounded up to a power of two");
       }
-    } else {
+    } else if (V.CpuBeatsSeq) {
       V.Target = OffloadTarget::CpuParallel;
       V.Reasons.push_back(
-          "-> CPU_PARALLEL: GPU's per-element cost never falls below the "
-          "host's, so no n makes offload pay off; trip count is a runtime "
-          "parameter and assumed not pathologically small");
+          "-> CPU_PARALLEL" +
+          (V.CpuGuardExpr ? (" if (" + *V.CpuGuardExpr + ")")
+                          : std::string(" unconditionally")) +
+          ": GPU's per-element cost never falls below the host's, so no n "
+          "makes offload pay off, and threading beats sequential " +
+          (V.CpuGuardExpr ? "above that guard" : "at every n"));
+    } else {
+      // Neither target's per-element rate beats the alternative that would
+      // otherwise catch it: GPU loses to CPU threading, and CPU threading
+      // itself never recovers its own fixed cost against running the loop
+      // sequentially on this machine model. Previously this branch was
+      // unreachable — CPU_PARALLEL was chosen unconditionally whenever GPU
+      // lost, without ever checking CpuBeatsSeq — so a machine model where
+      // aggregate CPU threading doesn't even beat one core (e.g.
+      // --cpu-cores=1 --single-core-dram-share=1.0) produced a verdict the
+      // model's own numbers contradicted.
+      V.Target = OffloadTarget::Sequential;
+      V.Reasons.push_back(
+          "-> SEQUENTIAL: neither GPU offload nor host threading beats "
+          "running this loop sequentially on this machine model");
     }
   }
 
@@ -509,6 +576,8 @@ void printProfitabilityReport(llvm::raw_ostream &OS,
   OS << "  profitability : " << toString(V.Target);
   if (V.GuardExpr)
     OS << " if (" << *V.GuardExpr << ")";
+  else if (V.Target == OffloadTarget::CpuParallel && V.CpuGuardExpr)
+    OS << " if (" << *V.CpuGuardExpr << ")";
   OS << "\n";
   for (const std::string &Reason : V.Reasons)
     OS << "    - " << Reason << "\n";

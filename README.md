@@ -25,7 +25,8 @@ verification sweep in one step:
 
 ## Status
 
-**Days 11-13 — GPU-profitability heuristic.**
+**Days 17-18 — CPU-threaded fallback path complete.** (Days 11-13's profitability model, described
+next, is unchanged.)
 
 The tool classifies every `for` loop it finds as one of:
 
@@ -129,5 +130,22 @@ checked-false assumption about `declare target`'s necessity uncovered while buil
 control. The four benchmarks with a `main()` now print a checksum of their computed output (previously
 none of the ten `.c` fixtures produced any output at all); `compute_heavy` passes every tier.
 
-Next: Days 17-18 — `Rewriter`-based pragma insertion for the CPU-threaded fallback path
-(`#pragma omp parallel for`) on safe-but-not-profitable loops.
+**Days 17-18 — CPU-threaded fallback path.** `OmpRewriter` now emits `#pragma omp parallel for`
+for `CPU_PARALLEL` loops alongside the GPU path, with `if(parallel: n >= T)` for a symbolic bound —
+`T` solved from a closed-form CPU-vs-sequential crossover the same way the GPU guard's threshold
+already was, closing a gap Days 11-13 had left as an explicit assumption. A descending `GPU_OFFLOAD`
+loop, previously declined outright because the mapped-region model can't describe it, now degrades to
+the CPU pragma instead (no `map()` clause there, so the objection doesn't apply) provided the cost
+model's own numbers still endorse host threading — a stated substitution, reported by name, not a
+silent one. Also found and fixed a real bug surfaced while deriving the new crossover: the
+symbolic-bound branch could choose `CPU_PARALLEL` without ever checking it beat sequential, invisible
+under the default machine model but wrong under e.g. `--cpu-cores=1`. `example.c` and `saxpy.c` go
+from no pragma at all to a real Tier 1 PASS (built, run, checksum-matched against the sequential
+baseline) in `scripts/build_and_run.sh`; `small_update.c` still emits nothing, correctly — its only
+`SAFE` loop is trip-count 8, which the cost model rightly rules `SEQUENTIAL`. See `NOTES.md` for the
+full reasoning.
+
+Next: Days 19-21 — numerically validate parallelized output against the sequential baseline across
+every benchmark, then measure real timing (sequential vs. gated-policy, and a naive
+offload-everything-safe comparison if time allows) rather than the modelled microsecond estimates
+`ProfitabilityAnalyzer` currently reports.

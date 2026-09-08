@@ -18,7 +18,7 @@ namespace {
 /// end location — the common brace-less `for (...) for (...) body;` nesting,
 /// where the inner loop's closing token *is* the outer loop's closing token —
 /// must still count as nested. A strict `<` here previously let that shape
-/// through undetected, producing invalid doubly-nested `target teams`.
+/// through undetected, producing invalid doubly-nested target teams.
 bool contains(const SourceManager &SM, SourceRange Outer, SourceLocation Loc) {
   return !SM.isBeforeInTranslationUnit(Loc, Outer.getBegin()) &&
         !SM.isBeforeInTranslationUnit(Outer.getEnd(), Loc);
@@ -52,7 +52,10 @@ bool startsOwnLine(const SourceManager &SM, SourceLocation Loc) {
   return true; // reached the start of the file
 }
 
-std::string buildPragma(const ProfitabilityVerdict &V) {
+/// #pragma omp target teams distribute parallel for [if(target: ...)]
+/// map(...) ... — see the header comment for why `target:` is required on
+/// the if() rather than bare.
+std::string buildGpuPragma(const ProfitabilityVerdict &V) {
   std::string Pragma = "#pragma omp target teams distribute parallel for";
   if (V.GuardExpr)
     Pragma += " if(target: " + *V.GuardExpr + ")";
@@ -65,13 +68,22 @@ std::string buildPragma(const ProfitabilityVerdict &V) {
   return Pragma;
 }
 
+/// #pragma omp parallel for [if(parallel: ...)] — no map() clauses (shared
+/// memory) and no private()/reduction() clauses; see the header comment for
+/// why neither is needed. `parallel:` on the if() is required for the same
+/// ambiguity reason as the GPU path's `target:`: `parallel for` is a combined
+/// construct whose constituent `parallel` directive is the one that accepts
+/// `if`, and an unqualified `if()` doesn't say so explicitly.
+std::string buildCpuPragma(const ProfitabilityVerdict &V) {
+  std::string Pragma = "#pragma omp parallel for";
+  if (V.CpuGuardExpr)
+    Pragma += " if(parallel: " + *V.CpuGuardExpr + ")";
+  return Pragma;
+}
+
 } // namespace
 
-void OmpRewriter::rewriteLoop(const LoopInfo &LI,
-                              const ProfitabilityVerdict &V) {
-  if (!V.Evaluated || V.Target != OffloadTarget::GpuOffload)
-    return; // not this pass's loop — not an error, just out of scope today.
-
+bool OmpRewriter::insertPragma(const LoopInfo &LI, const std::string &Pragma) {
   const SourceManager &SM = Rewrite.getSourceMgr();
   SourceLocation Begin = LI.Loop->getBeginLoc();
 
@@ -82,35 +94,19 @@ void OmpRewriter::rewriteLoop(const LoopInfo &LI,
 
   if (!SM.isWrittenInMainFile(Begin)) {
     skip("loop is not written in the main file, declined");
-    return;
+    return false;
   }
   if (Begin.isMacroID() || !Rewriter::isRewritable(Begin)) {
     skip("loop location is inside a macro expansion, declined");
-    return;
-  }
-  // The mapped-region model (ArrayRegion, ExtentText — see Profitability.h)
-  // assumes a loop counts up from a low index to the printed bound: extent
-  // is derived from the bound text alone, on the documented assumption that
-  // it is also the element count. A descending loop's "bound" is its *lower*
-  // limit, which is not an element count at all — offloading one under this
-  // model would map a zero- or near-zero-length region while the kernel
-  // still touches every element, out of bounds on the device. Declined
-  // rather than emitting a pragma the cost model's own data volume estimate
-  // does not actually describe; extending the model to reversed traversal is
-  // future work, not a Day 14 fix.
-  if (LI.CmpOp == BO_GT || LI.CmpOp == BO_GE) {
-    skip("loop counts down; the mapped-region model assumes an ascending "
-        "loop, declined rather than emitting an incorrect map() extent");
-    return;
+    return false;
   }
   SourceRange Range = LI.Loop->getSourceRange();
   if (isNestedInAny(SM, Range, AnnotatedRanges)) {
-    skip("loop is lexically nested inside an already-offloaded loop, "
-        "declined (nested target teams is invalid OpenMP)");
-    return;
+    skip("loop is lexically nested inside an already-annotated loop, "
+        "declined (nested target/parallel constructs are invalid or "
+        "harmful OpenMP in every combination)");
+    return false;
   }
-
-  std::string Pragma = buildPragma(V);
 
   // Indent the pragma to line up with the `for` it precedes.
   unsigned Col = SM.getPresumedColumnNumber(Begin);
@@ -128,13 +124,86 @@ void OmpRewriter::rewriteLoop(const LoopInfo &LI,
 
   if (Rewrite.InsertTextBefore(Begin, InsertText)) {
     skip("source location was not rewritable, declined");
+    return false;
+  }
+  return true;
+}
+
+void OmpRewriter::rewriteLoop(const LoopInfo &LI,
+                              const ProfitabilityVerdict &V) {
+  if (!V.Evaluated)
+    return; // never priced at all — not this pass's loop.
+
+  auto skip = [&](llvm::StringRef Reason) {
+    Summary.Skipped.push_back("line " + std::to_string(LI.Line) + ": " +
+                              Reason.str());
+  };
+
+  if (V.Target == OffloadTarget::GpuOffload) {
+    // See the mapped-region-model comment in Profitability.h and this
+    // file's header comment: a descending loop's printed bound is a lower
+    // limit, not an element count, so the map() extent this verdict's
+    // Regions carry does not describe it. `parallel for` has no map()
+    // clause, so degrade to the CPU pragma instead of emitting a pragma
+    // whose data-mapping is wrong — but only when the verdict's own numbers
+    // still endorse host threading as a target; otherwise there is nothing
+    // sound left to emit.
+    if (LI.CmpOp == BO_GT || LI.CmpOp == BO_GE) {
+      if (!V.CpuBeatsSeq) {
+        skip("loop counts down; the mapped-region model assumes an "
+            "ascending loop, and host threading doesn't beat sequential "
+            "here either, declined rather than emitting an unsound or "
+            "unprofitable pragma");
+        return;
+      }
+      std::string Pragma = buildCpuPragma(V);
+      if (!insertPragma(LI, Pragma))
+        return;
+      AnnotatedRanges.push_back(LI.Loop->getSourceRange());
+      Summary.Sites.push_back(
+          RewriteSite{LI.Loop, Pragma, LI.Line, OffloadTarget::CpuParallel});
+      skip("loop counts down; the mapped-region model assumes an ascending "
+          "loop, degraded to CPU-threaded #pragma omp parallel for instead "
+          "of the GPU_OFFLOAD verdict (a stated substitution, not a silent "
+          "one)");
+      // No collectDeclareTargets: this site emitted the CPU pragma, which
+      // calls ordinary host-compiled functions.
+      return;
+    }
+
+    std::string Pragma = buildGpuPragma(V);
+    if (!insertPragma(LI, Pragma))
+      return;
+    AnnotatedRanges.push_back(LI.Loop->getSourceRange());
+    Summary.Sites.push_back(
+        RewriteSite{LI.Loop, Pragma, LI.Line, OffloadTarget::GpuOffload});
+    collectDeclareTargets(LI);
     return;
   }
 
-  AnnotatedRanges.push_back(Range);
-  Summary.Sites.push_back(RewriteSite{LI.Loop, Pragma, LI.Line});
+  if (V.Target == OffloadTarget::CpuParallel) {
+    // Should always hold for a CpuParallel verdict — Profitability.cpp only
+    // chooses this target when CpuBeatsSeq is true. Checked here rather
+    // than trusted blindly, the same discipline the GPU path already
+    // applies to its own inputs: a codegen pass emitting a pragma the cost
+    // model itself contradicts would be a worse bug than declining one.
+    if (!V.CpuBeatsSeq) {
+      skip("profitability verdict is CPU_PARALLEL but the model's own "
+          "CpuBeatsSeq is false, declined rather than emitting a pragma "
+          "the cost model contradicts");
+      return;
+    }
+    std::string Pragma = buildCpuPragma(V);
+    if (!insertPragma(LI, Pragma))
+      return;
+    AnnotatedRanges.push_back(LI.Loop->getSourceRange());
+    Summary.Sites.push_back(
+        RewriteSite{LI.Loop, Pragma, LI.Line, OffloadTarget::CpuParallel});
+    return;
+  }
 
-  collectDeclareTargets(LI);
+  // Sequential (or any future target this pass doesn't know about yet): not
+  // this pass's loop, not an error.
 }
 
 void OmpRewriter::collectDeclareTargets(const LoopInfo &LI) {
@@ -174,8 +243,8 @@ void OmpRewriter::finalize() {
       Summary.Skipped.push_back(
           Def->getNameAsString() +
           ": definition is outside the main file, declare target not "
-          "emitted (Day 15 will need it available to the device build some "
-          "other way)");
+          "emitted (the device build will need it available some other "
+          "way)");
       continue;
     }
 
@@ -184,10 +253,15 @@ void OmpRewriter::finalize() {
     // an active `target` region when called from another offloaded loop —
     // unspecified behavior under OpenMP, and invisible to a syntax-only
     // check because the nesting is dynamic (through a call), not lexical.
+    // Filtered to GpuOffload sites only: a function containing a
+    // CPU-threaded `parallel for` has no such problem — that construct runs
+    // on the host either way, and `parallel for` inside a device function
+    // is perfectly legal OpenMP.
     SourceRange DefRange = Def->getSourceRange();
     auto ContainedSite = llvm::find_if(
         Summary.Sites, [&](const RewriteSite &Site) {
-          return contains(SM, DefRange, Site.Loop->getBeginLoc());
+          return Site.Kind == OffloadTarget::GpuOffload &&
+                contains(SM, DefRange, Site.Loop->getBeginLoc());
         });
     if (ContainedSite != Summary.Sites.end()) {
       Summary.Skipped.push_back(
@@ -210,7 +284,7 @@ void OmpRewriter::finalize() {
 
     // Pre-validated above, so both inserts are expected to succeed; still
     // checked rather than ignored, so a failure is reported instead of
-    // silently leaving an unbalanced declare target region in the output.
+    // silently leaving an unbalanced declare target pair in the output.
     bool BeginFailed =
         Rewrite.InsertTextBefore(BeginLoc, "#pragma omp declare target\n");
     bool EndFailed = Rewrite.InsertTextAfterToken(
@@ -228,7 +302,12 @@ void OmpRewriter::finalize() {
 }
 
 void printRewriteReport(llvm::raw_ostream &OS, const RewriteSummary &S) {
-  OS << "rewrite: " << S.Sites.size() << " loop(s) annotated";
+  size_t GpuCount = llvm::count_if(S.Sites, [](const RewriteSite &Site) {
+    return Site.Kind == OffloadTarget::GpuOffload;
+  });
+  size_t CpuCount = S.Sites.size() - GpuCount;
+  OS << "rewrite: " << GpuCount << " GPU-offload loop(s), " << CpuCount
+     << " CPU-threaded loop(s) annotated";
   if (!S.DeclareTargets.empty())
     OS << ", " << S.DeclareTargets.size() << " function(s) marked declare target";
   OS << "\n";

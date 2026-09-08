@@ -81,11 +81,14 @@ for name in "${BENCHMARKS[@]}"; do
 
   # Derived from the tool's own report, not just file presence, so a stale
   # file surviving some other way still can't be mistaken for this run's
-  # output.
-  has_offload=0
-  if [[ -f "$omp_src" ]] && ! grep -q 'nothing annotated' "$report"; then
-    has_offload=1
-  fi
+  # output. Split into GPU vs. CPU pragmas: a `^  line ` report line is
+  # either kind (see OmpRewriter's report format), and only "omp target"
+  # lines carry map() clauses / produce a device offloading entry — Tiers
+  # 2-3 need at least one of those, Tier 1 (build & run, either pragma)
+  # doesn't care which kind got the loop there.
+  gpu_pragmas=$(grep -c '^  line .*omp target' "$report" || true)
+  total_pragmas=$(grep -c '^  line ' "$report" || true)
+  cpu_pragmas=$((total_pragmas - gpu_pragmas))
 
   # --- Tier 1: host build & run ---
   seq_bin="$OUTDIR/$name.seq"
@@ -97,8 +100,8 @@ for name in "${BENCHMARKS[@]}"; do
     continue
   fi
 
-  if [[ "$has_offload" -eq 0 ]]; then
-    record "$name" "tier1-omp" "SKIP: no GPU-offload loop in this benchmark; CPU-parallel fallback is Days 17-18"
+  if [[ "$total_pragmas" -eq 0 ]]; then
+    record "$name" "tier1-omp" "SKIP: no parallelizable loop in this benchmark (every SAFE loop here was correctly ruled SEQUENTIAL by the cost model)"
     record "$name" "tier2" "SKIP: no rewritten source to compile for device"
     record "$name" "tier3" "SKIP: no map() clauses to verify"
     continue
@@ -118,17 +121,22 @@ for name in "${BENCHMARKS[@]}"; do
     continue
   fi
 
+  if [[ "$gpu_pragmas" -eq 0 ]]; then
+    record "$name" "tier2" "SKIP: no GPU-offload loop; the $cpu_pragmas CPU-threaded pragma(s) here have no device entry / no map() clauses by construction"
+    record "$name" "tier3" "SKIP: no GPU-offload loop; the $cpu_pragmas CPU-threaded pragma(s) here have no device entry / no map() clauses by construction"
+    continue
+  fi
+
   # --- Tier 2: device codegen ---
   ptx="$OUTDIR/$name.ptx"
   if "$CLANG" -fopenmp -fopenmp-targets=nvptx64-nvidia-cuda --offload-arch="$NVPTX_ARCH" \
        -nocudalib --offload-device-only -S "${SYSROOT_ARGS[@]}" "$omp_src" -o "$ptx" \
        2>"$OUTDIR/$name.ptx.build.log"; then
     entry_count=$(grep -c '\.entry __omp_offloading_' "$ptx" || true)
-    pragma_count=$(grep -c '^  line ' "$report" || true)
-    if [[ "$entry_count" -eq "$pragma_count" ]]; then
-      record "$name" "tier2-entries" "PASS ($entry_count offloading entr$([ "$entry_count" -eq 1 ] && echo y || echo ies) == $pragma_count pragma(s))"
+    if [[ "$entry_count" -eq "$gpu_pragmas" ]]; then
+      record "$name" "tier2-entries" "PASS ($entry_count offloading entr$([ "$entry_count" -eq 1 ] && echo y || echo ies) == $gpu_pragmas GPU pragma(s))"
     else
-      record "$name" "tier2-entries" "FAIL ($entry_count offloading entries != $pragma_count pragma(s))"
+      record "$name" "tier2-entries" "FAIL ($entry_count offloading entries != $gpu_pragmas GPU pragma(s))"
     fi
 
     dt_ok=1
@@ -151,17 +159,18 @@ for name in "${BENCHMARKS[@]}"; do
   # Only meaningful for a single-region file: Clang gives each additional
   # offload region its own @.offload_sizes.N / @.offload_maptypes.N pair
   # with independent (and not co-numbered) suffixes -- see check_maps.py's
-  # docstring. Every benchmark this script drives has exactly one pragma.
-  region_count=$(grep -c '^  line ' "$report" || true)
-  if [[ "$region_count" -ne 1 ]]; then
-    record "$name" "tier3" "SKIP: $region_count offload regions in this file; check_maps.py's default globals only resolve a single region (run it by hand with --sizes-global/--maptypes-global, see NOTES.md)"
+  # docstring. Every benchmark this script drives has at most one GPU
+  # pragma; CPU-threaded pragmas in the same file carry no map() clauses and
+  # don't count toward this.
+  if [[ "$gpu_pragmas" -ne 1 ]]; then
+    record "$name" "tier3" "SKIP: $gpu_pragmas GPU-offload regions in this file; check_maps.py's default globals only resolve a single region (run it by hand with --sizes-global/--maptypes-global, see NOTES.md)"
     continue
   fi
 
   host_ll="$OUTDIR/$name.host.ll"
   if "$CLANG" -fopenmp -fopenmp-targets=nvptx64-nvidia-cuda --offload-host-only -S -emit-llvm \
        "${SYSROOT_ARGS[@]}" "$omp_src" -o "$host_ll" 2>"$OUTDIR/$name.host.build.log"; then
-    pragma_text=$(grep '^  line ' "$report" | head -1 | grep -oE 'map\([^)]*\)( map\([^)]*\))*')
+    pragma_text=$(grep '^  line .*omp target' "$report" | head -1 | grep -oE 'map\([^)]*\)( map\([^)]*\))*')
     if [[ -z "$pragma_text" ]]; then
       record "$name" "tier3" "SKIP: no map() clause found on the reported pragma line"
       continue

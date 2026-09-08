@@ -49,6 +49,7 @@ void heavy_transform(double *out, const double *in) {
 
 int main() {
   static double in[N], out[N];
+  #pragma omp parallel for
   for (int i = 0; i < N; i++) {
     in[i] = (double)i / N;
   }

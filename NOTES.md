@@ -584,3 +584,82 @@ plus deriving `has_offload` from the tool's own `nothing annotated` report text 
 presence — so a stale file surviving some other way still can't be mistaken for this run's output.
 Re-verified against the same reproduction (file now absent after regenerate; the four-benchmark
 sweep and `compute_heavy`'s full-tier pass are otherwise identical to before the fix).
+
+### Days 17-18 — CPU-threaded fallback path: a solved guard, a targeted degrade, and a real verdict bug
+
+**Decision:** Extend `OmpRewriter` to emit `#pragma omp parallel for` for `CPU_PARALLEL` loops, not
+just `#pragma omp target teams distribute parallel for` for `GPU_OFFLOAD` ones. Three sub-decisions
+made along the way:
+
+1. Close a gap Days 11-13 had left open by design: a symbolic-bound `CPU_PARALLEL` verdict previously
+   ended in "trip count is a runtime parameter and assumed not pathologically small" — an honest
+   caveat, but an avoidable one. `Profitability.cpp` already solves the GPU-vs-CPU crossover in closed
+   form for a symbolic bound; the CPU-vs-sequential crossover is the same algebra against a different
+   pair of rates (`t_seq(n) = RateSeq * n`, `t_cpu(n) = RateCpu * n + ThreadStartUs`, solve for `n*`),
+   so it costs nothing new to derive and removes a documented weak point. `ProfitabilityVerdict` gained
+   `CpuBeatsSeq` (bool, computed for every evaluated loop) and `CpuGuardExpr` (the symbolic-bound
+   threshold, mirroring `GuardExpr`), and the rewrite pass renders it as `if(parallel: n >= T)`.
+2. Only one of `OmpRewriter`'s three existing GPU declines degrades to the CPU pragma instead of
+   emitting nothing: a descending loop. The other two (macro-expansion location, lexically nested
+   inside an already-annotated loop) are objections about the rewrite mechanism itself and apply
+   identically to `parallel for`. The descending case is different in kind: it's declined specifically
+   because `ArrayRegion`'s mapped-region model reads the loop's bound text as an element count, which
+   a descending loop's lower limit is not (see Day 14's entry and `Profitability.h`'s `ExtentText`
+   comment) — and `parallel for` has no `map()` clause at all, so that specific objection evaporates.
+   Degrading is gated on the verdict's own `CpuBeatsSeq`, so a degraded loop is still a target the cost
+   model endorses, not just "whatever's left when GPU doesn't work." The substitution is recorded as an
+   explicit `Skipped` line (`"degraded to CPU-threaded ... instead of the GPU_OFFLOAD verdict"`), never
+   silent — `RewriteSite` gained a `Kind` field so the report and `finalize()` can always tell which
+   pragma actually landed at a given site, independent of what the original verdict said.
+3. No `private()`/`reduction()` clauses on the CPU pragma. Not an oversight: `SafetyAnalyzer` already
+   requires every scalar written in a loop body to be declared fresh inside it, and OpenMP predetermines
+   the loop control variable private on its own, so there is no shared-scalar hazard left to clause
+   against. A real reduction (`sum += a[i]`) is already `UNSAFE` under the existing body-dependence rule
+   and never reaches this pass. Documented in `OmpRewriter.h` rather than left as an unexplained gap.
+
+**A real bug found and fixed while extending this, not introduced by it:** the symbolic-bound branch's
+final `else` — reached whenever the GPU rate didn't beat the CPU rate — chose `CPU_PARALLEL`
+unconditionally, without ever checking whether host threading beat running the loop sequentially at
+all. Every benchmark and fixture in this repo has `RateCpu < RateSeq` under the default machine model
+(8 cores, 25% single-core DRAM share), so no verdict anyone had actually seen was wrong — but
+`--cpu-cores=1 --single-core-dram-share=1.0` makes `RateCpu == RateSeq`, which both produces a verdict
+the model's own numbers don't support *and* would have divided by zero in the new CPU-vs-sequential
+crossover. Fixed by computing `CpuBeatsSeq` independently before the final decision and routing to
+`SEQUENTIAL`, with a named reason, when it's false. Verified with the negative control the fix was
+built for: `p05tool --cpu-cores=1 --single-core-dram-share=1.0 benchmarks/example.c` now reports
+`SEQUENTIAL` for the loop that previously reported `CPU_PARALLEL` unconditionally.
+
+**`small_update.c` still emits nothing, and that's correct, not a shortfall.** The Day 15-16 entry's
+"Next" line predicted all three CPU-eligible benchmarks would gain pragmas once this landed. Two did
+(`example.c`, `saxpy.c`); `small_update.c`'s only `SAFE` loop has trip count 8, and the cost model
+correctly rules it `SEQUENTIAL` — no target recovers a 5μs thread-start cost over eight iterations.
+Bending that benchmark to force a pragma would erase the one thing it exists to demonstrate (safe and
+profitable are different questions), so `scripts/build_and_run.sh`'s SKIP reason for it was corrected
+instead of the benchmark: "no parallelizable loop... correctly ruled SEQUENTIAL" rather than "CPU
+fallback is Days 17-18."
+
+**`scripts/build_and_run.sh` needed to tell GPU and CPU pragmas apart, not just count them.** Tier 1
+(host build & run) doesn't care which pragma kind got a loop there, but Tiers 2-3 (device codegen,
+map-clause verification) are meaningless for a `parallel for` with no `map()` clause and no device
+offloading entry. The report's `^  line ` lines are split into `gpu_pragmas` (containing `omp target`)
+and `cpu_pragmas` (the rest); Tier 1 gates on their sum, Tiers 2-3 gate on `gpu_pragmas` alone with a
+SKIP reason naming why CPU pragmas don't apply, rather than the old single `has_offload` flag that
+would have made Tier 2's entry-count assertion fail the moment `saxpy.c` gained CPU pragmas but no GPU
+ones.
+
+**Result:** `compute_heavy` is an unchanged full-tier PASS (regression check on the GPU path — it also
+picked up a second, previously-unannotated `CPU_PARALLEL` loop, the array-init loop in `main`, since
+that loop was never `GpuOffload` and so was invisible to Day 14's pass). `example` and `saxpy` go from
+full SKIP to a genuine Tier 1 PASS: built, run, and checksum-diffed against the sequential baseline
+(bit-identical — every rewritten loop here is element-independent with no reduction, so a mismatch
+would have meant a real safety-analysis miss, not a rounding difference). `small_update` SKIPs for the
+reason above. Two new fixtures added to `tests/profitability_cases.c`
+(`cpu_conditional_case`, `gpu_offload_descending_case`) exercise the symbolic CPU guard and the
+degrade path respectively — the descending case was additionally hand-verified end to end (compiled,
+run, checksum-diffed against its own sequential form outside the fixture set) before being committed
+as a regression fixture, the same discipline Day 14's review applied.
+
+Full nine-input regression sweep (without `--rewrite`) confirmed byte-identical to the pre-Days-17-18
+baseline except the new `cpu-vs-seq` reason lines and `if(...)` guards this change adds to existing
+`CPU_PARALLEL` verdicts, and the two new fixture cases — no `GPU_OFFLOAD`, `SEQUENTIAL`, or `UNSAFE`
+verdict anywhere flipped.

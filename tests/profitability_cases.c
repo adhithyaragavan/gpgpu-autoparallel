@@ -113,3 +113,34 @@ void unsafe_gate_case(double *data, int n) {
     data[i] = touches(data[i]);
   }
 }
+
+// =================================================== CPU_PARALLEL if ======
+
+// Days 17-18 fixture: cpu_low_intensity_case's SAXPY shape, but the bound is
+// a parameter, so the trip count is symbolic -- proves the CPU-vs-sequential
+// crossover the same way gpu_conditional_case above proves the GPU one.
+// Below the guard, ThreadStartUs isn't recovered and the codegen pass emits
+// `if(parallel: n >= T)` rather than a bare pragma; T is solved from the
+// cost model, not picked.
+void cpu_conditional_case(double *y, const double *x, int n) {
+  for (int i = 0; i < n; i++) {
+    y[i] = y[i] + x[i];
+  }
+}
+
+// ========================================== GPU_OFFLOAD, descending =======
+
+// Days 17-18 fixture: gpu_offload_case's exact kernel and trip count, just
+// counting down. Profitability has no notion of loop direction, so the
+// verdict here is still GPU_OFFLOAD -- the discrimination this fixture
+// proves belongs to OmpRewriter, not this pass: ArrayRegion's mapped-region
+// model reads an ascending bound as an element count, which a descending
+// loop's lower limit is not, so the rewrite pass declines the GPU pragma
+// and degrades this to `#pragma omp parallel for` instead (see
+// OmpRewriter.h's header comment). Verified correct against the sequential
+// baseline in NOTES.md's Days 17-18 entry, not just "it compiles".
+void gpu_offload_descending_case(double *out, const double *in) {
+  for (int i = 65535; i >= 0; i--) {
+    out[i] = heavy_kernel(in[i]);
+  }
+}
