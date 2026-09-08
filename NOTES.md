@@ -466,3 +466,121 @@ out[0:0])` and compiles clean is a bug someone finds by getting wrong numbers ou
 possibly well into Day 15 or later, with much less signal about where it came from.
 
 <!-- Add new entries below as you build. -->
+
+---
+
+### Days 15-16 — Three-tier verification without a GPU, and instrumenting the benchmarks
+
+**Decision:** Build a three-tier evidence ladder (`scripts/build_and_run.sh` +
+`scripts/check_maps.py`) that gets as close as this machine allows to DAY_BY_DAY.md's "compile
+rewritten source with your OpenMP offload toolchain, get it to actually build" / "get it running and
+producing output" — rather than declaring the day done on `-fsyntax-only` alone, or blocked outright
+by the missing device.
+
+**What's actually available on this machine, checked directly, not assumed:** Homebrew LLVM 22.1.8
+ships `libomp.dylib` (host OpenMP runtime) but no `libomptarget`; `omp_get_num_devices()` returns 0
+at runtime. Both device-arch probes fail explicitly — `nvptx-arch` returns nothing (no NVIDIA GPU),
+`amdgpu-arch` reports "No AMD GPU detected". Forcing `--offload-arch=sm_70` fails at "cannot find
+libdevice" (no CUDA toolkit installed); with `-nocudalib` it instead fails inside the NVPTX backend
+("PTX version 4.2 does not support target 'sm_70'... minimum required PTX version is 6.0" — an
+`ptxas`-version mismatch, not a codegen bug); `--offload-arch=gfx90a -nogpulib` crashes inside the
+AMDGPU backend on a Mach-O section-specifier error (ROCm's ELF-oriented offloading sections aren't
+meaningful on this Mach-O host, unrelated to the tool's own output). So real device execution is
+correctly out of reach here, exactly as CLAUDE.md predicted going into Day 15 — but three narrower
+checks all turned out to be possible and are what the ladder is built on:
+
+- **Tier 1 (host build & run).** `clang -fopenmp -O2` on a rewritten `.omp.c` links against
+  `libomp.dylib` alone and runs — `__kmpc_fork_teams`/`__kmpc_fork_call`/`__kmpc_for_static_init_4`
+  are present in `nm`. With no `-fopenmp-targets`, OpenMP's own semantics make the host the initial
+  device, so `target teams distribute parallel for` legitimately executes as 1 team × N host threads
+  (confirmed via `omp_get_num_teams()`/`omp_get_num_threads()` printed from inside a probe region —
+  1 and 10 respectively on this 10-core machine, following `OMP_NUM_THREADS`). This is conformant
+  fallback behavior, not a trick.
+- **Tier 2 (device codegen).** `-fopenmp-targets=nvptx64-nvidia-cuda --offload-arch=sm_52
+  -nocudalib --offload-device-only -S` emits real NVPTX for a rewritten file, without needing a CUDA
+  toolkit at all (`-nocudalib` skips only the libdevice math-intrinsics link, not codegen). This
+  compiles the *device* side of the target region — the part `-fsyntax-only` never touches.
+- **Tier 3 (map-clause verification).** `--offload-host-only -S -emit-llvm` lowers each `map()`
+  clause to entries in `@.offload_sizes`/`@.offload_maptypes` — e.g. `compute_heavy.omp.c`'s
+  `map(from: out[0:65536]) map(to: in[0:65536])` lowers to `[524288, 8, 524288, 8]` /
+  `[0x22, 0x4000, 0x21, 0x4000]`, decoded per `llvm/Frontend/OpenMP/OMPConstants.h` as `from`+
+  `TARGET_PARAM`/`ATTACH`/`to`+`TARGET_PARAM`/`ATTACH`, with 524288 = 65536 × 8 bytes exactly.
+  `scripts/check_maps.py` automates this decode-and-compare against the pragma text the tool itself
+  reported, so the two are checked against each other, not eyeballed.
+
+**What each tier does not prove, stated explicitly because it's the load-bearing caveat:** Tier 1's
+host-fallback execution does not exercise `map()` at all — on the host-as-device, map clauses
+degenerate to no-ops over already-shared memory, so a completely wrong `map()` clause would still run
+and still produce the right answer here. That is exactly why Tier 3 exists as a separate check rather
+than being inferred from Tier 1 passing. Tier 2 proves the device side *compiles*, not that a real
+device *executes* it correctly. Tier 3 proves what Clang's host-side runtime call will tell a real
+offload runtime to move — not that the runtime moves it correctly, or that the values landing at the
+device addresses are the right ones. None of the three is a substitute for running on an actual GPU;
+that gap is inherited forward, not closed.
+
+**A real, checked assumption that turned out false — declare-target's necessity on this compiler:**
+CLAUDE.md's Day 14 entry states "a target region cannot call a function without a device-side
+compilation, so without it Day 15 would open on a guaranteed compile failure." I tried to build a
+negative control on exactly that claim: stripped `#pragma omp declare target` /
+`#pragma omp end declare target` from a copy of `compute_heavy.omp.c` and re-ran Tier 2. It compiled
+clean anyway, with `heavy_elem` still present as a device `.func` in the PTX. Pushed further with a
+synthetic two-hop case (`heavy_elem` calling a second, also-unmarked `inner_helper`) — same result,
+`inner_helper` also present in the device PTX. Homebrew Clang 22.1.8 implicitly promotes any
+same-translation-unit function transitively reachable from a `target` region to device compilation,
+with no `declare target` pragma required at all, contradicting the assumption as stated for this
+specific toolchain version.
+
+This does **not** make the tool's `declare target` wrapping pass wrong or dead code — it's still the
+behavior the OpenMP spec requires generally (separate compilation, other compilers/older Clang
+versions, indirect reachability the implicit analysis can't see through), and being explicit rather
+than relying on one compiler's inference is the more defensible, portable design. But the specific
+claim "without it, compilation guaranteed to fail" is now corrected to "without it, compilation is
+not guaranteed to fail on Clang 22's implicit target-region analysis, but is not portable and is not
+what the standard's separate-compilation model assumes" — and Tier 2's real, demonstrated negative
+control turned out to be different from the one first attempted: stripping the pragma *line itself*
+(as if a rewriter bug silently dropped an insertion the report claimed happened) does correctly FAIL
+Tier 2's entry-count assertion — 0 `.entry __omp_offloading_` symbols in the PTX against the tool's
+reported 1 pragma line — which is the assertion that actually has teeth on this toolchain.
+
+**Making the benchmarks runnable at all.** None of the ten `.c` files in `benchmarks/`/`tests/`
+contained a single `#include`, `printf`, or use of a computed result before this — `clang -O2 -S
+benchmarks/compute_heavy.c` compiled `main` to `mov w0, #0; ret`, since nothing consumed
+`heavy_transform`'s output. "Producing output" was structurally impossible. Fixed by adding
+`#include <stdio.h>` plus a checksum-and-print to each of the four benchmarks that has a `main()`
+(`compute_heavy`, `saxpy`, `example`, `small_update`) — `tests/*.c` stay analyzer-only fixtures with
+no `main`, unchanged, since that was never their role.
+
+Checked, not assumed, that this doesn't quietly change the safety/profitability analysis under test:
+macOS SDK headers are declaration-only, so `#include <stdio.h>` adds zero loops to any report (only
+requires the tool be invoked with `-isysroot $(xcrun --show-sdk-path)` so `stdio.h` resolves). The
+checksum loop itself (`for (i) sum += arr[i]`) is a new loop each report gains exactly one of, and it
+is correctly flagged `UNSAFE` — `loop-carried dependence: writes to 'sum', which is not declared
+inside the loop body` — which is `SafetyAnalysis.h`'s documented reduction over-approximation working
+exactly as designed, not a new gap. Verified with a full nine-input regression sweep: the four
+untouched `tests/`/other `benchmarks/` fixtures are byte-identical to the Day 14 baseline; the four
+instrumented benchmarks differ from baseline by exactly the expected one new `UNSAFE` loop block plus
+shifted line numbers, nothing else moved. `benchmarks/compute_heavy.omp.c` was regenerated after the
+edit; its pragma text (`map(from: out[0:65536]) map(to: in[0:65536])`) is unchanged — only the
+`#include` and the checksum block were added around it.
+
+No timing instrumentation added — deferred to Day 20, once the CPU-fallback path (Days 17-18) exists
+to be measured against.
+
+**Alternative considered:** Separate harness files (`benchmarks/harness/<name>_main.c`) instead of
+editing the benchmarks in place, keeping the analyzed `.c` files pristine. Rejected: it would require
+removing `main()` from each benchmark, which changes the analyzed report anyway (fewer loops, one
+fewer function), so it doesn't actually avoid report churn — it just moves where the churn is, while
+adding a second file and a second build step per benchmark for no offsetting benefit.
+
+**Adversarial review found and fixed one real bug:** `has_offload` in `build_and_run.sh` was
+determined by `[[ -f "$omp_src" ]]` alone. `p05tool --rewrite -o <path>` never deletes or truncates
+`<path>` when nothing gets annotated, and `build/bench/` was never cleaned between runs — so a
+`.omp.c` left over from an earlier invocation (different machine-model flags tried by hand, an older
+commit, a benchmark that used to annotate) would be silently picked up and tested as if it were this
+run's output. Reproduced directly: seeded a mismatched `.omp.c` at `build/bench/example.omp.c`
+(`example.c` currently annotates zero loops) and confirmed the pre-fix script built and ran it under
+`example`'s stage names regardless. Fixed with `rm -f "$omp_src"` immediately before regenerating,
+plus deriving `has_offload` from the tool's own `nothing annotated` report text rather than file
+presence — so a stale file surviving some other way still can't be mistaken for this run's output.
+Re-verified against the same reproduction (file now absent after regenerate; the four-benchmark
+sweep and `compute_heavy`'s full-tier pass are otherwise identical to before the fix).

@@ -4,6 +4,8 @@
 // This is the case the Week 2 profitability heuristic must learn to decline,
 // so the demo can show "safe" and "profitable" are different questions.
 
+#include <stdio.h>
+
 double clamp_unit(double v) {
   if (v < 0.0)
     return 0.0;
@@ -21,5 +23,10 @@ void normalize(double *values) {
 int main() {
   double values[8] = {-0.5, 0.2, 1.5, 0.7, -1.0, 0.9, 0.0, 2.0};
   normalize(values);
+
+  double sum = 0.0;
+  for (int i = 0; i < 8; i++)
+    sum += values[i];
+  printf("small_update checksum %.12e\n", sum);
   return 0;
 }

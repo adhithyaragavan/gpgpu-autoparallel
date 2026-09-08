@@ -8,11 +8,20 @@ SegFault 2026 hackathon project. See `NOTES.md` for the running design-decision 
 mkdir build && cd build
 cmake -G Ninja .. -DCMAKE_PREFIX_PATH=<path to your LLVM/Clang install's cmake config dir>
 ninja
-./p05tool ../benchmarks/example.c --
+./p05tool ../benchmarks/example.c -- -isysroot "$(xcrun --show-sdk-path)"
 ```
 
 If `find_package(Clang REQUIRED CONFIG)` can't find Clang, point `CMAKE_PREFIX_PATH` at the `lib/cmake`
-directory of your LLVM/Clang installation (e.g. wherever `ClangConfig.cmake` lives).
+directory of your LLVM/Clang installation (e.g. wherever `ClangConfig.cmake` lives). `-isysroot` (macOS
+only; drop it elsewhere) is needed because the benchmarks now `#include <stdio.h>` to print a checksum
+— see Days 15-16 below.
+
+To regenerate every benchmark's OpenMP pragmas and run the full build/run/device-codegen/map-clause
+verification sweep in one step:
+
+```bash
+./scripts/build_and_run.sh
+```
 
 ## Status
 
@@ -99,6 +108,26 @@ confirming profitability never runs on anything the safety pass didn't clear) pl
 benchmarks, every verdict matching hand-derived numbers to three decimal places. No regression in
 any Days 2-10 classification or safety verdict.
 
-Next: Days 14-16 — `Rewriter`-based pragma insertion for the GPU-offload path
-(`#pragma omp target teams distribute parallel for` with `map()` clauses already built by
-`ProfitabilityAnalyzer::analyzeLoop`'s `ArrayRegion` list).
+**Day 14 — GPU pragma insertion.** `src/codegen/OmpRewriter.h/.cpp`, wired behind a `-rewrite`
+flag (default off; without it every report is byte-identical to Days 2-13's), inserts
+`#pragma omp target teams distribute parallel for` with `map()` clauses read straight off
+`ProfitabilityVerdict` for every `Evaluated && OffloadTarget::GpuOffload` loop, and wraps the
+transitive callee set (`CallResolver::getReachable`) in `#pragma omp declare target`. Output goes to
+a sibling `<name>.omp.c`, never in place. Four cases are declined and reported by name rather than
+silently dropped (loop not in the main file, macro-expansion location, nested inside an already
+annotated loop, callee with no main-file definition).
+
+**Days 15-16 — building and running it.** No offload GPU is available on this development machine,
+so `scripts/build_and_run.sh` (+ `scripts/check_maps.py`) implements a three-tier evidence ladder in
+place of a real device run: (1) host build & run against `libomp.dylib`, where the host correctly
+acts as OpenMP's own initial device; (2) NVPTX device codegen (`--offload-device-only`, no CUDA
+toolkit required) asserting the emitted offloading-entry count and `declare target` wrapping match
+the tool's own report; (3) decoding the `map()` clauses' actual Clang lowering
+(`@.offload_sizes`/`@.offload_maptypes`) and cross-checking direction and byte count against the
+reported pragma text. See `NOTES.md` for exactly what each tier does and doesn't prove, and a
+checked-false assumption about `declare target`'s necessity uncovered while building the negative
+control. The four benchmarks with a `main()` now print a checksum of their computed output (previously
+none of the ten `.c` fixtures produced any output at all); `compute_heavy` passes every tier.
+
+Next: Days 17-18 — `Rewriter`-based pragma insertion for the CPU-threaded fallback path
+(`#pragma omp parallel for`) on safe-but-not-profitable loops.

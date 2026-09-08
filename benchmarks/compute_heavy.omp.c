@@ -15,6 +15,8 @@
 // tests/profitability_cases.c's heavy_kernel: op counting is static, so a
 // loop inside the helper would be counted once rather than trip-count times.
 
+#include <stdio.h>
+
 #pragma omp declare target
 double heavy_elem(double x) {
   double r = 0.1;
@@ -51,5 +53,10 @@ int main() {
     in[i] = (double)i / N;
   }
   heavy_transform(out, in);
+
+  double sum = 0.0;
+  for (int i = 0; i < N; i++)
+    sum += out[i];
+  printf("compute_heavy checksum %.12e\n", sum);
   return 0;
 }
