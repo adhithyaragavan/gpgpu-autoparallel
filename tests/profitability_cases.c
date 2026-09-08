@@ -144,3 +144,29 @@ void gpu_offload_descending_case(double *out, const double *in) {
     out[i] = heavy_kernel(in[i]);
   }
 }
+
+// =============================================== SEQUENTIAL, no guard =====
+
+// Regression fixture for a real bug an adversarial review of the Days 17-18
+// commit caught before it shipped: LoopAnalysis.cpp only populates
+// LoopInfo::BoundText for VariableBound loops. A ConstantBound loop with an
+// unknown TripCount (Kind and TripCount are documented as independent facts
+// -- see CLAUDE.md) reads BoundText as an empty string, and both GuardExpr
+// (pre-existing) and this commit's new CpuGuardExpr built a guard directly
+// from it with no check -- `if(parallel:  >= T)`, which Clang correctly
+// rejects at compile time. This shape was never exercised by any prior
+// fixture (every one has Start == 0, literally or implicitly), so the
+// existing regression sweep never caught it; the new descending-loop CPU
+// degrade path made it newly *reachable* (previously every descending loop
+// was declined outright, so this defect had no exposure there) and newly
+// *silent* (the tool reported success and wrote a file that failed to
+// compile). Fixed by declining to price a loop past this point when its
+// bound is a compile-time constant but its start value is not: there is no
+// printable trip-count expression to guard on, so it's SEQUENTIAL with a
+// named reason rather than a fabricated one. See NOTES.md's Days 17-18
+// entry.
+void unguardable_bound_case(double *out, const double *in, int start) {
+  for (int i = start; i < 8192; i++) {
+    out[i] = heavy_kernel(in[i]);
+  }
+}

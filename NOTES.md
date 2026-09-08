@@ -663,3 +663,52 @@ Full nine-input regression sweep (without `--rewrite`) confirmed byte-identical 
 baseline except the new `cpu-vs-seq` reason lines and `if(...)` guards this change adds to existing
 `CPU_PARALLEL` verdicts, and the two new fixture cases — no `GPU_OFFLOAD`, `SEQUENTIAL`, or `UNSAFE`
 verdict anywhere flipped.
+
+### Days 17-18 (cont.) — adversarial review of the CPU-fallback commit found one real, silent, compile-breaking bug
+
+**Bug:** `LoopAnalysis.cpp` only populates `LoopInfo::BoundText` for `Kind == VariableBound`. A
+`ConstantBound` loop with an unknown `TripCount` — a shape `CLAUDE.md` explicitly documents as
+expected ("a `CONSTANT_BOUND` loop can still have an unknown trip count (variable start value)") —
+reads `BoundText` as an empty string, since there's nothing symbolic about its *bound* to print; what's
+unknown is its *start* value (e.g. `for (int i = start; i < 8192; i++)` with `start` a parameter), and
+`LoopInfo` never captured that expression's source text. Both `Profitability.cpp`'s symbolic branch
+(pre-existing `GuardExpr`, and this commit's new `CpuGuardExpr`) built guard text as
+`LI.BoundText + " >= " + T` with no check that `BoundText` was actually populated, producing
+`if(target:  >= 8192)` or `if(parallel:  >= 512)` — text Clang correctly rejects with `error: expected
+expression`, pointing at the empty left operand.
+
+This defect predates Days 17-18 (the GPU `GuardExpr` path was already exposed to it), but had **zero
+prior blast radius**: no existing benchmark or fixture has a symbolic-start loop, so it never fired.
+Days 17-18's new code opened two *new* paths into it — `CpuGuardExpr` on a direct `CPU_PARALLEL`
+verdict, and, more importantly, the new descending-loop degrade: every descending loop was previously
+declined outright by `OmpRewriter` regardless of this defect, so a descending symbolic-start loop had
+literally never reached codegen before; the new degrade path is what turned a latent, un-triggerable
+bug into one that actually wrote a broken `.omp.c` file and reported success while doing it.
+
+**Caught by:** the adversarial-review subagent this repo's working conventions call for after any
+non-trivial implementation — it re-derived the crossover algebra by hand, then built a synthetic
+descending/symbolic-start input specifically to probe the interaction between the new degrade path and
+the pre-existing `BoundText` handling, compiled the tool's own output, and got a real compiler error.
+Exactly the kind of thing a `-fsyntax-only` check on the *tool itself* can't catch, since the bug is in
+what the tool writes, not in the tool's own source.
+
+**Fix:** rather than reconstruct the missing trip-count expression textually (`(8192) - start`) — a
+real fix, but one that requires capturing the start expression's source text in `LoopInfo` and handling
+`CmpOp`/off-by-one correctly for a formula that mixes a symbolic start with a constant bound, which is
+more surface than this bug warrants fixing under right now — `ProfitabilityAnalyzer::analyzeLoop` now
+declines to price a loop any further once it's established there's no printable trip-count expression to
+guard on (`!TripCount && Kind != VariableBound`, checked once, ahead of both branches that would
+otherwise build guard text from it). Matches the tri-state philosophy already used elsewhere in this
+codebase — `SafetyAnalyzer` returns `Unknown` rather than guess when it "cannot see this far"; this loop
+returns `SEQUENTIAL` with a named reason rather than fabricate a guard neither branch can actually
+render. The ops/byte facts already computed by that point (they don't depend on `Start`) stay in the
+report; only the trip-count-dependent decision is declined.
+
+**Verified:** the exact failing repro (`for (int i = start; i >= 0; i--)` calling a high-intensity
+kernel, `start` a parameter) now reports `SEQUENTIAL` with the new reason and emits no pragma at all,
+for both the descending/CPU-degrade path and the pre-existing ascending/GPU-guard path tried against the
+same underlying defect. A permanent regression fixture,
+`tests/profitability_cases.c`'s `unguardable_bound_case`, pins this. Full nine-input regression sweep
+confirmed byte-identical classification to before the fix on every existing benchmark and fixture — the
+defect had no prior exposure, so nothing else could have moved. `scripts/build_and_run.sh`'s full ladder
+re-run clean after the fix.

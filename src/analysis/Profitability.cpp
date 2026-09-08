@@ -391,6 +391,45 @@ ProfitabilityAnalyzer::analyzeLoop(const LoopInfo &LI, const LoopSafety &Safety)
 
   double CpuAggGFs = Machine.CpuThroughputGFs * Machine.CpuCores;
 
+  // A loop can lack a known TripCount for two different reasons (LoopInfo.h:
+  // Kind and TripCount are independent facts), and only one of them leaves
+  // anything safe to write into a runtime guard. VariableBound means the
+  // *bound* itself is symbolic and LI.BoundText holds its printed source
+  // text ("n") — that text is exactly the loop's trip count, since Start is
+  // required to be known for this Kind. ConstantBound-with-no-TripCount
+  // means the opposite: the bound folded to a compile-time constant, but
+  // Start didn't (e.g. `for (int i = start; i < 8192; i++)` with `start` a
+  // parameter) — LoopAnalysis.cpp never populates BoundText for this Kind
+  // (there is nothing symbolic about the bound to print), so it reads as an
+  // empty string here, not as "8192". Building `LI.BoundText + " >= " + T`
+  // in that case does not fail to fold — it silently emits an if() clause
+  // testing the empty left operand against T, which Clang correctly rejects
+  // at compile time. Caught by an adversarial review of the Days 17-18
+  // commit that first added a *second* path reachable through this same
+  // defect (CpuGuardExpr, and the descending-loop CPU degrade, both built
+  // on this same unchecked BoundText).
+  //
+  // There is no printed expression for "trip count" in the second case —
+  // the actual count is `constant_bound - start`, and `start`'s source text
+  // was never captured (LoopInfo only stores its folded *value*, when it
+  // has one). Rather than reconstruct that expression textually (a real
+  // fix, but a bigger one, deferred — see NOTES.md), this loop is priced no
+  // further and declined here, the same way SafetyAnalyzer returns Unknown
+  // rather than guess when it "cannot see this far": the ops/byte facts
+  // already computed above stay in the report (they don't depend on Start),
+  // but no Target needing a runtime guard is chosen, and neither GuardExpr
+  // nor CpuGuardExpr is ever set from this path.
+  if (!V.TripCount && LI.Kind != LoopKind::VariableBound) {
+    V.Target = OffloadTarget::Sequential;
+    V.Reasons.push_back(
+        "-> SEQUENTIAL: trip count not statically known, and this loop's "
+        "bound is a compile-time constant while its start value is not "
+        "(e.g. a parameter) — there is no printable trip-count expression "
+        "to guard a pragma on, so this loop is declined rather than one "
+        "being fabricated");
+    return V;
+  }
+
   if (V.TripCount) {
     // --- Concrete trip count: evaluate all three targets numerically -------
     int64_t N = *V.TripCount;
