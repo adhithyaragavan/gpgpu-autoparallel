@@ -15,6 +15,7 @@
 // benchmarks/compute_heavy.c is the one kernel that does clear the bar.
 
 #include <stdio.h>
+#include <time.h>
 
 #define N 65536
 
@@ -36,7 +37,7 @@ int main(int argc, char **argv) {
     x[i] = (double)i;
     y[i] = 1.0;
   }
-  saxpy(2.0, x, y);
+  { struct timespec _p05_t0, _p05_t1; clock_gettime(CLOCK_MONOTONIC, &_p05_t0); saxpy(2.0, x, y); clock_gettime(CLOCK_MONOTONIC, &_p05_t1); fprintf(stderr, "TIMING saxpy %.3f\n", (_p05_t1.tv_sec - _p05_t0.tv_sec) * 1e6 + (_p05_t1.tv_nsec - _p05_t0.tv_nsec) / 1e3); }
 
   double sum = 0.0;
   for (int i = 0; i < N; i++)

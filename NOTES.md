@@ -832,14 +832,151 @@ seq exit 0, omp exit 139)` instead of a false `PASS`. Full ladder re-run clean a
 benchmarks, same PASS/SKIP pattern as before the fix — the fix only changes behavior on a failure path
 that the normal run never exercises).
 
-Next: Day 20 — measure real wall-clock timing (sequential vs. gated-policy CPU/GPU pragmas), replacing
-`ProfitabilityAnalyzer`'s modelled microsecond estimates with actual measured numbers. No timing
-harness exists yet in this repo (confirmed: no `chrono`/`gettimeofday`/`clock_gettime`/`perf` usage
-anywhere in `scripts/` or `src/`). Worth noting ahead of that day: every benchmark here has a trip
-count of at most 65536 elements of straight-line double arithmetic, likely sub-millisecond total
-compute — process-level wall-clock timing (spawning `.seq`/`.omp` as separate processes and timing
-the whole run) would be dominated by process-startup noise, not the loop itself, so Day 20 will need
-to bracket just the analyzed loop's execution internally (e.g. `clock_gettime` around the existing
-call site, printed to stderr so it doesn't disturb `tier1-diff`'s stdout checksum) rather than time
-whole-process invocations — flagged now so Day 20 doesn't have to discover it from a flat, uninformative
-result.
+### Day 20 — Real wall-clock timing, sequential vs. gated-policy, measured against the model's own predictions
+
+**What was added:** each benchmark's `main()` now brackets its one headline call — the call that
+enters the loop crossing a function boundary (`process`/`saxpy`/`normalize`/`heavy_transform`) — with
+`clock_gettime(CLOCK_MONOTONIC, ...)` and prints `TIMING <name> <us>` to stderr. `scripts/
+build_and_run.sh` gained a `measure_timing_us()` helper that runs a built binary `TIMING_ITERS`
+(default 7) times, discards stdout, parses the stderr TIMING line each time, and reports the **min**
+across runs — the standard way to see past scheduler-jitter noise at microsecond scale without
+touching the benchmark's own logic (each repeat is a fresh process, so there's no in-process
+re-application of a non-idempotent transform like `clamp_unit` to worry about, unlike repeating the
+call *within* one run would create). New `timing-seq`/`timing-omp`/`timing-speedup` stages record the
+result per benchmark, `timing-omp` correctly `SKIP`s for `small_update` (no `.omp` binary exists for
+it, same fact as every other Day-19-era `SKIP` there).
+
+**Design decision, and a course-correction caught before it shipped (same practice as Day 19's
+getenv→argv pivot):** the first approach tried was `-include time.h` as an extra clang arg (fed to
+`p05tool`'s own parse and to every build in `build_and_run.sh`) rather than editing any benchmark's
+`#include` list — this would have kept every analyzed loop's `line:col` in the report byte-for-byte
+unchanged, the same bar Day 19 held itself to. It worked mechanically (verified: `p05tool --rewrite`,
+the host `-O2`/`-O2 -fopenmp` builds, all succeeded with it). But it was rejected anyway, for a reason
+the line-count bar doesn't capture: it makes the benchmark **not standalone-compilable** — running
+`clang benchmarks/saxpy.c` directly, without the special flag, now fails with `undeclared identifier
+'CLOCK_MONOTONIC'` (confirmed directly, and independently by the editor's own diagnostics flagging
+exactly that on the instrumented file). Every benchmark this project claims to run on is supposed to
+be "unmodified, ordinary sequential C" — a benchmark that only compiles with a project-specific flag
+quietly contradicts that framing, and would confuse anyone (a judge included) who compiled it by hand.
+Switched to a real `#include <time.h>` at the top of each file instead, accepting the consequence:
+every loop's reported `line:col` shifts by a uniform **+1** in that file (the include is the first
+new line, nothing else moves). Verified this is genuinely benign, not assumed: a before/after
+`p05tool` report diff on all four benchmarks shows *only* the line-number lines changing (always by
+exactly +1, always consistently) — every verdict, pragma, reason string, and byte of report text
+otherwise identical. The bar this change is held to is therefore "verdicts unchanged," not "line
+numbers unchanged" — a deliberate, narrower redefinition of Day 19's bar for this specific case,
+not an abandonment of it.
+
+**Mandatory fix alongside this, not optional polish:** `build_and_run.sh`'s existing `tier1-seq`/
+`tier1-omp` run lines merged stdout+stderr (`2>&1`) into the files `tier1-diff` compares. Once the
+binaries print a TIMING line to stderr on every invocation, that merge would make `tier1-diff` FAIL
+permanently, on every run, regardless of correctness (the omp binary's measured microseconds always
+differ from the seq binary's). Changed both to `2>/dev/null` — the checksum-comparison run was never
+meant to carry timing data anyway; `measure_timing_us`'s own dedicated repeat-loop invocations are
+where timing is actually captured, separately.
+
+**Measured, not modelled — the actual numbers (median of 3 confirmation runs, each already a min of
+7):**
+
+| benchmark | measured seq | measured omp (gated policy) | speedup | modelled t_seq | modelled t_cpu | modelled t_gpu |
+|---|---|---|---|---|---|---|
+| example (n=1000, guarded) | ~0us | ~220us | n/a (see below) | guard-only | — | — |
+| saxpy | ~12us | ~31us | **0.4x — slower** | 314.573us | 83.643us | 143.319us |
+| small_update | ~0us | no `.omp` binary | n/a | 0.026us | 5.006us | 10.011us |
+| compute_heavy | ~215us | ~82us | **2.6x — faster** | 1310.720us | 168.840us | 107.867us |
+
+Three things the raw table doesn't say on its own, each checked against the actual report/build
+output rather than assumed:
+
+1. **`example`'s ~220us is not thread-dispatch cost — it's OpenMP runtime cold start.** `process`'s
+   pragma is guarded (`if(parallel: n >= 4096)`), and the call site here passes `n=1000`, below the
+   threshold: the guard correctly keeps this loop's execution serial at runtime, exactly as designed.
+   The measured ~220us instead reflects that this is the *only* OpenMP construct anywhere in
+   `example.omp.c` (1 CPU-threaded pragma, confirmed from the report) — so it's the first (and only)
+   time this process ever touches libomp, paying that library's one-time thread-pool/runtime setup
+   cost once, at that call, regardless of the guard. This is a genuine measurement of a real cost
+   this project's cost model has no term for at all (`MachineModel::ThreadStartUs` prices *entering a
+   parallel region*, not *initializing the runtime for the first time in the process*) — worth stating
+   plainly rather than reading it as "the guard didn't help": it did exactly what it was supposed to
+   (kept 1000 elements off a thread team), and this number would not reappear on a second call in the
+   same process.
+
+2. **`saxpy`'s CPU-threaded pragma measures genuinely slower than sequential, contradicting the
+   model's own prediction that it should win (`t_cpu=83.643us < t_seq=314.573us`).** Unlike `example`,
+   `saxpy.omp.c` has *two* pragmas (the array-init loop in `main()` and the bracketed `saxpy()` call),
+   so by the time the bracketed call runs, libomp is already warm (the init loop's own pragma paid
+   that cost moments earlier in the same process) — this is measuring steady-state per-region dispatch
+   overhead, not cold start, and it's still ~2.5x slower than running the 65536-iteration loop
+   sequentially. At 2 flops/iteration and only 24 bytes touched per iteration, the actual work is
+   trivial enough that thread-team wake/distribute/join overhead dominates outright — real evidence
+   that `MachineModel::ThreadStartUs = 5.0` us understates real per-region overhead on this machine by
+   roughly an order of magnitude for a region this cheap, not just at the margin. This is the single
+   most important finding of the day: the model's *decision* (CPU_PARALLEL) is not confirmed by
+   measurement here — it's contradicted. Nothing in this pass changes the model (out of scope,
+   confirmed with the user — recalibrating ~9 parameters off 3-4 data points is not defensible), but
+   the disagreement itself is now real, checked evidence, not a guess, and belongs in the finale
+   write-up as an honest known limitation rather than something to paper over.
+
+3. **`compute_heavy`'s ~82us omp measurement is not a GPU number and must not be compared to the
+   model's `t_gpu`.** `build_and_run.sh`'s Tier 1 builds `omp_bin` with plain `-fopenmp` (no
+   `-fopenmp-targets=nvptx64-nvidia-cuda` — confirmed by reading that build line directly), so the
+   `target teams distribute parallel for` region runs on "the host device" per the OpenMP spec:
+   genuinely multi-threaded, but the `map()` clauses' data motion is a no-op on the host, so none of
+   the modelled `GpuTransferUs` (~87 of the modelled 107.867us `t_gpu`) is actually paid here. The
+   honest comparison is against the model's `t_cpu` (168.840us) — and the measured ~82us beats even
+   that, meaning real vectorized/threaded execution of this compute-bound kernel outperforms the
+   model's own CPU estimate by roughly 2x. Read together with finding 2, this says something coherent
+   about the model as a whole: its *decisions* (which target wins) are not obviously wrong — the
+   compute-bound loop really is the one that benefits from parallelism, exactly as `GPU_OFFLOAD`
+   claims — but its *absolute magnitudes* are order-of-magnitude estimates exactly as
+   `Profitability.h`'s own header comment already says ("not measurements of any particular
+   machine"), and this is the first time that gap has actually been measured and quantified rather
+   than just disclaimed.
+
+**`small_update`'s ~0us seq measurement** is expected, not a harness bug: the model's own `t_seq`
+estimate for this loop is 0.026us (26 nanoseconds) — below `clock_gettime`'s practically observable
+resolution on this machine at the `%.3f`-microsecond precision printed here. This is itself the
+correct data point: the cost model declined to parallelize an 8-element loop, and real measurement
+confirms there's essentially nothing there to parallelize.
+
+**Verified, not assumed:** full ladder (`scripts/build_and_run.sh`) re-run five times back to back
+across this change — the *qualitative* result is stable every time (`saxpy`'s omp path is always
+slower than seq, `compute_heavy`'s is always ~2.5-3x faster, `example`'s guard always keeps it near
+`tier1-seq`'s own time floor), and `saxpy`/`compute_heavy` land within a few microseconds run to run
+(the table above reports the median of three of those runs). `example`'s ~200-270us cold-start number
+carries wider absolute variance (system-dependent OS-thread/runtime-init noise), which is itself
+consistent with what finding 1 above claims it's actually measuring — a one-time setup cost, not a
+steady-state one. Every pre-existing PASS/SKIP unchanged from before this change, no new FAILs
+anywhere. Before/after `p05tool --rewrite` report diff on all four benchmarks confirmed the only
+differences are the uniform `+1` line-number shift described above — no verdict, pragma, or reason
+string moved.
+
+**Adversarial review of this commit** (same practice as Days 14, 17-18, and 19) found one real bug in
+`measure_timing_us`'s first version, in its exit-status check rather than in the benchmarks
+themselves: it read `$bin`'s exit code back out of `${PIPESTATUS[0]:-$?}` after
+`us=$("$bin" 2>&1 >/dev/null | grep ... | awk ...)` — but with `set -o pipefail` and three pipeline
+stages, that only ever reports the *rightmost* non-zero exit code among them, not `$bin`'s specifically.
+Reproduced concretely: a fake binary built to `exit(139)` with no stdout/stderr output at all (no
+TIMING line) still correctly triggered the hard-fail (so this was never a silent-pass bug, unlike both
+of Day 19's), but reported `"exited 1"` — that's `grep`'s own "no match found" exit code, not the
+binary's real 139, because `grep` matching nothing was the rightmost non-zero stage once the crash
+happened before any output was written. Fixed by running `$bin` directly (not through a pipe) with its
+stderr captured to a temp file, checking `$?` straight from that invocation, then separately grepping
+the temp file for the TIMING line — removes the pipefail ambiguity entirely, and each failure mode now
+gets its own accurate message. Verified against the same fake-crash binary: now correctly reports
+`"exited 139"`. The min-of-N tracking logic (a small `awk -v a=... -v b=... 'BEGIN{exit !(a<b)}'`
+comparison per iteration) was checked separately against a fixed, non-noisy input sequence
+(`11 10 12 9 15 → 9`) to confirm it actually tracks a minimum rather than trusting real (noisy) binary
+timings to happen to exercise every branch.
+
+**Explicitly out of scope for this pass (confirmed with the user before starting):** no change to
+`ProfitabilityAnalyzer`/`MachineModel`'s constants or decision logic. This adds *measured evidence
+alongside* the model, it does not recalibrate the model from it — three data points is not enough to
+responsibly refit nine parameters, and `DAY_BY_DAY.md`'s Day 20 line asks to "measure timing... record
+real numbers," not rebuild the cost model.
+
+Next: Day 21 (if time allows, per `DAY_BY_DAY.md` — not started) — a naive "offload everything safe"
+comparison, for a three-way story (baseline vs. naive vs. gated policy) rather than today's two-way
+one. Not designed yet; would need its own decision about what "naive" means concretely for this tool
+(e.g. GPU target for every SAFE loop regardless of the profitability verdict) before it could be
+measured the same way today's numbers were.

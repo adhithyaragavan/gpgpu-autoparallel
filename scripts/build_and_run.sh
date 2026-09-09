@@ -14,6 +14,15 @@
 #            compared bit-for-bit (scripts/compare_outputs.py). A checksum
 #            alone can't catch a swapped element pair or a pair of
 #            compensating errors; see NOTES.md (Day 19).
+#   Timing (Day 20) - real wall-clock time, seq vs. this benchmark's
+#            gated-policy omp binary, bracketing just the headline loop's
+#            call site internally (clock_gettime, printed to stderr so it
+#            can't perturb tier1-diff's stdout checksum). Reports the min
+#            of TIMING_ITERS process-level repeats per binary. See NOTES.md
+#            (Day 20) for how to read these against the model's own
+#            estimates -- some of them measure something other than what
+#            they look like at a glance (example.c's guard, compute_heavy's
+#            host-fallback omp binary).
 #   Tier 2 - device codegen: does Clang's NVPTX backend accept the rewritten
 #            source as a *device* compilation unit, with every callee this
 #            file wraps in `declare target` actually present as a device
@@ -67,6 +76,56 @@ dump_count_for() {
   esac
 }
 
+# Day 20: number of process-level repeats measure_timing_us runs per binary,
+# reporting the min across them. Wall-clock timing at microsecond scale is
+# noisy (scheduler jitter, etc.); min is the standard way to see past that
+# without touching the benchmark source (each repeat is a fresh process, so
+# there's no in-process re-application of a non-idempotent transform like
+# clamp_unit/scale to worry about -- unlike repeating the call *within* one
+# run would be).
+TIMING_ITERS="${TIMING_ITERS:-7}"
+
+# Runs $1 (a built benchmark binary, no dump-path argv) TIMING_ITERS times,
+# discarding stdout and parsing the "TIMING <name> <us>" line each benchmark
+# prints to stderr (see benchmarks/*.c), and prints the minimum microsecond
+# value seen. Mirrors this project's own established lesson (both of Day
+# 19's adversarial-review bugs were an unchecked invocation silently treated
+# as valid data): a nonzero exit or a missing TIMING match aborts the whole
+# script with a named error rather than being folded into "just no output".
+#
+# $bin's own exit status is captured directly from running it (not read back
+# out of a `... | grep | awk` pipe's combined pipefail status): with three
+# pipeline stages, pipefail only ever reports the *rightmost* non-zero exit
+# code, so a binary that crashes *before* ever printing its TIMING line would
+# have its real exit code masked by grep's unrelated "no match" exit (1) --
+# caught by actually reproducing that exact case (a fake binary that exits
+# 139 with no output) against an earlier version of this function, which
+# still correctly hard-failed but misreported "exited 1" instead of 139.
+measure_timing_us() {
+  local bin="$1" i rc us best="" tmp
+  tmp="$(mktemp)"
+  for ((i = 0; i < TIMING_ITERS; i++)); do
+    "$bin" >/dev/null 2>"$tmp"
+    rc=$?
+    if [[ "$rc" -ne 0 ]]; then
+      echo "measure_timing_us: $bin exited $rc on iteration $i" >&2
+      rm -f "$tmp"
+      exit 1
+    fi
+    us=$(grep '^TIMING ' "$tmp" | awk '{print $3}')
+    if [[ -z "$us" ]]; then
+      echo "measure_timing_us: $bin exited 0 but produced no TIMING line on iteration $i (stderr: $(cat "$tmp"))" >&2
+      rm -f "$tmp"
+      exit 1
+    fi
+    if [[ -z "$best" ]] || awk -v a="$us" -v b="$best" 'BEGIN{exit !(a<b)}'; then
+      best="$us"
+    fi
+  done
+  rm -f "$tmp"
+  echo "$best"
+}
+
 # macOS ships bash 3.2 (no associative arrays), so results are logged as
 # "name|stage|status" lines to a plain file instead of a -A array.
 RESULTS_LOG="$OUTDIR/results.log"
@@ -115,8 +174,15 @@ for name in "${BENCHMARKS[@]}"; do
   # --- Tier 1: host build & run ---
   seq_bin="$OUTDIR/$name.seq"
   if "$CLANG" -O2 "${SYSROOT_ARGS[@]}" -o "$seq_bin" "$src" 2>"$OUTDIR/$name.seq.build.log"; then
-    "$seq_bin" >"$OUTDIR/$name.seq.out" 2>&1
+    # stdout (the checksum, tier1-diff's input) and stderr (Day 20's TIMING
+    # line) must stay separate now: merging them here would make tier1-diff
+    # compare "checksum + TIMING" text, which differs from the omp binary's
+    # own run by construction (the measured microseconds), and would FAIL
+    # every single run regardless of correctness.
+    "$seq_bin" >"$OUTDIR/$name.seq.out" 2>/dev/null
     record "$name" "tier1-seq" "PASS"
+    seq_us="$(measure_timing_us "$seq_bin")"
+    record "$name" "timing-seq" "PASS (min of $TIMING_ITERS runs: ${seq_us}us)"
   else
     record "$name" "tier1-seq" "FAIL (sequential build; see $OUTDIR/$name.seq.build.log)"
     continue
@@ -126,6 +192,7 @@ for name in "${BENCHMARKS[@]}"; do
     record "$name" "tier1-omp" "SKIP: no parallelizable loop in this benchmark (every SAFE loop here was correctly ruled SEQUENTIAL by the cost model)"
     record "$name" "tier1-diff" "SKIP: no parallelizable loop in this benchmark (every SAFE loop here was correctly ruled SEQUENTIAL by the cost model)"
     record "$name" "tier1-exact" "SKIP: no parallelizable loop in this benchmark (every SAFE loop here was correctly ruled SEQUENTIAL by the cost model)"
+    record "$name" "timing-omp" "SKIP: no parallelizable loop in this benchmark (every SAFE loop here was correctly ruled SEQUENTIAL by the cost model)"
     record "$name" "tier2" "SKIP: no rewritten source to compile for device"
     record "$name" "tier3" "SKIP: no map() clauses to verify"
     continue
@@ -133,7 +200,7 @@ for name in "${BENCHMARKS[@]}"; do
 
   omp_bin="$OUTDIR/$name.omp"
   if "$CLANG" -O2 -fopenmp "${SYSROOT_ARGS[@]}" -o "$omp_bin" "$omp_src" 2>"$OUTDIR/$name.omp.build.log"; then
-    "$omp_bin" >"$OUTDIR/$name.omp.out" 2>&1
+    "$omp_bin" >"$OUTDIR/$name.omp.out" 2>/dev/null
     record "$name" "tier1-omp" "PASS"
     if diff -q "$OUTDIR/$name.seq.out" "$OUTDIR/$name.omp.out" >/dev/null; then
       record "$name" "tier1-diff" "PASS (checksums match)"
@@ -168,6 +235,20 @@ for name in "${BENCHMARKS[@]}"; do
     else
       record "$name" "tier1-exact" "FAIL ($(cat "$OUTDIR/$name.exact.txt"))"
     fi
+
+    # --- Timing (Day 20): real wall-clock time, seq vs. this benchmark's
+    # gated-policy omp binary, replacing reliance on ProfitabilityAnalyzer's
+    # modelled microsecond estimates as the timing evidence. See NOTES.md
+    # for how to read these numbers against the model's own predictions --
+    # in particular, example.c's n=1000 call site sits below its pragma's
+    # own if(parallel: n>=4096) guard (expect near-parity with tier1-seq by
+    # construction), and compute_heavy's omp binary here is plain -fopenmp
+    # (no -fopenmp-targets), so it measures host-fallback target-region
+    # execution, not a discrete GPU -- compare it against the model's t_cpu,
+    # not t_gpu.
+    omp_us="$(measure_timing_us "$omp_bin")"
+    record "$name" "timing-omp" "PASS (min of $TIMING_ITERS runs: ${omp_us}us)"
+    record "$name" "timing-speedup" "$(awk -v s="$seq_us" -v o="$omp_us" 'BEGIN{printf "%.2fx (seq %.3fus / omp %.3fus)", s/o, s, o}')"
   else
     record "$name" "tier1-omp" "FAIL (OpenMP build; see $OUTDIR/$name.omp.build.log)"
     continue

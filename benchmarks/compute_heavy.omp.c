@@ -16,6 +16,7 @@
 // loop inside the helper would be counted once rather than trip-count times.
 
 #include <stdio.h>
+#include <time.h>
 
 #pragma omp declare target
 double heavy_elem(double x) {
@@ -53,7 +54,7 @@ int main(int argc, char **argv) {
   for (int i = 0; i < N; i++) {
     in[i] = (double)i / N;
   }
-  heavy_transform(out, in);
+  { struct timespec _p05_t0, _p05_t1; clock_gettime(CLOCK_MONOTONIC, &_p05_t0); heavy_transform(out, in); clock_gettime(CLOCK_MONOTONIC, &_p05_t1); fprintf(stderr, "TIMING compute_heavy %.3f\n", (_p05_t1.tv_sec - _p05_t0.tv_sec) * 1e6 + (_p05_t1.tv_nsec - _p05_t0.tv_nsec) / 1e3); }
 
   double sum = 0.0;
   for (int i = 0; i < N; i++)

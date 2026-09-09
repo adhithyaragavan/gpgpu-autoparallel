@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <time.h>
 
 // Minimal Day 1 sanity benchmark: a loop that calls a helper function.
 // This is exactly the shape naive, intraprocedural-only parallelizers miss —
@@ -19,7 +20,7 @@ int main(int argc, char **argv) {
   for (int i = 0; i < 1000; i++) {
     data[i] = (double)i;
   }
-  process(data, 1000, 2.0);
+  { struct timespec _p05_t0, _p05_t1; clock_gettime(CLOCK_MONOTONIC, &_p05_t0); process(data, 1000, 2.0); clock_gettime(CLOCK_MONOTONIC, &_p05_t1); fprintf(stderr, "TIMING example %.3f\n", (_p05_t1.tv_sec - _p05_t0.tv_sec) * 1e6 + (_p05_t1.tv_nsec - _p05_t0.tv_nsec) / 1e3); }
 
   double sum = 0.0;
   for (int i = 0; i < 1000; i++)

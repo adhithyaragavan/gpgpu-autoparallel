@@ -5,6 +5,7 @@
 // so the demo can show "safe" and "profitable" are different questions.
 
 #include <stdio.h>
+#include <time.h>
 
 double clamp_unit(double v) {
   if (v < 0.0)
@@ -22,7 +23,7 @@ void normalize(double *values) {
 
 int main(int argc, char **argv) {
   double values[8] = {-0.5, 0.2, 1.5, 0.7, -1.0, 0.9, 0.0, 2.0};
-  normalize(values);
+  { struct timespec _p05_t0, _p05_t1; clock_gettime(CLOCK_MONOTONIC, &_p05_t0); normalize(values); clock_gettime(CLOCK_MONOTONIC, &_p05_t1); fprintf(stderr, "TIMING small_update %.3f\n", (_p05_t1.tv_sec - _p05_t0.tv_sec) * 1e6 + (_p05_t1.tv_nsec - _p05_t0.tv_nsec) / 1e3); }
 
   double sum = 0.0;
   for (int i = 0; i < 8; i++)
