@@ -85,6 +85,21 @@ cl::opt<double>
                       cl::desc("Cost of starting an OpenMP thread team, in microseconds"),
                       cl::init(5.0), cl::cat(optionCategory()));
 
+// Day 21: which decision procedure ProfitabilityAnalyzer runs. See the
+// Policy enum's comment in Profitability.h for what Naive means. Defaults to
+// Gated so every run without -policy is unchanged from before this flag
+// existed.
+cl::opt<Policy> FlagPolicy(
+    "policy",
+    cl::desc("Which loops get offloaded: the cost-model-gated policy (default) "
+             "or the naive 'offload everything safe' strawman"),
+    cl::values(clEnumValN(Policy::Gated, "gated",
+                          "Cost-model argmin over seq/cpu/gpu (default)"),
+               clEnumValN(Policy::Naive, "naive",
+                          "Offload every SAFE loop unconditionally, guards "
+                          "dropped, cost model computed but not consulted")),
+    cl::init(Policy::Gated), cl::cat(optionCategory()));
+
 // --- Unit helpers ------------------------------------------------------------
 //
 // A bandwidth/throughput given in G(something)/s converts to (something) per
@@ -267,6 +282,8 @@ MachineModel machineModelFromFlags() {
   return M;
 }
 
+Policy policyFromFlags() { return FlagPolicy; }
+
 double ProfitabilityAnalyzer::getOpCount(const FunctionDecl *FD) {
   FD = FD->getCanonicalDecl();
   if (auto It = OpCache.find(FD); It != OpCache.end())
@@ -295,7 +312,7 @@ double ProfitabilityAnalyzer::breakEvenIntensity() const {
 }
 
 ProfitabilityVerdict
-ProfitabilityAnalyzer::analyzeLoop(const LoopInfo &LI, const LoopSafety &Safety) {
+ProfitabilityAnalyzer::priceLoop(const LoopInfo &LI, const LoopSafety &Safety) {
   ProfitabilityVerdict V;
 
   // Profitability never overrides safety: an UNSAFE or UNKNOWN loop is not
@@ -608,6 +625,66 @@ ProfitabilityAnalyzer::analyzeLoop(const LoopInfo &LI, const LoopSafety &Safety)
   }
 
   return V;
+}
+
+ProfitabilityVerdict
+ProfitabilityAnalyzer::analyzeLoop(const LoopInfo &LI, const LoopSafety &Safety) {
+  ProfitabilityVerdict V = priceLoop(LI, Safety);
+  applyPolicy(V);
+  return V;
+}
+
+void ProfitabilityAnalyzer::applyPolicy(ProfitabilityVerdict &V) {
+  if (PolicyMode != Policy::Naive)
+    return;
+
+  // Naive never overrides the safety gate -- an unevaluated loop (UNSAFE,
+  // UNKNOWN, or ConstantBound-with-unknown-start, see the "no printable
+  // trip-count expression" branch above) stays unevaluated under every
+  // policy. That gate is a correctness fact, not a profitability opinion.
+  if (!V.Evaluated)
+    return;
+
+  // Every region needs a real map() extent to offload onto; a loop that
+  // priceLoop declined before ever computing one (the ConstantBound path
+  // with an unknown Start, see the "-> SEQUENTIAL: trip count not
+  // statically known" branch) leaves V.Target == Sequential and V.Regions
+  // populated with empty ExtentText -- nothing here to overwrite that with
+  // a valid pragma, so leave it declined rather than emit map(kind: base[0:])
+  // with a blank extent.
+  for (const ArrayRegion &R : V.Regions) {
+    if (R.ExtentText.empty()) {
+      V.Reasons.push_back(
+          "naive policy: declined -- no printable map() extent for this "
+          "loop (see the SEQUENTIAL reason above), same as the gated policy");
+      return;
+    }
+  }
+
+  if (V.Target == OffloadTarget::GpuOffload && !V.GuardExpr) {
+    // Already unconditional GPU offload -- naive and gated agree here, and
+    // there's nothing to override. Still worth a line: it says the
+    // agreement was checked, not assumed.
+    V.Reasons.push_back(
+        "naive policy: agrees with the gated policy (unconditional "
+        "GPU_OFFLOAD already)");
+    return;
+  }
+
+  V.Reasons.push_back(
+      "naive policy: overriding gated verdict " + toString(V.Target).str() +
+      (V.GuardExpr ? (" if (" + *V.GuardExpr + ")") : std::string()) +
+      " -- offloading unconditionally because this loop is SAFE, without "
+      "consulting the cost model's decision");
+  V.Target = OffloadTarget::GpuOffload;
+  V.GuardExpr.reset();
+  V.CpuGuardExpr.reset();
+  // V.CpuBeatsSeq is deliberately left as priceLoop computed it: OmpRewriter
+  // consults it independently (e.g. to decide whether a descending GPU loop
+  // may degrade to a CPU pragma instead of being declined outright), and
+  // forcing it true here would let this pass emit a pragma the cost model
+  // itself contradicts -- exactly the invariant OmpRewriter.h documents and
+  // enforces for the gated policy already.
 }
 
 void printProfitabilityReport(llvm::raw_ostream &OS,

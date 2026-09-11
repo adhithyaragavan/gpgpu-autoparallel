@@ -145,7 +145,24 @@ baseline) in `scripts/build_and_run.sh`; `small_update.c` still emits nothing, c
 `SAFE` loop is trip-count 8, which the cost model rightly rules `SEQUENTIAL`. See `NOTES.md` for the
 full reasoning.
 
-Next: Days 19-21 — numerically validate parallelized output against the sequential baseline across
-every benchmark, then measure real timing (sequential vs. gated-policy, and a naive
-offload-everything-safe comparison if time allows) rather than the modelled microsecond estimates
-`ProfitabilityAnalyzer` currently reports.
+**Days 19-21 — validation, real timing, and the naive-policy comparison.** Output is now validated
+exactly, not just by checksum: `scripts/compare_outputs.py` compares every element of each benchmark's
+computed array bit-for-bit against the sequential baseline (Day 19). Real wall-clock timing replaced
+the modelled microsecond estimates as the evidence for "faster" (Day 20) — `clock_gettime` brackets
+each benchmark's headline call, and `scripts/build_and_run.sh`'s `measure_timing_us()` reports the min
+of 7 repeats per binary. Day 21 added a third policy, `--policy=naive` (`ProfitabilityAnalyzer`'s
+`Policy` enum, default `Gated`): every `SAFE` loop is GPU-offloaded unconditionally, no guards, cost
+model computed but not consulted for the decision — giving the timing story a three-way comparison
+(sequential vs. naive vs. gated) instead of a two-way one. The three-way numbers are genuinely mixed:
+`small_update` shows the clean case gating exists for (naive pays real cost to offload 8 elements for
+nothing; gated pays none), `saxpy`/`compute_heavy` tie between naive and gated because this machine's
+`.omp` binaries run target regions on the host device (no real `-fopenmp-targets`), and `example` shows
+naive measuring faster than gated — not because the gated guard was wrong, but because gating a file's
+*only* OpenMP construct still pays libomp's one-time runtime cold start regardless of the guard's
+outcome, a real cost the model has no term for. See `NOTES.md` (Days 19-21) for the full reasoning,
+every measured number, and one real harness bug an adversarial review of the Day 21 commit caught and
+fixed.
+
+Next: consolidate this running log into the finale write-up (`DAY_BY_DAY.md`'s Days 23-24 and Block B)
+and rehearse the demo walkthrough — call graph → safety → gated profitability → naive contrast →
+codegen → measured result — cold.

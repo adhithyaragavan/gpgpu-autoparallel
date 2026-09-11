@@ -57,8 +57,10 @@ std::string rewriteOutputPath(StringRef InputFile) {
 
 class LoopAnalysisConsumer : public ASTConsumer {
 public:
-  LoopAnalysisConsumer(p05::MachineModel Machine, std::string InputFile)
-      : Machine(Machine), InputFile(std::move(InputFile)) {}
+  LoopAnalysisConsumer(p05::MachineModel Machine, p05::Policy PolicyMode,
+                       std::string InputFile)
+      : Machine(Machine), PolicyMode(PolicyMode),
+        InputFile(std::move(InputFile)) {}
 
   void HandleTranslationUnit(ASTContext &Context) override {
     p05::LoopCollector Collector(Context);
@@ -66,13 +68,22 @@ public:
 
     p05::CallResolver Resolver(Context);
     p05::SafetyAnalyzer Safety(Resolver);
-    p05::ProfitabilityAnalyzer Profitability(Resolver, Context, Machine);
+    p05::ProfitabilityAnalyzer Profitability(Resolver, Context, Machine,
+                                             PolicyMode);
 
     Rewriter Rewrite(Context.getSourceManager(), Context.getLangOpts());
     p05::OmpRewriter OmpCodegen(Rewrite, Resolver);
 
     const std::vector<p05::LoopInfo> &Loops = Collector.getLoops();
-    llvm::outs() << "Analyzed " << Loops.size() << " loop(s).\n\n";
+    llvm::outs() << "Analyzed " << Loops.size() << " loop(s).\n";
+    // Day 21: only printed for a non-default policy, so every -policy=gated
+    // (and every pre-Day-21 invocation, which had no -policy at all) run's
+    // report is byte-identical to yesterday's -- see NOTES.md's Day 21
+    // entry and the regression sweep it's checked against.
+    if (PolicyMode == p05::Policy::Naive)
+      llvm::outs() << "policy: naive (offload every SAFE loop; cost model "
+                      "computed but not consulted)\n";
+    llvm::outs() << "\n";
     for (const p05::LoopInfo &LI : Loops) {
       p05::printLoopReport(llvm::outs(), LI);
       p05::printCallChains(llvm::outs(), LI, Resolver);
@@ -111,20 +122,24 @@ public:
 
 private:
   p05::MachineModel Machine;
+  p05::Policy PolicyMode;
   std::string InputFile;
 };
 
 class LoopAnalysisAction : public ASTFrontendAction {
 public:
-  explicit LoopAnalysisAction(p05::MachineModel Machine) : Machine(Machine) {}
+  LoopAnalysisAction(p05::MachineModel Machine, p05::Policy PolicyMode)
+      : Machine(Machine), PolicyMode(PolicyMode) {}
 
   std::unique_ptr<ASTConsumer> CreateASTConsumer(CompilerInstance &CI,
                                                  StringRef File) override {
-    return std::make_unique<LoopAnalysisConsumer>(Machine, File.str());
+    return std::make_unique<LoopAnalysisConsumer>(Machine, PolicyMode,
+                                                   File.str());
   }
 
 private:
   p05::MachineModel Machine;
+  p05::Policy PolicyMode;
 };
 
 /// Factory binding the MachineModel (read from cl::opt flags once, after
@@ -132,15 +147,16 @@ private:
 /// tool creates — one per input file.
 class LoopAnalysisActionFactory : public FrontendActionFactory {
 public:
-  explicit LoopAnalysisActionFactory(p05::MachineModel Machine)
-      : Machine(Machine) {}
+  LoopAnalysisActionFactory(p05::MachineModel Machine, p05::Policy PolicyMode)
+      : Machine(Machine), PolicyMode(PolicyMode) {}
 
   std::unique_ptr<FrontendAction> create() override {
-    return std::make_unique<LoopAnalysisAction>(Machine);
+    return std::make_unique<LoopAnalysisAction>(Machine, PolicyMode);
   }
 
 private:
   p05::MachineModel Machine;
+  p05::Policy PolicyMode;
 };
 
 } // namespace
@@ -172,6 +188,7 @@ int main(int argc, const char **argv) {
 
   ClangTool Tool(OptionsParser.getCompilations(), Sources);
 
-  LoopAnalysisActionFactory Factory(p05::machineModelFromFlags());
+  LoopAnalysisActionFactory Factory(p05::machineModelFromFlags(),
+                                    p05::policyFromFlags());
   return Tool.run(&Factory);
 }

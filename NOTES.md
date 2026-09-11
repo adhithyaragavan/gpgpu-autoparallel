@@ -980,3 +980,169 @@ comparison, for a three-way story (baseline vs. naive vs. gated policy) rather t
 one. Not designed yet; would need its own decision about what "naive" means concretely for this tool
 (e.g. GPU target for every SAFE loop regardless of the profitability verdict) before it could be
 measured the same way today's numbers were.
+
+---
+
+### Day 21 — the naive "offload everything safe" comparison, three-way instead of two
+
+**Decision: what "naive" means for this tool.** Every loop the *safety* pass cleared
+(`SafetyVerdict::Safe`) is GPU-offloaded unconditionally — `#pragma omp target teams
+distribute parallel for` + `map()` clauses, with the runtime `if(target:)`/
+`if(parallel:)` guards dropped, because a guard is itself a profitability judgement
+naive is defined to skip making. `ProfitabilityAnalyzer` gained a `Policy` enum
+(`Gated`/`Naive`, `Profitability.h`) and a `-policy` flag; the analyzer's old
+`analyzeLoop` body was renamed `priceLoop` (unchanged) and a new `analyzeLoop` runs
+`priceLoop` then `applyPolicy`. Under `Naive`, `applyPolicy` overrides `V.Target` to
+`GpuOffload` and clears `GuardExpr`/`CpuGuardExpr` — but only *after* `priceLoop` has
+already computed the full gated cascade, so the report always shows both the
+cost-model verdict it's overriding and the override itself, not just the naive
+outcome. `Policy` defaults to `Gated`, threaded through the same
+factory→action→consumer chain `MachineModel` already uses, so every call site
+without `-policy` — every run before today — is unaffected.
+
+Two things naive still respects, both correctness limits rather than profitability
+opinions: the safety gate (`!V.Evaluated` returns immediately — an UNSAFE or UNKNOWN
+loop is never forced) and loops with no printable `map()` extent (the
+`ConstantBound`-with-unknown-start case documented in the Days 15-16 entry — nothing
+valid to write, so naive declines exactly like gated does, with a named reason).
+`OmpRewriter` needed zero changes: it consumes only a `ProfitabilityVerdict`, and a
+naive verdict is shaped exactly like a gated one. `CpuBeatsSeq` is deliberately left
+as `priceLoop` computed it — `OmpRewriter.cpp` consults it independently (e.g.
+whether a descending GPU loop may degrade to a CPU pragma), and forcing it true under
+naive would let this pass emit a pragma the cost model itself contradicts, exactly
+the invariant the gated path already enforces.
+
+**Harness:** `scripts/build_and_run.sh` gained a second loop over `BENCHMARKS`,
+run only after the existing gated ladder finishes for every benchmark, so it cannot
+shift a pre-existing gated PASS/SKIP line. New stages: `naive-regenerate`
+(`p05tool --rewrite --policy=naive`), `naive-build` (`-O2 -fopenmp`, same flags as
+the gated `tier1-omp` build), `naive-exact` (per-element vs. the sequential dump,
+same rm-first/exit-status-checked-before-compare discipline Day 19's adversarial
+review established for `tier1-exact`), `timing-naive`, and `policy-compare` (the
+three-way `seq / naive / gated` line, with an explicit `n/a` when the gated policy
+never built an `.omp` binary at all rather than reproducing `timing-speedup`'s silent
+`0.00x` from a `0/0` divide).
+
+**Adversarial review of this commit caught one real, deterministic bug.** The
+existing gated loop only ever wrote `$name.seq.dump` inside its `total_pragmas != 0`
+branch (as part of `tier1-exact`). `small_update` never enters that branch — the
+gated policy correctly declines its only SAFE loop — so on a genuinely fresh
+`build/bench` the naive lane's `naive-exact` stage FAILed with "no sequential dump,"
+taking the whole script's exit code nonzero. Reproduced directly:
+`rm -rf build/bench && ./scripts/build_and_run.sh` → `small_update naive-exact FAIL
+(no sequential dump ...)`. A second, worse symptom hid behind the first: on a *dirty*
+`build/bench` (the normal case — re-running the script twice), a stale
+`$name.seq.dump` left over from some earlier run silently satisfied the `-f` check
+and let `naive-exact` PASS against stale data — exactly the anti-pattern Day 19's own
+`tier1-exact` fix was written to prevent, just reintroduced one level up by the new
+lane trusting whatever the gated loop happened to leave behind instead of owning its
+own dump. Fixed by adding an unconditional `seq-dump` stage right after `tier1-seq`
+(before the `total_pragmas == 0` early-out), with its own `rm -f` + direct
+exit-status check — every benchmark now gets a fresh sequential dump regardless of
+what the gated policy decides to do with it; `tier1-exact` still does its own
+independent `rm -f` + regenerate of the same file for benchmarks that reach it,
+harmless duplicate work that keeps that stage's existing discipline untouched.
+Verified fixed the same way it was reproduced: `rm -rf build/bench &&
+./scripts/build_and_run.sh` now reports `small_update naive-exact PASS (8 doubles
+match exactly)` and exits 0. Everything else the review checked — `applyPolicy`'s
+UNSAFE/UNKNOWN passthrough, the `--policy` flag's default-Gated byte-identical
+output, `--policy=bogus` failing loudly rather than silently defaulting, the
+`gated_status`/`extract_us` shell helpers, no state leaking across the two separate
+`for` loops — came back clean, verified by actually running the tool rather than
+just reading the diff.
+
+**Verified, not assumed:**
+- Regression sweep: `p05tool` (no `-policy`, no `-rewrite`) against every
+  `benchmarks/`+`tests/` input, diffed against the pre-Day-21 baseline captured
+  before any code changed — byte-identical, all nine inputs.
+- Discrimination, both directions: `--policy=naive` on `benchmarks/small_update.c`
+  flips its trip-count-8 loop from `SEQUENTIAL` to `GPU_OFFLOAD` with the override
+  named in `Reasons`; the same flag on `tests/safety_cases.c` leaves every
+  `UNSAFE`/`UNKNOWN` loop exactly as `SEQUENTIAL`/"not evaluated" as under `Gated` —
+  a policy that only ever says yes would prove nothing, same rule this project has
+  applied to every prior pass.
+- All four naive-rewritten benchmarks compile clean under `-O2 -fopenmp` and pass
+  `naive-exact` (per-element bit match against the sequential dump) — naive is
+  correct, not merely different, which is what lets the timing numbers below mean
+  anything.
+- Full ladder (`rm -rf build/bench && ./scripts/build_and_run.sh`) run 6 times
+  across this change (including the pre-fix reproduction and its fix); every
+  pre-existing gated PASS/SKIP unchanged, no new FAILs after the seq-dump fix.
+
+**Measured, not modelled — median of 3 confirmation runs (each already a min of 7,
+same discipline as Day 20):**
+
+| benchmark | seq | naive | gated | result |
+|---|---|---|---|---|
+| example (n=1000) | ~0us | ~30us | ~228us | naive **~7.6x faster** than gated |
+| saxpy | ~11us | ~29us | ~32us | tie (~1.1x, noise-level) |
+| small_update | ~0us | ~346us | n/a (declined) | gated **correctly pays nothing** |
+| compute_heavy | ~211us | ~83us | ~80us | tie (~1.0x, noise-level) |
+
+Three things this table doesn't say on its own:
+
+1. **`small_update` is the clean, intended case, and it lands exactly as designed.**
+   An 8-element loop: naive pays ~346us to offload it for no benefit, gated correctly
+   recognizes there's nothing to gain and emits no pragma at all, costing ~0us. This
+   is the one benchmark built specifically to be "safe but not profitable"
+   (`benchmarks/small_update.c`'s own header comment), and it's the one where the
+   three-way comparison says exactly what the brief wants gating to prove.
+
+2. **`saxpy` and `compute_heavy` tie because this machine has no real GPU, not
+   because the policies agree.** Naive forces both benchmarks' loops to
+   `GPU_OFFLOAD`; gated already chose `GPU_OFFLOAD` for `compute_heavy`'s headline
+   loop (compute-bound, clears the break-even intensity) and `CPU_PARALLEL` for
+   `saxpy`'s (memory-bound, declined for GPU — see Days 11-13). But Tier 1's `.omp`
+   binary is built with plain `-fopenmp`, no `-fopenmp-targets` (same fact Day 20's
+   finding 3 already established): a `target teams distribute parallel for` region
+   runs on "the host device" per the OpenMP spec, genuinely threaded but with no real
+   PCIe transfer to pay. On this host-fallback build, `GPU_OFFLOAD` and
+   `CPU_PARALLEL` pragmas dispatch through the same libomp fork-join path, so their
+   measured cost is nearly indistinguishable — confirmed directly: `compute_heavy`'s
+   headline-loop pragma text is byte-identical between `compute_heavy.omp.c` and
+   `compute_heavy.naive.c` (it was already unconditional `GPU_OFFLOAD` under gated),
+   and the two runs' timings track within noise. This is a real limitation of what
+   this evidence can show, not a wash for the policy design — a real GPU would make
+   naive's `saxpy` decision (offload a memory-bound loop with 2 flops/24 bytes) pay
+   real PCIe transfer cost the model already prices at 143.319us (`t_gpu`, Day 20's
+   table), which this host-fallback measurement structurally cannot reproduce.
+
+3. **`example` is the day's genuinely surprising, checked result, and it needs to be
+   read carefully, not at a glance.** Naive measures *faster* than gated here — by a
+   wide, reproducible margin (6.5x-14x across 6 runs) — which looks backwards for a
+   comparison meant to vindicate gating. The explanation is not that gating made a
+   bad call: `example.c`'s call site passes `n=1000`, below the gated pragma's own
+   `if(parallel: n >= 4096)` guard, so the guard is doing exactly its job (keeping
+   1000 elements off a thread team). The explanation is Day 20 finding 1, now shown
+   to have a sharper and more costly consequence than that entry described. Under
+   gated, `process()`'s pragma is the *only* OpenMP construct anywhere in
+   `example.omp.c` (confirmed: `grep pragma example.omp.c` shows one line) — so the
+   guard evaluating false still pays libomp's one-time runtime cold-start cost,
+   because that cost is a property of *touching* an OpenMP construct at all, not of
+   the guard's outcome. Under naive, `example.naive.c` has *two* target pragmas (the
+   array-init loop and the bracketed `process()` call, confirmed: `grep pragma
+   example.naive.c`) — the init loop pays the cold start first, so by the time the
+   bracketed, timed call runs, libomp is already warm and the measurement is just
+   per-region dispatch (~30us, the same order as `saxpy`'s warm-dispatch number from
+   Day 20). The guard did not fail; the *file shape* did — a single guarded
+   OpenMP construct is the worst case for this cost, because there is no second
+   construct anywhere to absorb the one-time setup cost the guard's own branch still
+   triggers. `MachineModel::ThreadStartUs` has no term for this at all (same gap Day
+   20 identified), and this result is the sharpest demonstration of it yet: gating a
+   program's *only* OpenMP construct can make real wall-clock time strictly worse
+   than never gating, on a machine where cold start dominates. This belongs in the
+   finale write-up as an honest, measured limitation, in the same spirit as Day 20's
+   `saxpy` finding — not something to paper over because it complicates the headline
+   "gating helps" story. `small_update`, above, is the cleaner demonstration of that
+   headline story; `example` is the honest asterisk on it.
+
+**Explicitly out of scope for this pass (same line as Day 20):** no change to
+`MachineModel`'s constants or `ProfitabilityAnalyzer`'s cost-model arithmetic — this
+adds a second, measured decision procedure alongside the existing one, it does not
+recalibrate either from three benchmarks' worth of data.
+
+Next: writeup and demo-prep, per `CLAUDE_CODE_WORKFLOW.md` and the remaining
+`DAY_BY_DAY.md` days (23-24, and Block B) — consolidate this running `NOTES.md` log
+into the finale write-up, rehearse the walkthrough (call graph → safety → gated
+profitability → naive contrast → codegen → measured result) cold, and record a demo
+recording as backup.

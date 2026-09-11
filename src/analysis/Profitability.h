@@ -126,6 +126,26 @@ enum class OffloadTarget {
 
 llvm::StringRef toString(OffloadTarget T);
 
+/// Day 21: which decision procedure ProfitabilityAnalyzer::analyzeLoop runs.
+/// Gated is every day before this one -- the cost-model argmin. Naive is the
+/// brief's own strawman ("a tool that offloads everything it is allowed to
+/// offload has not made a decision", see the header comment above): every
+/// SAFE loop is GPU-offloaded unconditionally, guards dropped, without
+/// consulting the cost model's verdict. The cost model still runs either way
+/// -- Naive overrides its Target after the fact, it never skips computing it
+/// -- so the report shows the full cascade *and* the override, and the
+/// two policies are the same code path modulo one decision point
+/// (ProfitabilityAnalyzer::applyPolicy), not two different analyses.
+enum class Policy {
+  Gated,
+  Naive,
+};
+
+/// Reads the -policy flag. Defaults to Gated, matching every construction
+/// site's default before this flag existed -- a run with no -policy is
+/// byte-identical to yesterday's tool.
+Policy policyFromFlags();
+
 /// Command-line category owning both the tool's own options and the machine
 /// model overrides. It lives here rather than in main.cpp because the options
 /// it owns do; the driver only needs it to hand to CommonOptionsParser, which
@@ -287,9 +307,12 @@ struct ProfitabilityVerdict {
 /// same helper, and the count is a fact about the function, not the loop.
 class ProfitabilityAnalyzer {
 public:
+  /// PolicyMode defaults to Gated so every pre-Day-21 construction site
+  /// (there is exactly one, in main.cpp) keeps building the same analyzer it
+  /// always has without being touched.
   ProfitabilityAnalyzer(CallResolver &Resolver, clang::ASTContext &Ctx,
-                        MachineModel Machine)
-      : Resolver(Resolver), Ctx(Ctx), Machine(Machine) {}
+                        MachineModel Machine, Policy PolicyMode = Policy::Gated)
+      : Resolver(Resolver), Ctx(Ctx), Machine(Machine), PolicyMode(PolicyMode) {}
 
   /// Static arithmetic operation count of FD's own body, excluding anything
   /// it calls. Memoized.
@@ -297,7 +320,11 @@ public:
 
   /// Full verdict for one loop. Safety is a gate, not an input to the model:
   /// anything other than SafetyVerdict::Safe returns Sequential with
-  /// Evaluated == false, without pricing the loop at all.
+  /// Evaluated == false, without pricing the loop at all. Runs the cost
+  /// model (priceLoop) unconditionally, then applies PolicyMode
+  /// (applyPolicy) -- under Naive this overrides Target on top of a verdict
+  /// that was still fully computed, so the report always shows the cascade
+  /// a naive policy is ignoring, not just its outcome.
   ProfitabilityVerdict analyzeLoop(const LoopInfo &LI, const LoopSafety &Safety);
 
   /// Intensity above which offload beats a fully threaded host, for this
@@ -305,9 +332,20 @@ public:
   double breakEvenIntensity() const;
 
 private:
+  /// The Days 11-13 cost model, unchanged by Day 21: computes the gated
+  /// verdict exactly as before. analyzeLoop calls this first regardless of
+  /// PolicyMode.
+  ProfitabilityVerdict priceLoop(const LoopInfo &LI, const LoopSafety &Safety);
+
+  /// Day 21: overrides V.Target in place when PolicyMode is Naive. A no-op
+  /// under Gated. See the Policy enum's comment for what Naive means and
+  /// why CpuBeatsSeq is left untouched.
+  void applyPolicy(ProfitabilityVerdict &V);
+
   CallResolver &Resolver;
   clang::ASTContext &Ctx;
   MachineModel Machine;
+  Policy PolicyMode;
   llvm::DenseMap<const clang::FunctionDecl *, double> OpCache;
 };
 

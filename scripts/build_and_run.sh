@@ -36,6 +36,13 @@
 # correctly -- see NOTES.md for exactly what each tier does and does not
 # prove. Every unavailable check prints an explicit SKIP with a reason
 # rather than being silently omitted.
+#
+# Day 21 - naive policy comparison: a second pass, after the gated ladder
+# above completes for every benchmark, builds and measures each benchmark
+# under `p05tool --policy naive` (offload every SAFE loop unconditionally,
+# no guards) and reports a three-way seq/naive/gated timing comparison
+# (naive-regenerate/naive-build/naive-exact/timing-naive/policy-compare).
+# See NOTES.md's Day 21 entry for what "naive" means concretely and why.
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -188,6 +195,28 @@ for name in "${BENCHMARKS[@]}"; do
     continue
   fi
 
+  # --- Day 21: unconditional sequential dump -----------------------------
+  # Generated here, right after tier1-seq, rather than only inside
+  # tier1-exact below (which is itself skipped whenever total_pragmas == 0
+  # -- e.g. small_update, where the gated policy correctly declines its
+  # only SAFE loop). The naive lane further down needs a sequential dump
+  # to compare against for *every* benchmark, including ones the gated
+  # policy offloads nothing for; without this, naive-exact FAILed on a
+  # fresh build/bench with "no sequential dump" for exactly that case
+  # (caught by adversarial review of this commit). tier1-exact below still
+  # does its own rm -f + regenerate of this same file for benchmarks that
+  # reach it -- harmless duplicate work, and it keeps that stage's existing
+  # self-contained rm-then-regenerate discipline untouched.
+  dump_count="$(dump_count_for "$name")"
+  rm -f "$OUTDIR/$name.seq.dump"
+  seq_dump_rc=0
+  "$seq_bin" "$OUTDIR/$name.seq.dump" >/dev/null 2>&1 || seq_dump_rc=$?
+  if [[ "$seq_dump_rc" -ne 0 ]]; then
+    record "$name" "seq-dump" "FAIL (dump run failed -- seq exit $seq_dump_rc)"
+    continue
+  fi
+  record "$name" "seq-dump" "PASS ($dump_count doubles written to $OUTDIR/$name.seq.dump)"
+
   if [[ "$total_pragmas" -eq 0 ]]; then
     record "$name" "tier1-omp" "SKIP: no parallelizable loop in this benchmark (every SAFE loop here was correctly ruled SEQUENTIAL by the cost model)"
     record "$name" "tier1-diff" "SKIP: no parallelizable loop in this benchmark (every SAFE loop here was correctly ruled SEQUENTIAL by the cost model)"
@@ -316,6 +345,125 @@ for name in "${BENCHMARKS[@]}"; do
   else
     record "$name" "tier3" "FAIL (host-side IR emission; see $OUTDIR/$name.host.build.log)"
   fi
+done
+
+
+# --- Day 21: naive "offload everything safe" policy, second pass ---------
+# A *separate* loop over BENCHMARKS, run only after every gated-policy stage
+# above has finished, so nothing here can shift a pre-existing gated PASS/
+# SKIP line (see NOTES.md, Day 21 -- the ladder above is untouched by this
+# addition, on purpose). "Naive" means: every loop the safety pass cleared
+# is GPU-offloaded unconditionally (guards dropped), via `p05tool --policy
+# naive`; see Profitability.h's Policy enum comment for the exact rule and
+# why it still declines a loop for a correctness reason (descending, macro
+# location, nested, opaque callee) exactly like the gated policy does.
+#
+# Reuses measure_timing_us/dump_count_for/record/CLANG/SYSROOT_ARGS from
+# above rather than redefining them. Also reuses the tier1-exact discipline
+# Day 19's adversarial review established: remove a stale dump before
+# regenerating it, and check the run's exit status directly (not through a
+# pipe) before ever trusting compare_outputs.py's verdict.
+
+# $1=name $2=stage -> that row's status field from $RESULTS_LOG (last match;
+# bash 3.2 on macOS has no associative arrays, so this greps the plain log
+# already written by record() above instead of a lookup table).
+gated_status() {
+  grep "^$1|$2|" "$RESULTS_LOG" | tail -1 | cut -d'|' -f3-
+}
+
+# Pulls the "N.NNN" out of a record() status string of the shape
+# "PASS (min of 7 runs: N.NNNus)" (timing-seq/timing-omp's own format).
+# Empty output means the stage never PASSed (e.g. timing-omp SKIPs for
+# small_update, which has no .omp binary at all).
+extract_us() {
+  echo "$1" | grep -oE '[0-9.]+us\)$' | sed 's/us)$//'
+}
+
+for name in "${BENCHMARKS[@]}"; do
+  src="$ROOT/benchmarks/$name.c"
+  naive_src="$OUTDIR/$name.naive.c"
+  naive_report="$OUTDIR/$name.naive.report.txt"
+  echo "=== $name (naive policy) ==="
+
+  seq_bin="$OUTDIR/$name.seq"
+  seq_status="$(gated_status "$name" tier1-seq)"
+  if [[ "$seq_status" != PASS* ]]; then
+    record "$name" "naive-regenerate" "SKIP: sequential build did not PASS above, nothing to compare against"
+    record "$name" "naive-build" "SKIP: sequential build did not PASS above"
+    record "$name" "naive-exact" "SKIP: sequential build did not PASS above"
+    record "$name" "timing-naive" "SKIP: sequential build did not PASS above"
+    record "$name" "policy-compare" "SKIP: sequential build did not PASS above"
+    continue
+  fi
+
+  # Same stale-output guard as the gated regenerate stage above: p05tool
+  # only writes -o's target when it has something to annotate, it never
+  # truncates a pre-existing file there.
+  rm -f "$naive_src"
+  if "$TOOL" --rewrite --policy=naive -o "$naive_src" "$src" -- "${SYSROOT_ARGS[@]}" >"$naive_report" 2>&1; then
+    record "$name" "naive-regenerate" "PASS"
+  else
+    record "$name" "naive-regenerate" "FAIL (p05tool exited nonzero; see $naive_report)"
+    continue
+  fi
+
+  naive_total=$(grep -c '^  line ' "$naive_report" || true)
+  if [[ "$naive_total" -eq 0 ]]; then
+    record "$name" "naive-build" "SKIP: naive policy produced no pragma (every SAFE loop here was declined for a correctness reason, not a profitability one -- see $naive_report)"
+    record "$name" "naive-exact" "SKIP: no naive binary to compare"
+    record "$name" "timing-naive" "SKIP: no naive binary to compare"
+    record "$name" "policy-compare" "SKIP: no naive binary to compare"
+    continue
+  fi
+
+  naive_bin="$OUTDIR/$name.naive"
+  if "$CLANG" -O2 -fopenmp "${SYSROOT_ARGS[@]}" -o "$naive_bin" "$naive_src" 2>"$OUTDIR/$name.naive.build.log"; then
+    record "$name" "naive-build" "PASS"
+  else
+    record "$name" "naive-build" "FAIL (naive OpenMP build; see $OUTDIR/$name.naive.build.log)"
+    continue
+  fi
+
+  # --- naive-exact: per-element vs. the sequential dump, proving naive is
+  # correct-but-slower (or correct-and-faster) rather than merely different.
+  dump_count="$(dump_count_for "$name")"
+  rm -f "$OUTDIR/$name.naive.dump"
+  naive_dump_rc=0
+  "$naive_bin" "$OUTDIR/$name.naive.dump" >/dev/null 2>&1 || naive_dump_rc=$?
+  if [[ "$naive_dump_rc" -ne 0 ]]; then
+    record "$name" "naive-exact" "FAIL (dump run failed -- naive exit $naive_dump_rc)"
+  elif [[ ! -f "$OUTDIR/$name.seq.dump" ]]; then
+    record "$name" "naive-exact" "FAIL (no sequential dump at $OUTDIR/$name.seq.dump -- the seq-dump stage above should have produced one)"
+  elif python3 "$SCRIPT_DIR/compare_outputs.py" \
+       --seq "$OUTDIR/$name.seq.dump" --omp "$OUTDIR/$name.naive.dump" \
+       --count "$dump_count" >"$OUTDIR/$name.naive.exact.txt" 2>&1; then
+    record "$name" "naive-exact" "PASS ($(cat "$OUTDIR/$name.naive.exact.txt"))"
+  else
+    record "$name" "naive-exact" "FAIL ($(cat "$OUTDIR/$name.naive.exact.txt"))"
+  fi
+
+  naive_us="$(measure_timing_us "$naive_bin")"
+  record "$name" "timing-naive" "PASS (min of $TIMING_ITERS runs: ${naive_us}us)"
+
+  # --- policy-compare: the three-way number the whole day exists for.
+  # Guards a zero/empty denominator explicitly rather than reproducing
+  # timing-speedup's silent "0.00x" from a 0/0 divide (example/small_update
+  # both measure ~0us sequential -- see NOTES.md, Day 20).
+  seq_us_val="$(extract_us "$(gated_status "$name" timing-seq)")"
+  gated_us_val="$(extract_us "$(gated_status "$name" timing-omp)")"
+  if [[ -n "$gated_us_val" ]]; then
+    compare_msg="$(awk -v s="${seq_us_val:-0}" -v n="$naive_us" -v g="$gated_us_val" \
+      'BEGIN{
+        printf "seq %.3fus / naive %.3fus / gated %.3fus -- ", s, n, g
+        if (g < n) printf "gated wins (naive %.2fx slower than gated)", n/g
+        else if (n < g) printf "naive wins (gated %.2fx slower than naive)", g/n
+        else printf "tie"
+      }')"
+  else
+    compare_msg="$(awk -v s="${seq_us_val:-0}" -v n="$naive_us" \
+      'BEGIN{printf "seq %.3fus / naive %.3fus / gated n/a (no CPU/GPU pragma at all -- cost model declined this loop entirely)", s, n}')"
+  fi
+  record "$name" "policy-compare" "$compare_msg"
 done
 
 echo
