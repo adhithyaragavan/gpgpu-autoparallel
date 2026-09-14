@@ -1146,3 +1146,136 @@ Next: writeup and demo-prep, per `CLAUDE_CODE_WORKFLOW.md` and the remaining
 into the finale write-up, rehearse the walkthrough (call graph → safety → gated
 profitability → naive contrast → codegen → measured result) cold, and record a demo
 recording as backup.
+
+---
+
+### Days 22-24 — the narrated demo, a real writeup, and closing the small blemishes
+
+**Where this sits on the calendar.** Day 21 landed Sept 12. Block B (Sept 15-18,
+post-midsem) starts tomorrow and evaluation is Sept 19-20. `DAY_BY_DAY.md`'s Days
+22-24 are buffer + writeup; Day 23's deliverable (this file) was already well ahead
+of schedule. Day 24's was not started at all: a repo-wide search for
+`demo*`/`present*`/`slides*`/`*.gif`/`*.cast` turned up nothing, and
+`DAY_BY_DAY.md:51,59` both call for a recorded demo backup before evaluation.
+
+**Three things done, in priority order:**
+
+1. **`scripts/demo.sh`** — a new script running the exact five-stage walkthrough
+   `DAY_BY_DAY.md:60` names for the finale (call graph → safety → profitability →
+   codegen → measured result), narrated between stages, real `p05tool` invocations
+   rather than canned output. `DEMO_PAUSE=0` runs it straight through for a recorded
+   backup capture; default mode waits on Enter between acts for a live, rehearsed
+   walkthrough. Act 2 is deliberately `tests/safety_cases.c`, not another SAFE
+   benchmark — it is the only place in the whole repo that shows the safety check
+   saying no, and until this script existed nothing ever ran it in front of anyone.
+   Verified both modes end to end, and against a deliberately cold `build/bench/`
+   (Act 5 prints a clear "run build_and_run.sh first" instead of silently having
+   nothing to show, rather than failing). `DEMO_PAUSE=0` runs in well under a second
+   of actual execution time — pacing in a live demo is entirely narration, not
+   waiting on the tool.
+
+2. **`README.md` restructured from a changelog into a writeup.** The prior version
+   put 140 of 169 lines under one `## Status` heading as append-only day-range
+   entries — ordered by when things were built, not how the pipeline runs, and
+   internally out of order (a "Days 17-18" banner sat above content actually
+   describing Days 2-13, then Day 14, then 15-16, then a *second* Days 17-18 entry).
+   Replaced with: what this is, the five-pass pipeline in execution order (one
+   paragraph each, naming the implementing file), quick start including the new
+   demo script, a Results section with real tables (correctness: exact per-element
+   match across every benchmark and both policies; timing: the three-way
+   seq/naive/gated numbers with the two counterintuitive findings called out by
+   name, not buried mid-paragraph), a consolidated "What it doesn't do" section
+   (the aliasing assumption, 2D always-UNSAFE, static op counts as a lower bound,
+   no cache-reuse modelling, map extents always from index 0, no real GPU in the
+   ladder — six items that were previously scattered across four different
+   Status paragraphs), and "How it's verified" naming the three tiers and the five
+   discrimination fixtures explicitly. `NOTES.md` (this file) is unchanged in
+   spirit — the raw chronological log — and README now points at it instead of
+   half-duplicating it.
+
+3. **Small, deliberate blemishes closed** rather than left for an evaluator to find
+   first:
+   - `scripts/build_and_run.sh`'s `timing-speedup` stage divided `seq_us / omp_us`
+     with no zero-numerator guard, so `example` (sequential baseline below
+     `clock_gettime`'s practical resolution) printed `0.00x (seq 0.000us / omp
+     243.000us)` — reading as "the tool made it infinitely slower," and sitting
+     *first* in the summary table, above `saxpy`'s real `0.39x` and
+     `compute_heavy`'s real `2.54x`. The correct guard already existed 170 lines
+     below it, in Day 21's `policy-compare` stage, whose own comment named
+     `timing-speedup` as producing this exact misleading output without fixing it
+     there too. Fixed with the same guard shape `policy-compare` uses: an explicit
+     `n/a -- sequential baseline (...) is below clock_gettime's practical
+     resolution at this scale` line instead of a bare `0.00x`.
+   - `.DS_Store` (both root and `src/`) and seven `.idea/*` files were tracked in a
+     repo whose commit history is being evaluated. Untracked with `git rm --cached`
+     (files remain on disk) and added to `.gitignore` alongside `cmake-build-debug/`
+     (an untracked CLion build directory that was one accidental `git add .` away
+     from being tracked too).
+   - Checked whether the 2D-access limitation (`m[i][j]` always `UNSAFE`) was
+     documented anywhere other than README — it already is, in detail, in
+     `SafetyAnalysis.h`'s own over-approximation list (added during the Days 8-10
+     adversarial review). No change needed; confirmed rather than assumed.
+
+**Verified, not assumed:**
+- Regression sweep across every `benchmarks/`+`tests/` input, no `-rewrite`, no
+  `-policy` — byte-identical to the pre-change baseline. None of this touched
+  analysis or codegen logic.
+- Full ladder (`rm -rf build/bench && ./scripts/build_and_run.sh`) — no FAILs,
+  `timing-speedup` now reads correctly for `example` with `saxpy`'s and
+  `compute_heavy`'s real numbers unchanged.
+- `scripts/demo.sh` run in both modes (paced, with piped `Enter` presses consumed
+  correctly at each of the five pause points; `DEMO_PAUSE=0` straight through) and
+  against a cold `build/bench/`, confirming the documented degrade path.
+
+**Adversarial review of this commit** (same practice as Days 14, 17-18, 19, 20, 21)
+found two real issues, both fixed:
+
+1. **A real crash, in `scripts/demo.sh` itself.** Every `p05tool` invocation expanded
+   `"${SYSROOT_ARGS[@]}"` under `set -u`. When `xcrun`/an SDK isn't found (any
+   non-macOS machine, or macOS without Xcode's command-line tools), `SYSROOT_ARGS`
+   is a genuinely empty array — and macOS's own default `/bin/bash` (3.2.57, the
+   interpreter `#!/usr/bin/env bash` actually resolves to here, and the one this
+   whole repo's scripts already target) treats expanding an empty array under
+   `set -u` as an unbound-variable reference, not an empty expansion. Reproduced
+   directly: forcing `SDK=""` crashed the script mid-Act-1 with `SYSROOT_ARGS[@]:
+   unbound variable`, exit 1, live on stage — exactly the failure mode a demo script
+   cannot afford. This same pattern already exists, unfixed, in
+   `scripts/build_and_run.sh` (`SYSROOT_ARGS` there, lines 66-67 and every
+   `"${SYSROOT_ARGS[@]}"` after) — latent there too, just never triggered on this
+   development machine, where an SDK is always found. Out of scope to fix
+   `build_and_run.sh`'s pre-existing instance in this pass (not touched by this
+   commit otherwise, and it isn't the file being newly shipped as a live-demo
+   script), but worth a `NOTES.md` flag rather than leaving it undiscovered. Fixed
+   in `demo.sh` with the portable bash idiom for this exact case —
+   `"${SYSROOT_ARGS[@]+"${SYSROOT_ARGS[@]}"}"` — verified with a fixed-input repro
+   (`arr=(); f(){ :; }; f "${arr[@]}"` crashes under `set -u` in bash 3.2; the
+   `${arr[@]+"${arr[@]}"}` form does not) and by re-running the script with `SDK`
+   forced empty end to end: exits 0, no crash, every act runs (just without
+   `-isysroot`, which is the whole point on a machine that doesn't need one).
+2. **An internal inconsistency in the new README table.** The correctness table's
+   `gated` column claimed "exact match" for `small_update` — but the gated policy
+   correctly declines that loop entirely (trip count 8, ruled `SEQUENTIAL`), so no
+   `.omp` binary exists for it and no comparison ever ran. The claim wasn't
+   overstated evidence so much as evidence that was never gathered, stated as if it
+   had been — caught by cross-checking the correctness table against the timing
+   table two sections below, which already correctly said `gated n/a (declined)`
+   for the same row. Fixed to `n/a — gated declines, no .omp binary to compare`,
+   matching the timing table's own treatment. Also added an explicit run-to-run
+   noise caveat to the timing table's intro after the review reran the full ladder
+   fresh and got `compute_heavy`'s naive/gated ordering to flip relative to the
+   numbers first written down (both are within ~10% of each other — genuinely
+   noise-dominated, not a fixed fact, and the table now says so rather than
+   presenting one run's ordering as settled).
+
+Everything else the review checked — every file/path reference in the new README,
+the `SafetyAnalysis.h` claims in "What it doesn't do" against the actual header
+text, the `timing-speedup` guard's fire/no-fire behavior, `src/` being genuinely
+untouched — came back clean, verified by actually running things rather than only
+reading the diff.
+
+Next: Block B (Sept 15-18) — re-familiarize with the pipeline cold, live-rehearse
+`scripts/demo.sh`, and do a final dry run of the walkthrough without notes before
+Sept 19-20 evaluation. `scripts/build_and_run.sh`'s own latent `SYSROOT_ARGS`
+unbound-variable risk (found above, not fixed there) is a candidate for Block B's
+Day 2 ("fix anything left rough") if there's real time to spare — it has never
+actually fired on this development machine and isn't blocking anything today.

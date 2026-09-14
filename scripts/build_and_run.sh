@@ -277,7 +277,18 @@ for name in "${BENCHMARKS[@]}"; do
     # not t_gpu.
     omp_us="$(measure_timing_us "$omp_bin")"
     record "$name" "timing-omp" "PASS (min of $TIMING_ITERS runs: ${omp_us}us)"
-    record "$name" "timing-speedup" "$(awk -v s="$seq_us" -v o="$omp_us" 'BEGIN{printf "%.2fx (seq %.3fus / omp %.3fus)", s/o, s, o}')"
+    # Guarded the same way Day 21's policy-compare (below) already guards
+    # this same divide: seq_us can be 0.000 (example, small_update -- below
+    # clock_gettime's practical resolution at this scale, see NOTES.md Day
+    # 20), and an unguarded s/o then reports "0.00x", reading as "the tool
+    # made it infinitely slower" rather than what actually happened. This
+    # line was the one Day 21's own comment (see policy-compare below)
+    # named as producing that misleading output without fixing it here too.
+    if awk -v s="$seq_us" 'BEGIN{exit !(s == 0)}'; then
+      record "$name" "timing-speedup" "n/a -- sequential baseline (${seq_us}us) is below clock_gettime's practical resolution at this scale (omp ${omp_us}us)"
+    else
+      record "$name" "timing-speedup" "$(awk -v s="$seq_us" -v o="$omp_us" 'BEGIN{printf "%.2fx (seq %.3fus / omp %.3fus)", s/o, s, o}')"
+    fi
   else
     record "$name" "tier1-omp" "FAIL (OpenMP build; see $OUTDIR/$name.omp.build.log)"
     continue
@@ -446,9 +457,9 @@ for name in "${BENCHMARKS[@]}"; do
   record "$name" "timing-naive" "PASS (min of $TIMING_ITERS runs: ${naive_us}us)"
 
   # --- policy-compare: the three-way number the whole day exists for.
-  # Guards a zero/empty denominator explicitly rather than reproducing
-  # timing-speedup's silent "0.00x" from a 0/0 divide (example/small_update
-  # both measure ~0us sequential -- see NOTES.md, Day 20).
+  # Guards a zero/empty denominator explicitly, the same way timing-speedup
+  # above now also does (example/small_update both measure ~0us sequential
+  # -- see NOTES.md, Day 20).
   seq_us_val="$(extract_us "$(gated_status "$name" timing-seq)")"
   gated_us_val="$(extract_us "$(gated_status "$name" timing-omp)")"
   if [[ -n "$gated_us_val" ]]; then
