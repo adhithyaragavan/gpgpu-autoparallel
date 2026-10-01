@@ -10,12 +10,14 @@ double helper(double x) { return x * 2.0; }
 
 // CONSTANT_BOUND, trip 1000
 void literal_bound(double *a) {
-  // CHECK: loop_shapes.c:[[#LOOP0:@LINE+7]]:3{{$}}
+  // CHECK: loop_shapes.c:[[#LOOP0:@LINE+9]]:3{{$}}
   // CHECK: kind       : CONSTANT_BOUND{{$}}
   // CHECK: trip count : 1000{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
   // CHECK: nest ivs   : i{{$}}
-  // CHECK: safety     : SAFE{{$}}
+  // CHECK: accesses   : 1 (1 affine){{$}}
+  // CHECK-NEXT: W a[i] : [i]{{$}}
+  // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: profitability : SEQUENTIAL{{$}}
   for (int i = 0; i < 1000; i++) {
     a[i] = (double)i;
@@ -24,12 +26,14 @@ void literal_bound(double *a) {
 
 // CONSTANT_BOUND, trip 100 — exercises the <= off-by-one
 void inclusive_bound(double *a) {
-  // CHECK: loop_shapes.c:[[#LOOP1:@LINE+7]]:3{{$}}
+  // CHECK: loop_shapes.c:[[#LOOP1:@LINE+9]]:3{{$}}
   // CHECK: kind       : CONSTANT_BOUND{{$}}
   // CHECK: trip count : 100{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
   // CHECK: nest ivs   : i{{$}}
-  // CHECK: safety     : SAFE{{$}}
+  // CHECK: accesses   : 1 (1 affine){{$}}
+  // CHECK-NEXT: W a[i] : [i]{{$}}
+  // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: profitability : SEQUENTIAL{{$}}
   for (int i = 0; i <= 99; i++) {
     a[i] = 0.0;
@@ -38,12 +42,14 @@ void inclusive_bound(double *a) {
 
 // CONSTANT_BOUND, trip 256 — step != 1, exercises ceiling division
 void strided(double *a) {
-  // CHECK: loop_shapes.c:[[#LOOP2:@LINE+7]]:3{{$}}
+  // CHECK: loop_shapes.c:[[#LOOP2:@LINE+9]]:3{{$}}
   // CHECK: kind       : CONSTANT_BOUND{{$}}
   // CHECK: trip count : 256{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
   // CHECK: nest ivs   : i{{$}}
-  // CHECK: safety     : SAFE{{$}}
+  // CHECK: accesses   : 1 (1 affine){{$}}
+  // CHECK-NEXT: W a[i] : [i]{{$}}
+  // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: profitability : SEQUENTIAL{{$}}
   for (int i = 0; i < 1024; i += 4) {
     a[i] = 1.0;
@@ -52,12 +58,14 @@ void strided(double *a) {
 
 // CONSTANT_BOUND, trip 10 — counts down
 void downward(double *a) {
-  // CHECK: loop_shapes.c:[[#LOOP3:@LINE+7]]:3{{$}}
+  // CHECK: loop_shapes.c:[[#LOOP3:@LINE+9]]:3{{$}}
   // CHECK: kind       : CONSTANT_BOUND{{$}}
   // CHECK: trip count : 10{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
   // CHECK: nest ivs   : i{{$}}
-  // CHECK: safety     : SAFE{{$}}
+  // CHECK: accesses   : 1 (1 affine){{$}}
+  // CHECK-NEXT: W a[i] : [i]{{$}}
+  // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: profitability : SEQUENTIAL{{$}}
   for (int i = 10; i > 0; i--) {
     a[i] = 0.0;
@@ -68,12 +76,14 @@ void downward(double *a) {
 // `N` is not an integer literal, but its value is known at compile time.
 void const_variable_bound(double *a) {
   const int N = 512;
-  // CHECK: loop_shapes.c:[[#LOOP4:@LINE+7]]:3{{$}}
+  // CHECK: loop_shapes.c:[[#LOOP4:@LINE+9]]:3{{$}}
   // CHECK: kind       : CONSTANT_BOUND{{$}}
   // CHECK: trip count : 512{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
   // CHECK: nest ivs   : i{{$}}
-  // CHECK: safety     : SAFE{{$}}
+  // CHECK: accesses   : 1 (1 affine){{$}}
+  // CHECK-NEXT: W a[i] : [i]{{$}}
+  // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: profitability : SEQUENTIAL{{$}}
   for (int i = 0; i < N; i++) {
     a[i] = 0.0;
@@ -82,12 +92,14 @@ void const_variable_bound(double *a) {
 
 // CONSTANT_BOUND, trip 64 — bound is a folded constant expression
 void folded_expression_bound(double *a) {
-  // CHECK: loop_shapes.c:[[#LOOP5:@LINE+7]]:3{{$}}
+  // CHECK: loop_shapes.c:[[#LOOP5:@LINE+9]]:3{{$}}
   // CHECK: kind       : CONSTANT_BOUND{{$}}
   // CHECK: trip count : 64{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
   // CHECK: nest ivs   : i{{$}}
-  // CHECK: safety     : SAFE{{$}}
+  // CHECK: accesses   : 1 (1 affine){{$}}
+  // CHECK-NEXT: W a[i] : [i]{{$}}
+  // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: profitability : SEQUENTIAL{{$}}
   for (int i = 0; i < 8 * 8; i++) {
     a[i] = 0.0;
@@ -97,13 +109,16 @@ void folded_expression_bound(double *a) {
 // VARIABLE_BOUND, bound `n` (parameter). Also exercises callee recording:
 // `helper` must show up in the body callee list.
 void param_bound(double *a, int n) {
-  // CHECK: loop_shapes.c:[[#LOOP6:@LINE+8]]:3{{$}}
+  // CHECK: loop_shapes.c:[[#LOOP6:@LINE+11]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
   // CHECK: nest ivs   : i{{$}}
   // CHECK: helper reaches 0 function(s), max depth 0: <nothing> (leaf){{$}}
-  // CHECK: safety     : SAFE{{$}}
+  // CHECK: accesses   : 2 (2 affine){{$}}
+  // CHECK-NEXT: W a[i] : [i]{{$}}
+  // CHECK-NEXT: R a[i] : [i]{{$}}
+  // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
   for (int i = 0; i < n; i++) {
     a[i] = helper(a[i]);
@@ -112,12 +127,15 @@ void param_bound(double *a, int n) {
 
 // VARIABLE_BOUND, bound text `n - 1`, no bound decl
 void expression_bound(double *a, int n) {
-  // CHECK: loop_shapes.c:[[#LOOP7:@LINE+8]]:3{{$}}
+  // CHECK: loop_shapes.c:[[#LOOP7:@LINE+11]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
   // CHECK: nest ivs   : i{{$}}
-  // CHECK: safety     : UNSAFE{{$}}
+  // CHECK: accesses   : 2 (2 affine){{$}}
+  // CHECK-NEXT: W a[i] : [i]{{$}}
+  // CHECK-NEXT: R a[i + 1] : [i + 1]{{$}}
+  // CHECK-NEXT: safety     : UNSAFE{{$}}
   // CHECK: - array access not indexed by the induction variable alone: 'a[i + 1]'{{$}}
   // CHECK: profitability : SEQUENTIAL{{$}}
   for (int i = 0; i < n - 1; i++) {
@@ -128,12 +146,14 @@ void expression_bound(double *a, int n) {
 // VARIABLE_BOUND, bound `len` (local, not a parameter)
 void local_bound(double *a, int n) {
   int len = n / 2;
-  // CHECK: loop_shapes.c:[[#LOOP8:@LINE+7]]:3{{$}}
+  // CHECK: loop_shapes.c:[[#LOOP8:@LINE+9]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
   // CHECK: nest ivs   : i{{$}}
-  // CHECK: safety     : SAFE{{$}}
+  // CHECK: accesses   : 1 (1 affine){{$}}
+  // CHECK-NEXT: W a[i] : [i]{{$}}
+  // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: profitability : CPU_PARALLEL if (len >= {{[0-9]+}}){{$}}
   for (int i = 0; i < len; i++) {
     a[i] = 0.0;
@@ -144,12 +164,14 @@ void local_bound(double *a, int n) {
 // so the init clause is an assignment rather than a declaration.
 void external_induction_var(double *a, int n) {
   int i;
-  // CHECK: loop_shapes.c:[[#LOOP9:@LINE+7]]:3{{$}}
+  // CHECK: loop_shapes.c:[[#LOOP9:@LINE+9]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
   // CHECK: nest ivs   : i{{$}}
-  // CHECK: safety     : SAFE{{$}}
+  // CHECK: accesses   : 1 (1 affine){{$}}
+  // CHECK-NEXT: W a[i] : [i]{{$}}
+  // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
   for (i = 0; i < n; i++) {
     a[i] = 0.0;

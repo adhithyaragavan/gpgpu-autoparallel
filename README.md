@@ -210,6 +210,10 @@ The fixtures:
   recursion.
 - `tests/safety_cases.c` — twelve loops covering every `SAFE`/`UNSAFE`/`UNKNOWN`
   category, matched pairs in both directions.
+- `tests/affine.c` — affine subscript extraction: shifted, scaled and symbolic
+  subscripts, true 2D arrays vs `double **`, delinearized `a[i*n + j]` (and the cases
+  that must *not* delinearize), pointer arithmetic, forward-substituted locals, and
+  every non-affine shape that must never be reported as affine.
 - `tests/nests.c` — the loop-nest model: perfect/imperfect, rectangular/triangular,
   sibling loops, loops inside unrecognized loops and inside `while`/`do`, and loops
   that are *not* children (in another loop's init clause, or in a called function).

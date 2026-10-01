@@ -20,7 +20,8 @@ the CHECK blocks are keyed by line, so one would be silently dropped. Loops
 the tool reports from other files (#include'd fragments) are not pinned.
 
 What gets pinned, each anchored with {{$}}: the loop location, kind, trip
-count, UNRECOGNIZED reason, nest facts, call-chain reach lines, the safety
+count, UNRECOGNIZED reason, nest facts, call-chain reach lines, every array
+access with its affine subscripts (or non-affine reason), the safety
 verdict plus its first reason (when not SAFE), and profitability. Guard
 thresholds are wildcarded so cost-model recalibration doesn't break tests.
 """
@@ -34,6 +35,14 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TOOL = os.environ.get("P05_TOOL", os.path.join(REPO, "build", "p05tool"))
 RUN = "// RUN: %p05 %s -- %cflags | FileCheck %s"
 A = "{{$}}"
+NEXT = "\0NEXT"  # marks an item to emit as CHECK-NEXT instead of CHECK
+
+
+def lit(text):
+    """Escape text FileCheck would read as its own syntax ([[...]], {{...}})."""
+    # One pass, so the "{{" this inserts is never itself re-escaped.
+    return re.sub(r"\[\[|\{\{",
+                  lambda m: "{{\\[\\[}}" if m.group() == "[[" else "{{\\{\\{}}", text)
 
 
 def tool_output(path):
@@ -59,7 +68,7 @@ def main(paths):
         path = os.path.abspath(path)
         rel = os.path.relpath(path, REPO)
         src = [l for l in open(path).read().split("\n")
-               if not re.match(r"\s*// (CHECK|RUN): ", l)]
+               if not re.match(r"\s*// (CHECK|CHECK-NEXT|RUN): ", l)]
         # Run the tool on a stripped temp copy in the same directory (so its
         # line numbers match `src` and relative #includes still resolve), and
         # only touch the fixture once that has succeeded.
@@ -116,8 +125,19 @@ def main(paths):
             c.append("nest ivs   : " + field("nest ivs") + A)
             c += [l.strip() + A for l in L
                   if " reaches " in l and l.startswith("    ") and not l.startswith("    -")]
+            ai = next(i for i, l in enumerate(L) if l.startswith("  accesses"))
+            acc = [L[ai].strip()]
+            k = ai + 1
+            while k < len(L) and re.match(r"    (R|W|RW|&) ", L[k]):
+                acc.append(L[k].strip())
+                k += 1
+            # The access block is contiguous in the output and followed directly
+            # by the safety line: CHECK-NEXT pins it exactly, so an extra or
+            # missing access line fails even when the count line still matches.
+            c.append(lit(acc[0]) + A)
+            c += [NEXT + lit(x) + A for x in acc[1:]]
             safety = field("safety")
-            c.append("safety     : " + safety + A)
+            c.append(NEXT + "safety     : " + safety + A)
             si = next(i for i, l in enumerate(L) if l.startswith("  safety"))
             if safety != "SAFE":
                 c.append(L[si + 1].strip() + A)
@@ -128,6 +148,8 @@ def main(paths):
             print(f"L{line}: SPEC> {spec_comment(src, line)[:160]}")
             print(f"       GOT > {field('kind')} | {field('reason') or ''} | nest: {field('nest')}"
                   f" | ivs: {field('nest ivs')} | {safety} | {prof}")
+            for x in acc[1:]:
+                print(f"             {x}")
 
         new = [RUN] if os.path.basename(os.path.dirname(path)) == "tests" else []
         new.append(f"// CHECK: Analyzed {nloops} loop(s).")
@@ -137,7 +159,8 @@ def main(paths):
                 n, col, c = checks[i]
                 ind = " " * (col - 1)
                 new.append(f"{ind}// CHECK: {os.path.basename(path)}:[[#LOOP{n}:@LINE+{len(c) + 1}]]:{col}{A}")
-                new += [f"{ind}// CHECK: {x}" for x in c]
+                new += [f"{ind}// CHECK-NEXT: {x[len(NEXT):]}" if x.startswith(NEXT)
+                        else f"{ind}// CHECK: {x}" for x in c]
             new.append(l)
         open(path, "w").write("\n".join(new))
 

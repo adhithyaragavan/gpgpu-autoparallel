@@ -20,6 +20,7 @@ add_executable(p05tool
   src/analysis/CallResolver.cpp
   src/analysis/SafetyAnalysis.cpp
   src/analysis/Profitability.cpp
+  src/analysis/AffineAccess.cpp
   src/codegen/OmpRewriter.cpp
 )
 

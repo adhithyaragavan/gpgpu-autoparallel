@@ -1479,3 +1479,160 @@ fixed. Two of the fixes correct bugs that **predate** Phase 1.1; the new fixture
   `nests.c` as correct. Phase 1.2 must reject a nest whose inner loop rewrites an outer loop's
   variable.
 - **`collapse(k)`** needs more than `PerfectlyNested`; see the 1.1 entry above.
+
+### 2026-10-02 — Phase 1.2: affine subscript extraction
+
+**Decision:** New `src/analysis/AffineAccess.{h,cpp}`. For every loop, it lists every array/pointer
+access in the body, inner loops included. For each access it records:
+- its base;
+- its kind: R, W, RW (compound assignment or `++`), or `&` (address taken);
+- one affine subscript per dimension, `Σ c·IV + Σ d·symbol + const`, *or* "non-affine" plus a reason.
+
+It makes no verdict. Phase 1.3's dependence tests consume it, and the report only gains access lines.
+Re-verified against the pre-change tool: all 11 C files (136 loops) produce byte-identical report and
+`-rewrite` output apart from the new access lines.
+
+**Reasoning, design choices that keep it sound:**
+- **A symbol must be provably invariant.** A non-induction variable counts as a symbol only if
+  nothing in the loop (body, condition or increment) can write it:
+  - It must not be written by name or address-taken in the loop.
+  - If it's a global, or a local whose address escapes anywhere in the function, there must be no
+    call in the loop and no write through a pointer of an aliasing type (same type modulo
+    signedness, or a character type).
+  - Volatile and non-integer variables are never symbols.
+- **Inner loops' header updates are not "body writes".** The first build had a real bug here: for
+  the *outer* loop of every nest, `m[i][j]` came out non-affine, because the inner loop's own `j++`
+  sits inside the outer body. Writes from a recognized inner loop's own init/increment to its
+  induction variable are now excluded. Any *other* write to it still makes it non-affine at every
+  level (fixture `inner_iv_modified`).
+- **Forward substitution** of `int k = 2*i + 1; a[k]`. The initializer is evaluated with the
+  induction variables that were valid where `k` was *declared*, not where it's used. Otherwise a
+  variable declared before an inner loop could pick up that loop's IV.
+- **True multi-dimensional arrays** (static, VLA, `double (*)[4]`) are detected by following
+  array-to-pointer decays down the subscript chain. `double **a; a[i][j]` loads a pointer, so it's
+  opaque. The inner `a[i]` is reported as its own read.
+- **Delinearization** of `X*N + J` (any operand order, recursive in X): `a[i*n + j]` becomes
+  `[i][j]`, and `a[(i*n + j)*n + k]` becomes `[i][j][k]`. Applied **only** when J is the induction
+  variable of an enclosing loop running exactly `0..N-1` by 1, so `0 ≤ J < N` is proven, and only
+  when N is a genuine invariant symbol, never an IV. Otherwise the access stays non-affine. Fixtures
+  `wrong_bound` and `wrong_start` cover the cases that must not delinearize.
+- **Every non-affine shape gives a specific reason**, so 1.3 can say *why* a loop is UNKNOWN:
+  - `idx[i]` in a subscript, `i*i`, `/`, `%`, calls
+  - a moving base pointer
+  - struct-member bases
+  - symbols changed by writes, calls or aliasing
+
+**Test-suite hardening found while building it:**
+- **Extra lines slipped through.** A mutation adding a spurious access line was *accepted*, because
+  plain `CHECK` skips lines. The access block, and the `safety` line right after it, now use
+  `CHECK-NEXT`, so the block is pinned exactly. Re-checked: a spurious line and a dropped line both
+  fail, along with the 9 other access mutations, including a non-affine access reported as affine.
+- **My first escaping helper was wrong.** Source text containing `[[`/`{{` must be escaped for
+  FileCheck, and the first version re-escaped its own output. It is now single-pass, and was tested
+  through FileCheck itself.
+
+**For Phase 1.3:**
+- An access whose base was delinearized must not be compared dimension-by-dimension with a
+  non-delinearized access to the same base (different shapes). Compare those conservatively.
+- Overflow in subscript arithmetic is assumed not to happen, the same assumption the trip counts
+  make.
+
+### 2026-10-02 — Phase 1.2 adversarial review: six soundness bugs, fixed at the root
+
+**Decision:** The fresh-context review of Phase 1.2 found **six HIGH-severity soundness bugs**. In each,
+an access was reported with a *wrong* affine form, or never reported at all. Phase 1.3 will use these
+forms to prove loops safe, so each one would have become a false SAFE. Rather than patching six
+symptoms, the core rule was rebuilt:
+- **Every write to a variable is recorded with its exact statement.** An induction variable is
+  "clean" at an access only if a recognized loop enclosing *that access* binds it and nothing else
+  writes it. A symbol is a variable that *nothing* in the loop writes.
+- **If the analyzed loop's own variable (or an enclosing one) is written inside it, every access is
+  non-affine**, because the iteration space itself is unknown.
+
+**Reasoning (bug → fix), each with a fixture in `tests/affine.c` ([R1a]…[R6''']):**
+- **R1: an inner loop's header write was invisible everywhere in the outer loop.** The first fix for
+  "outer `m[i][j]` non-affine" dropped those writes globally. As a result:
+  - `j` used *after* its loop became a "symbol";
+  - a reused `for (i…) for (i…)` went unnoticed;
+  - a parameter reused as an inner counter became a symbol;
+  - forward substitution and delinearization inherited the problem.
+
+  Now a header write is legitimate only for accesses lexically inside that loop. An enclosing binding
+  shadowed by the same variable is skipped, so the inner loop of a reused-IV pair stays an ordinary
+  loop. The outer one is poisoned.
+- **R2: delinearization never checked that J's body leaves J alone**, so `if (j == n-1) j = n;` still
+  gave `[i][j]`. It also checked N only within the analyzed loop, even when J's loop encloses it. It
+  now requires J clean and N fixed over J's whole loop. Facts for an enclosing loop are computed on
+  demand.
+- **R3: narrowing casts passed through as identity** (`a[(unsigned char)i]`, the ring-buffer idiom).
+  Integral casts are now accepted only when they preserve every value: widening that doesn't turn
+  signed into unsigned, or same width and same signedness.
+- **R4: `s[i].x = …` was recorded as a READ of `s[i]`.** Kinds now propagate through `.` members, and
+  through array members (`s[i].v[k]`, `p->v[k]`), to the element that holds them.
+- **R5: `->` accesses were never recorded** (`s->y += i` was invisible). `p->f` and `(p + e)->f` are
+  now pointer accesses to `p[0]` and `p[e]`.
+- **R6: a pointer declared in the body was treated as fixed.** `int *q = a + n - i; q[i] += 1` was
+  reported as distinct per iteration, but it is always `a[n]`. Such pointers are now substituted when
+  provable (`q[i]` → `[n] of 'a'`, via a recursive split of `P ± e ± …` and `&P[e]`) and opaque
+  otherwise. Pointer bases get the same escape/call/alias checks as symbols. That catches
+  `int **pp = &p; *pp = *pp - 1` and a global pointer base with a call in the loop.
+  - **This bug predates Phase 1.2 and is a live false SAFE today.** The hackathon `SafetyAnalysis`
+    says SAFE for the `r6_body_pointer` loop, both on `HEAD` and now, and would emit a pragma for a
+    race. Phase 1.3 replaces that rule; until then it's recorded here.
+- **Medium:**
+  - `sizeof(b[i+7])` is no longer recorded as an access, since `sizeof` doesn't evaluate its operand.
+  - `*(arr + i)` on a named array is now affine.
+  - The strict-aliasing assumption and "pointers passed to calls are Phase 1.5" are now stated in
+    the header.
+
+**Process notes:**
+- The reviewer accidentally ran `-rewrite` on the repo's own fixtures, and said so. The tracked
+  `.omp.c` files came out byte-identical. The stray untracked files were deleted. But
+  `tests/*.omp.c` (gitignored) carry a copy of the fixture's RUN line, so lit started running them as
+  tests (11 instead of 7). `tests/lit.cfg.py` now excludes every `*.omp.c` it finds.
+- The header previously claimed "never a wrong affine form". That was false, and the review proved
+  it. The header now lists the two assumptions that *can* make a form wrong if violated (no signed
+  overflow; strict aliasing), separately from limits that only lose precision.
+- **Re-verified after the fixes:**
+  - all 11 C files (164 loops) still give byte-identical report and `-rewrite` output apart from
+    access lines;
+  - every R-fixture's result was compared by hand with its prose spec;
+  - all 7 lit tests pass.
+
+### 2026-10-02 — Phase 1.2, second review round: two more wrong-form bugs fixed
+
+**Decision:** The rebuilt core got its own fresh-context review. The core rule held: variants of all six
+first-round bugs, three-level IV reuse, IVs written through pointers or calls, and more all came back
+correct. Two more wrong-form bugs and three small gaps were found and fixed, each with a fixture
+([R7]–[R11] in `tests/affine.c`).
+
+**Reasoning (bug → fix):**
+- **HIGH: a `void *` round-trip changed the element size unnoticed.** `void *v = a; char *c = v;
+  c[i]` was reported as `[i] of 'a'` (byte i vs int i). The cause was `IgnoreParenImpCasts`, which
+  also strips implicit pointer bitcasts. Pointer splitting now looks through only no-op,
+  lvalue-to-rvalue and array-decay casts. A substituted pointer must step over the same element type
+  as its base, and GNU `void *` arithmetic is rejected.
+- **MEDIUM: unsigned constants that wrap.** `a[u + -1]` gave `[u + 4294967295]`, which a dependence
+  test would read as a distance of about 4e9, so it would miss the real distance-1 dependence. In
+  unsigned arithmetic narrower than 64 bits, an operand constant ≥ 2^(w-1) is now non-affine, and so
+  is negating an unsigned value. A bare constant subscript like `a[4294967295u]` is still taken at
+  face value, because there it means exactly that.
+- **LOW:**
+  - Delinearization now requires `j` and `n` to have the same type. An unsigned `j` against an `int
+    n` compares as unsigned, and a narrower `j` can wrap.
+  - Inline asm counts as writing its outputs and as a call (clobbers).
+  - `sizeof` on a VLA-typed operand *is* evaluated, so it is now traversed. Each expression is
+    recorded once, since VLA sizes are reachable twice.
+  - A self-referencing initializer (`int k = k + 1;`) is no longer substituted.
+- **Not acted on, with reasons:**
+  - `mayAlias` ignores aggregates that contain an `int`. A struct assignment through a pointer can
+    only overwrite a standalone `int` variable by violating strict aliasing, which is already an
+    assumption.
+  - Poison-reason wording differs slightly between accesses (cosmetic).
+  - `*m` in `(*m)[i]` is recorded as a read (it's non-affine, so harmless).
+
+**Re-verified:**
+- 172 loops across all 11 C files give byte-identical report and `-rewrite` output apart from access
+  lines.
+- The round-2 fixes changed no pinned value in any other fixture.
+- All 7 lit tests pass.

@@ -18,13 +18,16 @@ static double helperA(double x) {
 }
 
 void two_level_chain(double *data, int n) {
-  // CHECK: call_chains.c:[[#LOOP0:@LINE+8]]:3{{$}}
+  // CHECK: call_chains.c:[[#LOOP0:@LINE+11]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
   // CHECK: nest ivs   : i{{$}}
   // CHECK: helperA reaches 1 function(s), max depth 1: helperB@1{{$}}
-  // CHECK: safety     : SAFE{{$}}
+  // CHECK: accesses   : 2 (2 affine){{$}}
+  // CHECK-NEXT: W data[i] : [i]{{$}}
+  // CHECK-NEXT: R data[i] : [i]{{$}}
+  // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
   for (int i = 0; i < n; i++) {
     data[i] = helperA(data[i]);
@@ -47,13 +50,16 @@ static double stepA(double x) {
 }
 
 void three_level_chain(double *data, int n) {
-  // CHECK: call_chains.c:[[#LOOP1:@LINE+8]]:3{{$}}
+  // CHECK: call_chains.c:[[#LOOP1:@LINE+11]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
   // CHECK: nest ivs   : i{{$}}
   // CHECK: stepA reaches 2 function(s), max depth 2: stepB@1, stepC@2{{$}}
-  // CHECK: safety     : SAFE{{$}}
+  // CHECK: accesses   : 2 (2 affine){{$}}
+  // CHECK-NEXT: W data[i] : [i]{{$}}
+  // CHECK-NEXT: R data[i] : [i]{{$}}
+  // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
   for (int i = 0; i < n; i++) {
     data[i] = stepA(data[i]);
@@ -72,13 +78,16 @@ static double helperC(double x) {
 }
 
 void opaque_callee(double *data, int n) {
-  // CHECK: call_chains.c:[[#LOOP2:@LINE+9]]:3{{$}}
+  // CHECK: call_chains.c:[[#LOOP2:@LINE+12]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
   // CHECK: nest ivs   : i{{$}}
   // CHECK: helperC reaches 1 function(s), max depth 1: external_transform@1<no visible body>{{$}}
-  // CHECK: safety     : UNKNOWN{{$}}
+  // CHECK: accesses   : 2 (2 affine){{$}}
+  // CHECK-NEXT: W data[i] : [i]{{$}}
+  // CHECK-NEXT: R data[i] : [i]{{$}}
+  // CHECK-NEXT: safety     : UNKNOWN{{$}}
   // CHECK: - 'helperC' reaches 'external_transform', which has no visible body{{$}}
   // CHECK: profitability : SEQUENTIAL{{$}}
   for (int i = 0; i < n; i++) {
@@ -104,13 +113,16 @@ double pong(double x) {
 }
 
 void mutual_recursion(double *data, int n) {
-  // CHECK: call_chains.c:[[#LOOP3:@LINE+9]]:3{{$}}
+  // CHECK: call_chains.c:[[#LOOP3:@LINE+12]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
   // CHECK: nest ivs   : i{{$}}
   // CHECK: ping reaches 1 function(s), max depth 1: pong@1{{$}}
-  // CHECK: safety     : UNKNOWN{{$}}
+  // CHECK: accesses   : 2 (2 affine){{$}}
+  // CHECK-NEXT: W data[i] : [i]{{$}}
+  // CHECK-NEXT: R data[i] : [i]{{$}}
+  // CHECK-NEXT: safety     : UNKNOWN{{$}}
   // CHECK: - 'ping' recurses; call chain cannot be bounded{{$}}
   // CHECK: profitability : SEQUENTIAL{{$}}
   for (int i = 0; i < n; i++) {

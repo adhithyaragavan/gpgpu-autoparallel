@@ -10,6 +10,7 @@
 // Run:
 //   ./build/p05tool benchmarks/example.c --
 
+#include "analysis/AffineAccess.h"
 #include "analysis/CallResolver.h"
 #include "analysis/LoopAnalysis.h"
 #include "analysis/Profitability.h"
@@ -68,6 +69,7 @@ public:
 
     p05::CallResolver Resolver(Context);
     p05::SafetyAnalyzer Safety(Resolver);
+    p05::AffineAnalyzer Affine(Context, Collector.getLoops());
     p05::ProfitabilityAnalyzer Profitability(Resolver, Context, Machine,
                                              PolicyMode);
 
@@ -87,6 +89,8 @@ public:
     for (const p05::LoopInfo &LI : Loops) {
       p05::printLoopReport(llvm::outs(), LI, Loops);
       p05::printCallChains(llvm::outs(), LI, Resolver);
+      p05::printAccessReport(llvm::outs(),
+                             Affine.analyzeLoop(&LI - Loops.data()));
       p05::LoopSafety SafetyVerdict = Safety.analyzeLoop(LI);
       p05::printSafetyReport(llvm::outs(), SafetyVerdict);
       p05::ProfitabilityVerdict ProfitVerdict =
