@@ -1,0 +1,15 @@
+{
+  "gpu": "Tesla T4",
+  "sm": "sm_75",
+  "seq_us": 3550.263,
+  "A_clang": "not built",
+  "B_nvc": {
+    "gpu_min_us_of_7": 158253.047,
+    "exit": 0,
+    "bitwise_equal": 45505,
+    "max_rel_err": 6.586147594683939e-16,
+    "n": 65536
+  },
+  "pathA.status": "PATH_A_PROBE=FAIL",
+  "pathB.status": "PATH_B_PROBE=OK"
+}

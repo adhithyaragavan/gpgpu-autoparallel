@@ -1279,3 +1279,100 @@ Sept 19-20 evaluation. `scripts/build_and_run.sh`'s own latent `SYSROOT_ARGS`
 unbound-variable risk (found above, not fixed there) is a candidate for Block B's
 Day 2 ("fix anything left rough") if there's real time to spare — it has never
 actually fired on this development machine and isn't blocking anything today.
+
+---
+
+# Research phase (from 2026-10-01)
+
+The goal is an ISC 2027 Research Poster (deadline 2027-01-20). The plan is in RESEARCH_PLAN.md
+(local). The entries below follow the same Decision/Reasoning format.
+
+### 2026-10-01 — Verdict regression suite: lit + FileCheck, CHECK lines next to each loop
+
+**Decision:** Every fixture's expected verdicts (kind, trip count, UNRECOGNIZED reason, safety,
+profitability) are now FileCheck lines directly above the loop they describe. They run under lit
+(`tests/lit.cfg.py`) and in CI. Every loop across the 5 fixture files is covered. The expected
+values were taken from the tool's current output, then checked against each fixture's prose comment.
+**Correction (2026-10-02):** this entry first claimed "all 44 agreed". That was false. The adversarial
+review below found `for (;;)` pinned to "no init clause" while its comment said "no condition clause".
+The first check was by eye; the redone check printed each spec beside each snapshot.
+**Reasoning:** The Phase 1 rewrite replaces the safety pass wholesale. Until now "both directions"
+was checked by hand. It must become automatic before the code it protects is rewritten. Guard
+thresholds are matched as `{{[0-9]+}}` rather than literals: Phase 2 recalibrates the cost model,
+which legitimately moves every threshold, while a guarded↔unguarded flip still fails. The suite was
+mutation-checked against fed-in tool output. A flipped verdict, a dropped loop and a dropped guard
+each fail it. `CHECK-LABEL` can't use `[[@LINE]]`, so loop locations use plain `CHECK`. Sequential
+matching still pins each field to its own loop: a field missing from loop k would match in loop
+k+1's block, and loop k+1's location check would then fail.
+**Alternative considered:** a custom Python checker that parses the prose comments. Rejected because
+lit/FileCheck is the LLVM-standard harness that reviewers recognise, and prose is too irregular to
+parse reliably.
+
+### 2026-10-02 — GPU offload spike: real T4 offload works via NVIDIA HPC SDK, not apt.llvm.org clang
+
+**Decision:** GPU evaluation runs on Colab/Kaggle T4, compiling P05's output with NVIDIA HPC SDK
+`nvc -mp=gpu`. Results: `eval/colab/results/spike_t4_2026-10-02.json`, notebook
+`eval/colab/offload_spike.ipynb`.
+**Reasoning:** Under `OMP_TARGET_OFFLOAD=MANDATORY`, a probe confirmed the target region executed
+on a non-host device. Then `benchmarks/compute_heavy.omp.c`, the tool's unmodified output, ran on
+the T4.
+- Output against the sequential baseline: max relative error 6.6e-16, with 45505/65536 elements
+  bitwise equal. The remainder is the expected FMA-contraction rounding difference (`r*x + c`
+  fused on device), not a correctness bug.
+- Correctness for GPU results is therefore an ε-comparison with the tolerance stated, not bitwise.
+  This revises the hackathon's bit-for-bit bar, which only held because the "device" was the host.
+- The measured 158 ms (vs 3.55 ms sequential on Colab's CPU) is dominated by one-time CUDA context
+  creation in a single-kernel program. It is the same class of cold-start cost Day 20/21 found for
+  libomp, much larger, and still absent from the cost model. Phase 2 calibration must measure it as
+  its own term and time steady-state kernels after a warm-up.
+**Alternative considered:** apt.llvm.org clang with libomptarget (Path A). Its probe failed. The
+cause is not yet diagnosed and is worth a single follow-up cell. A working clang offload path would
+give a second compiler for cross-checking. It is not blocking, since P05 emits standard OpenMP and
+`nvc` is a production OpenMP-offload compiler.
+
+### 2026-10-02 — Adversarial review of Phase 0: suite tightened, one tool bug found
+
+**Decision:** Phase 0 got a fresh-context adversarial review before committing, per the project's
+review-after-implement convention. Every finding inside Phase 0's scope was fixed. The one tool bug
+it found is recorded and scheduled, not fixed here.
+
+**Reasoning (what it found → what changed):**
+- **Spec mismatch baked into a snapshot.** `for (;;)` hits the no-init reject first, so the
+  "no condition clause" path (`LoopAnalysis.cpp`) had no coverage. Kept `for (;;)` as the no-init
+  case with a corrected comment, and added `no_condition` (`for (int i = 0; ; i++)`) so the
+  no-condition path is really exercised. `loop_unrecognized.c` now has 9 loops. The generator now
+  prints every loop's prose spec beside the snapshotted values; all rows were compared, and agree.
+- **Unanchored fields.** Trip counts 10→100, 8→8192, 65536→655360, `SAFE`→`SAFEX`, a reason or
+  guard with a suffix: all were *accepted*. Every field is now anchored with `{{$}}`.
+- **Only the verdict was checked, never the reason.** A 3-level chain collapsed to depth 1, or an
+  UNSAFE verdict reached for an unrelated reason, passed. The suite now also pins every
+  `reaches … max depth K` line and the first reason line under each UNSAFE/UNKNOWN verdict. This
+  matters most for Phase 1: a rewritten safety pass must reach the same verdicts *for the same
+  reasons*. All 13 of the review's accepted mutations were re-run and are now rejected.
+- **lit wrote `Output/` and timing files into `tests/`.** `test_exec_root` is now `build/tests`.
+- **CI would likely have failed.** Ubuntu 24.04's Python is externally managed (PEP 668), so a bare
+  `pip install lit` fails; it's now `pipx install lit`. Also added the optional
+  `clang-tools`/`libpolly`/`libclang-cpp` packages that Debian's ClangConfig.cmake checks exist.
+  Still unverified until the first push.
+- **Spike notebook.**
+  - It now records *which stage* Path A failed at, with stderr.
+  - It no longer hides the `libomp` install output.
+  - It installs `clang-tools` and lists the NVPTX device-runtime dir (the review's top hypothesis
+    for the Path A failure).
+  - Output goes to a log instead of `| head`, which could SIGPIPE the run before its dump is
+    written.
+  - Every rerun starts fresh.
+  - Two caveats are now explicit: the probe proves "a non-host device", and only NOTIFY/INFO output
+    proves "GPU". And `seq_us` (gcc) vs the nvc GPU time is cold-start data, not a speedup.
+- **`docs/related_work.md` overclaimed.** The P05 row described Phase 1/2 targets (call-site-aware
+  summaries, calibration) as present-tense facts. It also omitted the no-alias assumption. It now
+  states current status, with targets labelled as targets. Unverified claims about Cetus/OpenMPC,
+  Polly-ACC, COMPOFF, Cerberus and DiscoPoP are now tagged [verify].
+
+**Tool bug found, deliberately not fixed in Phase 0.** `gpu_offload_descending_case` maps
+`out[0:0]`/`in[0:0]`, because a descending loop's region can't be sized. Its transfer is therefore
+priced at 0 µs (t_gpu 20.5 µs) against 87.4 µs for the identical ascending loop (t_gpu 107.9 µs).
+The verdict is the same either way, which is why no verdict check could see it. It is the same root
+cause as the README's "mapped regions always start at index 0" limitation. So it is fixed with Phase
+2's map-extent rework (RESEARCH_PLAN.md Phase 2.1): an unsizeable region must be priced
+conservatively or declined, never priced at zero. The fixture's comment now says so.
