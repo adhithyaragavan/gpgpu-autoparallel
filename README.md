@@ -189,12 +189,19 @@ does and doesn't prove.
 **Both directions.** `scripts/build_and_run.sh` exercises the four demo benchmarks
 (`example`, `saxpy`, `small_update`, `compute_heavy`) end to end, but the core claim —
 that the safety and profitability checks actually discriminate, rather than always
-saying yes — rests on a separate set of fixtures built to fail, run manually against
-the tool and checked against the comment above each loop stating the expected
-verdict:
+saying yes — rests on a separate set of fixtures built to fail. Each loop's expected
+verdict is a FileCheck line directly above it, run automatically by lit (locally and in
+CI):
+
+```bash
+python3 -m venv .venv && .venv/bin/pip install lit   # once
+.venv/bin/lit -v tests                                # after building
+```
+
+The fixtures:
 
 - `benchmarks/loop_shapes.c` / `loop_unrecognized.c` — matched positive/negative pair
-  for loop classification (10 recognized, 8 flagged, each with a distinct reason).
+  for loop classification (10 recognized, 9 flagged, each with a distinct reason).
 - `tests/call_chains.c` — 2-level and 3-level call chains, an opaque callee, mutual
   recursion.
 - `tests/safety_cases.c` — twelve loops covering every `SAFE`/`UNSAFE`/`UNKNOWN`

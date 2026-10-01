@@ -1,0 +1,2 @@
+; Loop classification, negative side: every loop must be UNRECOGNIZED with its reason.
+RUN: %p05 %S/../benchmarks/loop_unrecognized.c -- %cflags | FileCheck %S/../benchmarks/loop_unrecognized.c

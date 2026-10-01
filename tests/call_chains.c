@@ -1,3 +1,5 @@
+// RUN: %p05 %s -- %cflags | FileCheck %s
+// CHECK: Analyzed 4 loop(s).
 // Day 5-6 fixture for CallResolver. All three demo benchmarks (example.c/
 // scale, saxpy.c/axpy_elem, small_update.c/clamp_unit) have a leaf callee --
 // none of them exercises more than one call level, so none of them proves
@@ -16,6 +18,12 @@ static double helperA(double x) {
 }
 
 void two_level_chain(double *data, int n) {
+  // CHECK: call_chains.c:[[@LINE+6]]:3{{$}}
+  // CHECK: kind       : VARIABLE_BOUND{{$}}
+  // CHECK: trip count : <not statically known>{{$}}
+  // CHECK: helperA reaches 1 function(s), max depth 1: helperB@1{{$}}
+  // CHECK: safety     : SAFE{{$}}
+  // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
   for (int i = 0; i < n; i++) {
     data[i] = helperA(data[i]);
   }
@@ -37,6 +45,12 @@ static double stepA(double x) {
 }
 
 void three_level_chain(double *data, int n) {
+  // CHECK: call_chains.c:[[@LINE+6]]:3{{$}}
+  // CHECK: kind       : VARIABLE_BOUND{{$}}
+  // CHECK: trip count : <not statically known>{{$}}
+  // CHECK: stepA reaches 2 function(s), max depth 2: stepB@1, stepC@2{{$}}
+  // CHECK: safety     : SAFE{{$}}
+  // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
   for (int i = 0; i < n; i++) {
     data[i] = stepA(data[i]);
   }
@@ -54,6 +68,13 @@ static double helperC(double x) {
 }
 
 void opaque_callee(double *data, int n) {
+  // CHECK: call_chains.c:[[@LINE+7]]:3{{$}}
+  // CHECK: kind       : VARIABLE_BOUND{{$}}
+  // CHECK: trip count : <not statically known>{{$}}
+  // CHECK: helperC reaches 1 function(s), max depth 1: external_transform@1<no visible body>{{$}}
+  // CHECK: safety     : UNKNOWN{{$}}
+  // CHECK: - 'helperC' reaches 'external_transform', which has no visible body{{$}}
+  // CHECK: profitability : SEQUENTIAL{{$}}
   for (int i = 0; i < n; i++) {
     data[i] = helperC(data[i]);
   }
@@ -77,6 +98,13 @@ double pong(double x) {
 }
 
 void mutual_recursion(double *data, int n) {
+  // CHECK: call_chains.c:[[@LINE+7]]:3{{$}}
+  // CHECK: kind       : VARIABLE_BOUND{{$}}
+  // CHECK: trip count : <not statically known>{{$}}
+  // CHECK: ping reaches 1 function(s), max depth 1: pong@1{{$}}
+  // CHECK: safety     : UNKNOWN{{$}}
+  // CHECK: - 'ping' recurses; call chain cannot be bounded{{$}}
+  // CHECK: profitability : SEQUENTIAL{{$}}
   for (int i = 0; i < n; i++) {
     data[i] = ping(data[i]);
   }

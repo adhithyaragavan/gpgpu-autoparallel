@@ -1,0 +1,3 @@
+; Loop classification, positive side: every loop must be CONSTANT/VARIABLE_BOUND.
+; The CHECK lines live in the benchmark itself, next to each loop.
+RUN: %p05 %S/../benchmarks/loop_shapes.c -- %cflags | FileCheck %S/../benchmarks/loop_shapes.c

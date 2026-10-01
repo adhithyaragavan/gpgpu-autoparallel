@@ -1,3 +1,5 @@
+// RUN: %p05 %s -- %cflags | FileCheck %s
+// CHECK: Analyzed 10 loop(s).
 // Days 11-13 fixture for ProfitabilityAnalyzer. Expected target is written
 // above each loop, matching the safety_cases.c / loop_shapes.c convention: a
 // single wrong verdict here is a bug. Every loop but the last is SAFE, so the
@@ -37,6 +39,12 @@ static double heavy_kernel(double x) {
 
 // GPU_OFFLOAD -- constant trip 65536, intensity 5.0 flop/byte.
 void gpu_offload_case(double *out, const double *in) {
+  // CHECK: profitability_cases.c:[[@LINE+6]]:3{{$}}
+  // CHECK: kind       : CONSTANT_BOUND{{$}}
+  // CHECK: trip count : 65536{{$}}
+  // CHECK: heavy_kernel reaches 0 function(s), max depth 0: <nothing> (leaf){{$}}
+  // CHECK: safety     : SAFE{{$}}
+  // CHECK: profitability : GPU_OFFLOAD{{$}}
   for (int i = 0; i < 65536; i++) {
     out[i] = heavy_kernel(in[i]);
   }
@@ -49,6 +57,12 @@ void gpu_offload_case(double *out, const double *in) {
 // path: this loop is worth a GPU only above a threshold the cost model
 // solves for (not one that was picked), not unconditionally.
 void gpu_conditional_case(double *out, const double *in, int n) {
+  // CHECK: profitability_cases.c:[[@LINE+6]]:3{{$}}
+  // CHECK: kind       : VARIABLE_BOUND{{$}}
+  // CHECK: trip count : <not statically known>{{$}}
+  // CHECK: heavy_kernel reaches 0 function(s), max depth 0: <nothing> (leaf){{$}}
+  // CHECK: safety     : SAFE{{$}}
+  // CHECK: profitability : GPU_OFFLOAD if (n >= {{[0-9]+}}){{$}}
   for (int i = 0; i < n; i++) {
     out[i] = heavy_kernel(in[i]);
   }
@@ -59,6 +73,11 @@ void gpu_conditional_case(double *out, const double *in, int n) {
 // CPU_PARALLEL -- large constant trip, low intensity. The SAXPY shape: one
 // add, two array touches, transfer-bound on any real PCIe link.
 void cpu_low_intensity_case(double *y, const double *x) {
+  // CHECK: profitability_cases.c:[[@LINE+5]]:3{{$}}
+  // CHECK: kind       : CONSTANT_BOUND{{$}}
+  // CHECK: trip count : 65536{{$}}
+  // CHECK: safety     : SAFE{{$}}
+  // CHECK: profitability : CPU_PARALLEL{{$}}
   for (int i = 0; i < 65536; i++) {
     y[i] = y[i] + x[i];
   }
@@ -70,6 +89,11 @@ void cpu_low_intensity_case(double *y, const double *x) {
 // is charged on that span, not the touched count -- no separate stride gate
 // exists, see the header comment in Profitability.h for why none is needed.
 void strided_case(double *a) {
+  // CHECK: profitability_cases.c:[[@LINE+5]]:3{{$}}
+  // CHECK: kind       : CONSTANT_BOUND{{$}}
+  // CHECK: trip count : 65536{{$}}
+  // CHECK: safety     : SAFE{{$}}
+  // CHECK: profitability : CPU_PARALLEL{{$}}
   for (int i = 0; i < 1048576; i += 16) {
     a[i] = a[i] * 2.0;
   }
@@ -81,6 +105,11 @@ void strided_case(double *a) {
 // thread-start cost over eight iterations; matches small_update.c's real
 // verdict, restated here so this file alone proves the discrimination.
 void sequential_case(double *a) {
+  // CHECK: profitability_cases.c:[[@LINE+5]]:3{{$}}
+  // CHECK: kind       : CONSTANT_BOUND{{$}}
+  // CHECK: trip count : 8{{$}}
+  // CHECK: safety     : SAFE{{$}}
+  // CHECK: profitability : SEQUENTIAL{{$}}
   for (int i = 0; i < 8; i++) {
     a[i] = a[i] * 2.0;
   }
@@ -92,6 +121,11 @@ void sequential_case(double *a) {
 // ever shipped: the report formatter cast that infinite double straight to
 // int64_t (undefined behaviour) rather than checking isfinite() first.
 void zero_bytes_case(void) {
+  // CHECK: profitability_cases.c:[[@LINE+5]]:3{{$}}
+  // CHECK: kind       : CONSTANT_BOUND{{$}}
+  // CHECK: trip count : 65536{{$}}
+  // CHECK: safety     : SAFE{{$}}
+  // CHECK: profitability : CPU_PARALLEL{{$}}
   for (int i = 0; i < 65536; i++) {
     double tmp = (double)i * 2.0;
     (void)tmp;
@@ -109,6 +143,13 @@ static double touches(double x) {
   return x;
 }
 void unsafe_gate_case(double *data, int n) {
+  // CHECK: profitability_cases.c:[[@LINE+7]]:3{{$}}
+  // CHECK: kind       : VARIABLE_BOUND{{$}}
+  // CHECK: trip count : <not statically known>{{$}}
+  // CHECK: touches reaches 0 function(s), max depth 0: <nothing> (leaf){{$}}
+  // CHECK: safety     : UNSAFE{{$}}
+  // CHECK: - 'touches' writes global 'touch_count'{{$}}
+  // CHECK: profitability : SEQUENTIAL{{$}}
   for (int i = 0; i < n; i++) {
     data[i] = touches(data[i]);
   }
@@ -123,6 +164,11 @@ void unsafe_gate_case(double *data, int n) {
 // `if(parallel: n >= T)` rather than a bare pragma; T is solved from the
 // cost model, not picked.
 void cpu_conditional_case(double *y, const double *x, int n) {
+  // CHECK: profitability_cases.c:[[@LINE+5]]:3{{$}}
+  // CHECK: kind       : VARIABLE_BOUND{{$}}
+  // CHECK: trip count : <not statically known>{{$}}
+  // CHECK: safety     : SAFE{{$}}
+  // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
   for (int i = 0; i < n; i++) {
     y[i] = y[i] + x[i];
   }
@@ -139,7 +185,19 @@ void cpu_conditional_case(double *y, const double *x, int n) {
 // and degrades this to `#pragma omp parallel for` instead (see
 // OmpRewriter.h's header comment). Verified correct against the sequential
 // baseline in NOTES.md's Days 17-18 entry, not just "it compiles".
+//
+// KNOWN BUG (found 2026-10-02, fix scheduled for Phase 2 map extents): the
+// verdict matches the ascending case, but the pricing does not. The region
+// can't be sized for a descending loop (map(... [0:0])), so its transfer is
+// priced at 0 us instead of ~87 us, under-counting t_gpu about 5x. See
+// NOTES.md 2026-10-02.
 void gpu_offload_descending_case(double *out, const double *in) {
+  // CHECK: profitability_cases.c:[[@LINE+6]]:3{{$}}
+  // CHECK: kind       : CONSTANT_BOUND{{$}}
+  // CHECK: trip count : 65536{{$}}
+  // CHECK: heavy_kernel reaches 0 function(s), max depth 0: <nothing> (leaf){{$}}
+  // CHECK: safety     : SAFE{{$}}
+  // CHECK: profitability : GPU_OFFLOAD{{$}}
   for (int i = 65535; i >= 0; i--) {
     out[i] = heavy_kernel(in[i]);
   }
@@ -166,6 +224,12 @@ void gpu_offload_descending_case(double *out, const double *in) {
 // named reason rather than a fabricated one. See NOTES.md's Days 17-18
 // entry.
 void unguardable_bound_case(double *out, const double *in, int start) {
+  // CHECK: profitability_cases.c:[[@LINE+6]]:3{{$}}
+  // CHECK: kind       : CONSTANT_BOUND{{$}}
+  // CHECK: trip count : <not statically known>{{$}}
+  // CHECK: heavy_kernel reaches 0 function(s), max depth 0: <nothing> (leaf){{$}}
+  // CHECK: safety     : SAFE{{$}}
+  // CHECK: profitability : SEQUENTIAL{{$}}
   for (int i = start; i < 8192; i++) {
     out[i] = heavy_kernel(in[i]);
   }
