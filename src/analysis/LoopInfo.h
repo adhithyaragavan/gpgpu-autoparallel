@@ -109,6 +109,75 @@ struct LoopInfo {
   /// Why Kind == Unrecognized. Empty otherwise.
   std::string UnrecognizedReason;
 
+  /// The expression the induction variable starts from (the initializer, or
+  /// the right-hand side of the init assignment). Set whenever the init clause
+  /// parsed, even if Start did not fold to a constant.
+  const clang::Expr *StartExpr = nullptr;
+
+  // --- Nest facts (Phase 1.1) -------------------------------------------------
+  //
+  // Filled in by LoopCollector, not by analyzeForStmt: they describe where a
+  // loop sits relative to the other loops in the translation unit, which a
+  // single ForStmt cannot know on its own. Nesting is lexical and counts only
+  // loops in an enclosing loop's *body*. A loop in an enclosing loop's
+  // init/cond/inc clause (possible via a GNU statement expression) is not a
+  // child, and neither is a loop inside a function the body calls.
+  //
+  // Parent and Children are indices into LoopCollector's flat vector, not
+  // pointers: the vector reallocates while it is being filled. Loops are
+  // recorded in pre-order, so Parent is always less than the loop's own index.
+
+  /// Index of the innermost enclosing for loop, or -1 for an outermost loop.
+  int Parent = -1;
+
+  /// Indices of the for loops directly inside this loop's body, in source order.
+  /// A loop inside a block literal (`^{ ... }`, -fblocks) in the body is not a
+  /// child: like a called function, it runs whenever the block is invoked.
+  std::vector<int> Children;
+
+  /// Number of enclosing for loops: 0 for an outermost loop.
+  unsigned Depth = 0;
+
+  /// Induction variables of the nest down to and including this loop,
+  /// outermost first. Only recognized loops contribute: an enclosing
+  /// Unrecognized loop's variable cannot be trusted as an induction variable
+  /// (see EnclosedByUnrecognized), and this loop's own InductionVar is appended
+  /// only when this loop is itself recognized. This is the variable vector
+  /// subscripts become affine functions of in Phase 1.2.
+  std::vector<const clang::VarDecl *> NestIVs;
+
+  /// Some enclosing for loop is Unrecognized. Its variable is missing from
+  /// NestIVs, so dependence analysis must treat any variable it updates as an
+  /// unknown symbol, never as a well-behaved induction variable.
+  bool EnclosedByUnrecognized = false;
+
+  /// This loop's body is exactly one for statement and nothing else, looking
+  /// through single-statement compound bodies (`{ { for } }`) and attribute
+  /// wrappers (`#pragma clang loop ...`, which Clang represents as an
+  /// AttributedStmt). A label in front of the inner loop makes the nest
+  /// imperfect: a goto could enter it. So this loop and that child
+  /// form a perfect two-level nest: the shape `collapse(2)` needs. A property
+  /// of this (outer) loop, not of the child.
+  bool PerfectlyNested = false;
+
+  /// The start or bound expression refers to an enclosing loop's induction
+  /// variable (e.g. `for (j = 0; j < i; j++)`): a triangular/non-rectangular
+  /// nest. Only enclosing *recognized* loops' variables are checked, and a
+  /// start or bound that folds to a compile-time constant is never flagged
+  /// (`j < sizeof(a[i])` mentions i but cannot depend on it). Whether
+  /// the bound depends on some other variable the outer body modifies is a
+  /// loop-invariance question for Phase 1.2, not answered here.
+  bool BoundsDependOnOuterIV = false;
+
+  /// Lexically inside some repeating context that is not an enclosing for
+  /// loop's body: a while or do loop (body or condition), or a for loop's
+  /// condition or increment clause (re-evaluated every iteration; reachable
+  /// via a GNU statement expression). Such a loop can run many times even when
+  /// Depth == 0, which Phase 2's data-region hoisting must know. A for loop's
+  /// init clause runs once, so it does not count. This does not affect
+  /// whether this loop's own iterations are independent.
+  bool InsideRepeatingContext = false;
+
   // --- Reporting -------------------------------------------------------------
 
   std::string File;
@@ -130,6 +199,7 @@ struct LoopInfo {
 //
 // TODO: WhileStmt and DoStmt are not classified at all. Every benchmark loop we
 // care about is a ForStmt, so this is a deliberate scope cut, not an oversight.
+// They are only tracked as enclosing context (LoopInfo::InsideRepeatingContext).
 
 } // namespace p05
 

@@ -1376,3 +1376,106 @@ The verdict is the same either way, which is why no verdict check could see it. 
 cause as the README's "mapped regions always start at index 0" limitation. So it is fixed with Phase
 2's map-extent rework (RESEARCH_PLAN.md Phase 2.1): an unsizeable region must be priced
 conservatively or declined, never priced at zero. The fixture's comment now says so.
+
+### 2026-10-02 — Phase 1.1: the loop-nest model
+
+**Decision:** Every `LoopInfo` now knows where it sits among the other loops:
+- `Parent`, `Children` and `Depth` (indices into the collector's flat vector).
+- `NestIVs`, the trusted induction variables down to this loop.
+- `EnclosedByUnrecognized`, `PerfectlyNested`, `BoundsDependOnOuterIV` and `InsideWhileOrDo` (renamed
+  `InsideRepeatingContext` after the review, below).
+
+`LoopCollector` overrides `TraverseForStmt` so that only a loop's *body* is inside it. The report
+gained two lines per loop, `nest` and `nest ivs`. No verdict, report line or rewrite output changed.
+
+**Reasoning:**
+- **Why indices, not pointers:** the vector reallocates while it is being filled, so pointers would
+  dangle.
+- **Why the flat vector stays:** the driver, codegen, the report and every existing CHECK block keep
+  working untouched.
+- **Why only the body counts:** `TraverseForStmt` records the loop, traverses init/cond/inc with the
+  stack unchanged, then pushes the loop for the body only. So a loop in an init clause (possible via a
+  GNU statement expression) gets the *enclosing* loop as its parent.
+- **Why the order is unchanged:** recording happens before any child is visited, so the order is
+  exactly what `VisitForStmt` produced: pre-order, parents before children.
+- **Why the queue is dropped:** the `while`/`do` overrides pass a null `DataRecursionQueue` to the base
+  traversal. That makes the whole subtree finish before the counter is decremented. Forwarding the
+  queue would let children be visited after the decrement.
+- **Unrecognized enclosing loops:** their variables are deliberately left out of `NestIVs` and the
+  triangular check, and `EnclosedByUnrecognized` is set instead, so later phases treat those
+  variables as unknown symbols.
+- **"Purely additive" was verified directly, not just inferred from tests:** the pre-change tool was
+  built from `HEAD` in a scratch worktree. Its full report and `-rewrite` output were diffed against
+  the new tool's, with the two new lines deleted, for every C file in the repo (9 files, 56 loops).
+  All were byte-identical.
+
+**Test tooling:**
+- New fixture `tests/nests.c`: both directions per fact. It had 27 loops, not the 26 this entry
+  first said (the review caught that); it has 43 after the review additions below.
+- The CHECK generator is now committed as `scripts/gen_filecheck.py`, and prints each loop's prose spec
+  beside the snapshot.
+- **A flaw it hit:** the child's `parent L:C` was first pinned as a literal line, but inserting the
+  CHECK lines moves the parent loop. Each loop's location check now captures its line into a FileCheck
+  numeric variable (`[[#LOOP3:@LINE+8]]`), and the child checks `parent [[#LOOP3]]:5`. Confirmed that a
+  wrong parent and a wrong line are both rejected.
+- All fixtures were regenerated in this format. The diff was verified to only rewrite location lines
+  and add the nest lines.
+- Eight nest mutations (wrong parent, depth, perfect/triangular/unrecognized/while flags, child
+  count, IV order) are all rejected.
+
+**Requirements this hands to Phase 1.3, which the fixture already exposes:**
+- **`PerfectlyNested` alone must not license `collapse(2)`.** In `loop_in_init_clause` the outer loop
+  is "perfect" yet has 2 children, because a loop hides in the inner loop's init clause. `collapse`
+  also needs both loops recognized, a rectangular nest (`!BoundsDependOnOuterIV`, unless the OpenMP 5.0
+  non-rectangular forms are targeted on purpose), and inner bounds invariant in the outer loop.
+- **`caller` in `nests.c` is a pinned false UNSAFE.** `callee_with_loop(&a[i*n], n)` writes a distinct
+  row per iteration. This is the Phase 1.5 call-site-aware-summaries target. When 1.5 lands, this
+  CHECK is allowed to flip to SAFE, and only in that direction.
+
+### 2026-10-02 — Phase 1.1 adversarial review: generator hardened, nest facts sharpened, two older bugs fixed
+
+**Decision:** A fresh-context review found no bug in the nest model's C++. It re-verified "purely
+additive" on the 56 tracked loops plus 303 throwaway loops of tricky shapes. Every finding was then
+fixed. Two of the fixes correct bugs that **predate** Phase 1.1; the new fixture is what exposed them.
+
+**Reasoning (finding → fix):**
+- **The generator silently dropped a loop's checks when two loops share a line.** Blocks were keyed by
+  line alone. It now exits with an error instead.
+- **The generator wiped a fixture's CHECK lines if the tool failed.** It wrote the stripped file before
+  running the tool. It now runs the tool on a stripped temp copy and rewrites the fixture only on
+  success. Verified: 340 CHECK lines survive a missing tool, and no temp file is left behind.
+- **The generator mishandled loops from `#include`d files.** It keyed by line only, so it could hit a
+  KeyError or bind the wrong parent. Locations are now keyed by (file, line), loops from other files
+  aren't pinned, and the report prints `parent FILE:L:C` when the parent is in another file. The RUN
+  line is now decided by the directory name, so regenerating outside the repo still adds it.
+- **"Triangular" false positive:** `j < sizeof(a[i])` mentions `i` but folds to a constant. A start or
+  bound that folds to a constant is no longer checked. This is sound, since a constant can't depend on
+  `i`.
+- **"Perfect" misses, in the safe direction:**
+  - Now perfect: `#pragma clang loop` (an `AttributedStmt` wrapper) and `{ { for } }`.
+  - Still imperfect, deliberately: a label in front of the inner loop, because a `goto` could enter
+    it.
+- **`InsideWhileOrDo` was incomplete, and is renamed `InsideRepeatingContext`:** a loop in a `for`'s
+  condition or increment clause re-runs every iteration but was reported as depth 0 and not
+  repeated. Those clauses now count. The init clause runs once, so it doesn't.
+- **Block literals:** a loop inside `^{ ... }` in a loop body was counted as a child. It runs when the
+  block is invoked, like a called function, so it now starts a fresh nest.
+- **Pre-existing bug 1, soundness:** a statement expression in a bound (`j < ({ ...; s + n; })`) was
+  accepted, and the loop was marked SAFE. Like a call, a statement expression can run arbitrary code
+  every iteration. It is now rejected: UNRECOGNIZED, "bound expression contains a statement
+  expression". This is a verdict change in the conservative direction only, and it reaches no
+  previously existing fixture.
+- **Pre-existing bug 2, codegen produced uncompilable output:** a bound spanning two source lines was
+  pasted raw into the one-line `#pragma omp parallel for if(parallel: n\n - 1 >= 2048)`. Reproduced
+  with the pre-change tool: clang rejected the rewritten file ("expected ')'"). Bound text that spans
+  lines is now taken from Clang's single-line pretty-printer. Fixture `multiline_bound_case` pins the
+  guard as `n - 1 >= T`, and the rewritten file compiles.
+- **Re-verified:** after all the fixes, every tracked C file at `HEAD` still produces byte-identical
+  report and `-rewrite` output, with the nest lines removed.
+
+**Carried into Phase 1.2/1.3 (recorded, not built):**
+- **A reused induction variable** (`int i; for (i…) for (i…)`) gives `nest ivs : i, i` over the
+  *same* variable. That is distinct from shadowing, which is two different `i`s and is pinned in
+  `nests.c` as correct. Phase 1.2 must reject a nest whose inner loop rewrites an outer loop's
+  variable.
+- **`collapse(k)`** needs more than `PerfectlyNested`; see the 1.1 entry above.

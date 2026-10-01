@@ -85,7 +85,7 @@ public:
                       "computed but not consulted)\n";
     llvm::outs() << "\n";
     for (const p05::LoopInfo &LI : Loops) {
-      p05::printLoopReport(llvm::outs(), LI);
+      p05::printLoopReport(llvm::outs(), LI, Loops);
       p05::printCallChains(llvm::outs(), LI, Resolver);
       p05::LoopSafety SafetyVerdict = Safety.analyzeLoop(LI);
       p05::printSafetyReport(llvm::outs(), SafetyVerdict);

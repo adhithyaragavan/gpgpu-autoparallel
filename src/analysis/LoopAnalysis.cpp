@@ -52,13 +52,16 @@ std::optional<int64_t> evalInt(const Expr *E, ASTContext &Ctx) {
 
 /// Printed source text of an expression, for symbolic reporting of bounds we
 /// cannot fold. Falls back to pretty-printing the AST when the range does not
-/// map cleanly back to source (macro expansions).
+/// map cleanly back to source (macro expansions), and when the source text
+/// spans several lines: codegen pastes this text into a single-line
+/// `#pragma omp ... if(...)` clause, where a newline would end the pragma
+/// early and a `//` comment would swallow the rest of it.
 std::string getSourceText(const Expr *E, ASTContext &Ctx) {
   const SourceManager &SM = Ctx.getSourceManager();
   llvm::StringRef Text = Lexer::getSourceText(
       CharSourceRange::getTokenRange(E->getSourceRange()), SM,
       Ctx.getLangOpts());
-  if (!Text.empty())
+  if (!Text.empty() && !Text.contains('\n') && !Text.contains('\r'))
     return Text.str();
 
   std::string Buf;
@@ -89,6 +92,19 @@ bool containsCall(const Stmt *S) {
     return true;
   for (const Stmt *Child : S->children())
     if (containsCall(Child))
+      return true;
+  return false;
+}
+
+/// A GNU statement expression `({ ... })` can run arbitrary statements
+/// (loops, assignments) every time it is evaluated, the same hazard as a call.
+bool containsStmtExpr(const Stmt *S) {
+  if (!S)
+    return false;
+  if (isa<StmtExpr>(S))
+    return true;
+  for (const Stmt *Child : S->children())
+    if (containsStmtExpr(Child))
       return true;
   return false;
 }
@@ -170,6 +186,40 @@ std::optional<int64_t> computeTripCount(int64_t Start, int64_t Bound,
   }
 }
 
+/// True when E mentions any of Vars anywhere (by canonical declaration).
+bool referencesAnyVar(const Stmt *S, const std::vector<const VarDecl *> &Vars) {
+  if (!S || Vars.empty())
+    return false;
+  if (const auto *DRE = dyn_cast<DeclRefExpr>(S))
+    for (const VarDecl *VD : Vars)
+      if (VD && DRE->getDecl()->getCanonicalDecl() == VD->getCanonicalDecl())
+        return true;
+  for (const Stmt *Child : S->children())
+    if (referencesAnyVar(Child, Vars))
+      return true;
+  return false;
+}
+
+/// True when a loop body is exactly one for statement, looking through
+/// single-statement compounds and attribute wrappers. Anything else alongside
+/// it (even an empty statement or a declaration) makes the nest imperfect.
+bool bodyIsSingleFor(const Stmt *Body) {
+  while (Body) {
+    if (isa<ForStmt>(Body))
+      return true;
+    if (const auto *AS = dyn_cast<AttributedStmt>(Body)) {
+      Body = AS->getSubStmt();
+    } else if (const auto *CS = dyn_cast<CompoundStmt>(Body)) {
+      if (CS->size() != 1)
+        return false;
+      Body = CS->body_front();
+    } else {
+      return false; // includes LabelStmt: a goto could enter the inner loop
+    }
+  }
+  return false;
+}
+
 } // namespace
 
 LoopInfo analyzeForStmt(const ForStmt *FS, ASTContext &Ctx) {
@@ -211,6 +261,7 @@ LoopInfo analyzeForStmt(const ForStmt *FS, ASTContext &Ctx) {
     if (!VD->getInit())
       return reject("induction variable has no initializer");
     LI.InductionVar = VD;
+    LI.StartExpr = VD->getInit();
     LI.Start = evalInt(VD->getInit(), Ctx);
   } else if (const auto *BO = dyn_cast<BinaryOperator>(Init)) {
     if (BO->getOpcode() == BO_Comma)
@@ -224,6 +275,7 @@ LoopInfo analyzeForStmt(const ForStmt *FS, ASTContext &Ctx) {
     if (!VD->getType()->isIntegerType())
       return reject("induction variable is not of integer type");
     LI.InductionVar = VD;
+    LI.StartExpr = BO->getRHS();
     LI.Start = evalInt(BO->getRHS(), Ctx);
   } else {
     return reject("init clause is not a declaration or assignment");
@@ -255,6 +307,8 @@ LoopInfo analyzeForStmt(const ForStmt *FS, ASTContext &Ctx) {
   // effects, so the bound is not a fixed value we can reason about at all.
   if (containsCall(Bound))
     return reject("bound expression contains a function call");
+  if (containsStmtExpr(Bound))
+    return reject("bound expression contains a statement expression");
 
   LI.BoundExpr = Bound;
   if (std::optional<int64_t> Folded = evalInt(Bound, Ctx)) {
@@ -322,12 +376,97 @@ LoopInfo analyzeForStmt(const ForStmt *FS, ASTContext &Ctx) {
   return LI;
 }
 
-bool LoopCollector::VisitForStmt(ForStmt *FS) {
-  Loops.push_back(analyzeForStmt(FS, Ctx));
-  return true;
+void LoopCollector::recordLoop(const ForStmt *FS) {
+  LoopInfo LI = analyzeForStmt(FS, Ctx);
+  const int Idx = static_cast<int>(Loops.size());
+
+  if (!OpenLoops.empty()) {
+    const LoopInfo &P = Loops[OpenLoops.back()];
+    LI.Parent = OpenLoops.back();
+    LI.Depth = P.Depth + 1;
+    // P.NestIVs already ends with P's own variable when P is recognized.
+    LI.NestIVs = P.NestIVs;
+    LI.EnclosedByUnrecognized =
+        P.EnclosedByUnrecognized || P.Kind == LoopKind::Unrecognized;
+  }
+  LI.InsideRepeatingContext = OpenRepeating > 0;
+  LI.PerfectlyNested = bodyIsSingleFor(FS->getBody());
+
+  if (LI.Kind != LoopKind::Unrecognized) {
+    // NestIVs holds only the enclosing loops' variables at this point. A
+    // start or bound that folded to a constant cannot depend on them, even if
+    // it mentions one inside an unevaluated operand (sizeof).
+    LI.BoundsDependOnOuterIV =
+        (!LI.Start && referencesAnyVar(LI.StartExpr, LI.NestIVs)) ||
+        (!LI.ConstBound && referencesAnyVar(LI.BoundExpr, LI.NestIVs));
+    LI.NestIVs.push_back(LI.InductionVar);
+  }
+
+  if (LI.Parent >= 0)
+    Loops[LI.Parent].Children.push_back(Idx);
+  Loops.push_back(std::move(LI));
 }
 
-void printLoopReport(llvm::raw_ostream &OS, const LoopInfo &LI) {
+bool LoopCollector::TraverseForStmt(ForStmt *FS, DataRecursionQueue *) {
+  if (!WalkUpFromForStmt(FS))
+    return false;
+  // Record before traversing anything inside, so loops stay in pre-order
+  // (parents before children), matching the order the report has always used.
+  recordLoop(FS);
+  const int Idx = static_cast<int>(Loops.size()) - 1;
+
+  // The clauses are not this loop's body: traverse them with the stack
+  // unchanged, so a loop inside one (via a statement expression) gets this
+  // loop's enclosing loop as its parent, not this loop. The init runs once;
+  // the condition and increment run every iteration, so a loop inside them
+  // is in a repeating context.
+  if (!TraverseStmt(FS->getInit()))
+    return false;
+  ++OpenRepeating;
+  const bool ClausesOk = TraverseStmt(FS->getConditionVariableDeclStmt()) &&
+                         TraverseStmt(FS->getCond()) &&
+                         TraverseStmt(FS->getInc());
+  --OpenRepeating;
+  if (!ClausesOk)
+    return false;
+
+  OpenLoops.push_back(Idx);
+  const bool Ok = TraverseStmt(FS->getBody());
+  OpenLoops.pop_back();
+  return Ok;
+}
+
+// The Queue argument is deliberately not forwarded. With a null queue,
+// TraverseStmt finishes the whole subtree before returning, so the counter is
+// decremented only after every loop inside has been recorded.
+bool LoopCollector::TraverseWhileStmt(WhileStmt *WS, DataRecursionQueue *) {
+  ++OpenRepeating;
+  const bool Ok = Base::TraverseWhileStmt(WS, nullptr);
+  --OpenRepeating;
+  return Ok;
+}
+
+bool LoopCollector::TraverseDoStmt(DoStmt *DS, DataRecursionQueue *) {
+  ++OpenRepeating;
+  const bool Ok = Base::TraverseDoStmt(DS, nullptr);
+  --OpenRepeating;
+  return Ok;
+}
+
+bool LoopCollector::TraverseBlockExpr(BlockExpr *BE, DataRecursionQueue *) {
+  // Fresh nest inside the block: no enclosing loops, no repeating context.
+  std::vector<int> SavedLoops;
+  SavedLoops.swap(OpenLoops);
+  const unsigned SavedRepeating = OpenRepeating;
+  OpenRepeating = 0;
+  const bool Ok = Base::TraverseBlockExpr(BE, nullptr);
+  OpenRepeating = SavedRepeating;
+  OpenLoops.swap(SavedLoops);
+  return Ok;
+}
+
+void printLoopReport(llvm::raw_ostream &OS, const LoopInfo &LI,
+                     const std::vector<LoopInfo> &AllLoops) {
   OS << LI.File << ":" << LI.Line << ":" << LI.Col << "\n";
   OS << "  kind       : " << toString(LI.Kind) << "\n";
 
@@ -360,6 +499,32 @@ void printLoopReport(llvm::raw_ostream &OS, const LoopInfo &LI) {
     else
       OS << "<not statically known>\n";
   }
+
+  OS << "  nest       : depth " << LI.Depth;
+  if (LI.Parent >= 0) {
+    const LoopInfo &P = AllLoops[LI.Parent];
+    OS << ", parent ";
+    if (P.File != LI.File) // e.g. a loop in an #include'd fragment
+      OS << P.File << ":";
+    OS << P.Line << ":" << P.Col;
+  }
+  OS << ", " << LI.Children.size() << " child loop(s)";
+  if (LI.PerfectlyNested)
+    OS << ", perfect nest";
+  if (LI.BoundsDependOnOuterIV)
+    OS << ", triangular";
+  if (LI.EnclosedByUnrecognized)
+    OS << ", inside an unrecognized loop";
+  if (LI.InsideRepeatingContext)
+    OS << ", inside while/do or a loop header";
+  OS << "\n";
+
+  OS << "  nest ivs   : ";
+  if (LI.NestIVs.empty())
+    OS << "<none>";
+  for (size_t I = 0; I < LI.NestIVs.size(); ++I)
+    OS << (I ? ", " : "") << LI.NestIVs[I]->getNameAsString();
+  OS << "\n";
 
   if (!LI.Callees.empty()) {
     OS << "  callees    : ";
