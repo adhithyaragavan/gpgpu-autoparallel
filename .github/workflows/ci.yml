@@ -36,3 +36,6 @@ jobs:
 
       - name: Runtime check of SAFE verdicts (parallel vs sequential, bit-identical)
         run: CC="/usr/lib/llvm-$LLVM_VERSION/bin/clang" RUNS=20 scripts/check_parallel.sh
+
+      - name: Address-logging fuzzer (no false SAFE; parallel output identical)
+        run: CC="/usr/lib/llvm-$LLVM_VERSION/bin/clang" python3 eval/fuzz/fuzz.py --seed 1 --files 15

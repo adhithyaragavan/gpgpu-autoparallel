@@ -1832,3 +1832,80 @@ runtime driver.
 **Open, recorded:** the reviewer's address-logging fuzzer was the most effective tool this project
 has had, and it lived only in `/tmp`. It should become a committed tool (`eval/fuzz/`) and run in CI
 before Phase 1.4, so every later phase is fuzzed, not just reviewed.
+
+### 2026-10-02 — Address-logging fuzzer committed (`eval/fuzz/`), in CI
+
+**Decision:** the reviewer's `/tmp` fuzzer was gone, so `eval/fuzz/` was written fresh to the same
+idea and now runs in CI (`fuzz.py --seed 1 --files 15`, about 45 s). It has two oracles:
+
+- **Address oracle (primary).** An instrumented copy of each generated function routes every access
+  through `fuzzrt.h`, which records the iteration of every enclosing loop. A loop instance carries a
+  dependence iff two of its iterations touch one address and one of them writes. A SAFE verdict on
+  such a loop fails the run, and the failure names a witness (`iterations 0 and 1 both touch A+2`
+  at `(n, m, k)`). It does not depend on thread timing.
+- **Differential run.** The `-policy all-cpu` rewrite is built with `-fopenmp` and run against the
+  sequential build at 8 threads. The output hashes must match. This also catches emitted pragmas
+  that don't compile.
+
+**Respecting the stated assumptions, not testing them:**
+- Distinct pointer parameters get disjoint buffers.
+- A loop instance during which any access leaves its object (an out-of-range declared dimension,
+  or a pointer leaving its buffer) is discarded. This is per instance, not per run: a bad subscript
+  elsewhere in the function does not throw away a clean loop's evidence.
+- The differential run executes only runs that never left an object, so it never runs UB.
+
+**The generator:**
+- Two thirds of the functions are "clean": one layout per array, and reads are small shifts of
+  the writes. This puts many loops right at the SAFE/UNSAFE boundary.
+- Boundary shapes target the dependence tests: shifts up to ±4 next to constant bounds 3–5,
+  symbolic terms with coefficient 2 (`2*i + n` vs `2*i`), ZIV reads (`A[n]`, `A[k]`), step 2 with
+  odd distances, triangular nests, descending loops, linearized rows, a local alias `q`, and
+  helpers called with `&A[i]`.
+- The rest of the functions are unconstrained, to probe the edges.
+
+**Evidence that it discriminates:**
+- **A tool that flips UNSAFE to SAFE:** caught, and the witnesses were checked by hand.
+- **Pragmas forced onto every loop:** caught by the differential run.
+- **The review's five p05tool mutants** (SIV span `<`→`<=`, GCD ignoring symbolic terms, ZIV, Banerjee
+  bound −1, `Dist % Step`):
+  - four are caught within 40 seeds, and SIV, GCD and Banerjee are caught within CI's 15;
+  - the ZIV mutant changes no verdict on the generated loops;
+  - before the coverage fixes below, three of these passed a CI-sized run.
+
+**Adversarial review of the fuzzer (fresh context):** no soundness bug in the oracle.
+- Plain and instrumented builds were hashed identically over 100 seeds.
+- The conflict test was unit-tested.
+- The `lvl` (declaration level) rule for privates is right.
+
+Fixed:
+- **HIGH:** a file with no SAFE loop has no rewrite, which was reported as a compile failure. A stale
+  `prog.omp.c` from a `--keep` directory could also be compiled silently.
+- **MEDIUM (a run could pass while checking nothing):**
+  - The run now fails if fewer than half the runs are valid or no SAFE loop ran ≥ 2 iterations.
+  - The sequential run's exit status and line count are now checked.
+- **MEDIUM (coverage):** two changes.
+  - Per-instance validity replaced whole-run invalidation; the reviewer's prototype of it found
+    84 more real conflict witnesses over 60 seeds.
+  - Declared-dimension subscripts are now non-negative.
+  - About 45% of loops used to die on calls or scalar writes before reaching the dependence test.
+    Unconstrained functions now emit fewer of those, and the boundary shapes above were added.
+- **LOW, kept as is:** the differential run is weak at 2 threads (1 of 10 injected races seen) and
+  strong at 8, so CI stays at 8. The address oracle is the primary check anyway.
+
+**Results:** three campaigns of 150 files each found **0 false SAFE, with every parallel output
+identical**:
+- before the coverage fixes: 3,341 loops, 866 SAFE;
+- the reviewer's run: 3,356 loops, 821 SAFE;
+- after the fixes (seeds 2000–2149): 3,269 loops, 839 SAFE, of which 805 ran ≥ 2 iterations
+  in a clean instance; 95% of runs stayed inside their objects.
+
+**Found while designing Phase 1.4 (open, runtime-confirmed):** `int i; for (i = 0; …) …; return i;`
+is SAFE and gets `parallel for`. OpenMP makes `i` private, so `ivout` returned garbage (1829037980)
+instead of 100. `lastprivate(i)` does not fix it: on a zero-trip loop it leaves `i` unchanged, where
+sequential code has run `i = 0`. The generator only writes `for (int i …)`, which is why it was
+missed. Phase 1.4 fixes the bug and teaches the generator this shape.
+
+**Information only:** UNSAFE loops that ran but never conflicted are mostly `h_set(&A[i], …)` /
+`h_add(A, i, …)`. Those are UNSAFE through the call-site-independent "writes through pointer
+parameter" rule, an overclaim Phase 1.5 removes. A few need `m ≥ 5`, which is outside the
+brute-forced range.
