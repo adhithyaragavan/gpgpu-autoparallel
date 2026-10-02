@@ -139,6 +139,11 @@ llvm::StringRef toString(OffloadTarget T);
 enum class Policy {
   Gated,
   Naive,
+  /// Testing/evaluation only: every SAFE loop gets an unconditional CPU
+  /// `parallel for`, cost model computed but not consulted. Exercises the
+  /// safety verdicts on their own (scripts/check_parallel.sh runs every SAFE
+  /// loop in parallel this way and compares against a sequential build).
+  AllCpu,
 };
 
 /// Reads the -policy flag. Defaults to Gated, matching every construction

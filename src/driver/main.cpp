@@ -89,9 +89,9 @@ public:
     for (const p05::LoopInfo &LI : Loops) {
       p05::printLoopReport(llvm::outs(), LI, Loops);
       p05::printCallChains(llvm::outs(), LI, Resolver);
-      p05::printAccessReport(llvm::outs(),
-                             Affine.analyzeLoop(&LI - Loops.data()));
-      p05::LoopSafety SafetyVerdict = Safety.analyzeLoop(LI);
+      const p05::LoopAccesses Accesses = Affine.analyzeLoop(&LI - Loops.data());
+      p05::printAccessReport(llvm::outs(), Accesses);
+      p05::LoopSafety SafetyVerdict = Safety.analyzeLoop(LI, Accesses);
       p05::printSafetyReport(llvm::outs(), SafetyVerdict);
       p05::ProfitabilityVerdict ProfitVerdict =
           Profitability.analyzeLoop(LI, SafetyVerdict);

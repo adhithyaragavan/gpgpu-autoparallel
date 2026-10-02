@@ -21,6 +21,7 @@ add_executable(p05tool
   src/analysis/SafetyAnalysis.cpp
   src/analysis/Profitability.cpp
   src/analysis/AffineAccess.cpp
+  src/analysis/DependenceTest.cpp
   src/codegen/OmpRewriter.cpp
 )
 

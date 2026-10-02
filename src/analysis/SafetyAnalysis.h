@@ -9,66 +9,51 @@
 //   1. Interprocedural: does any function reachable from the loop's callees
 //      write through a pointer parameter or touch a global? (FunctionEffects,
 //      SafetyAnalyzer::getEffects)
-//   2. Intraprocedural: does the loop body itself reassign its own induction
-//      variable, or carry a dependence across iterations — an array/pointer
-//      access not indexed by exactly the induction variable, or a scalar
-//      written outside the set of variables declared fresh inside the body?
+//   2. Intraprocedural, scalars: does the loop body reassign its own
+//      induction variable, or write a scalar declared outside the body?
 //      (SafetyAnalyzer::analyzeLoop's body walk)
+//   3. Intraprocedural, arrays (Phase 1.3): can two different iterations
+//      touch the same array element, at least one writing it? Decided by the
+//      dependence tests in DependenceTest.h over AffineAccess.h's affine
+//      subscripts: proven independent, proven dependent (UNSAFE), or not
+//      disproved (UNKNOWN).
 //
-// Both were open TODOs left in LoopInfo.h since Day 2, explicitly deferred to
-// "the Week 2 safety pass" — this is it, and closing them here (rather than
-// leaving them for codegen) is what makes a SAFE verdict actually mean safe
-// to parallelize, not just "the callees are pure".
+// (1) and (2) were open TODOs left in LoopInfo.h since Day 2; (3) replaced
+// the hackathon rule "every array/pointer access must be indexed by exactly
+// the induction variable", which rejected every 2-D nest, every shifted read
+// (`a[i] = b[i + 1]`) and `*(p + i)`.
 //
 // Deliberately call-site independent for (1): a function that writes through
 // *some* pointer parameter is flagged regardless of which argument any given
 // call site passed for it. That is what lets this stay coarse without alias
 // analysis between call sites — precision traded for soundness, in the
-// conservative direction only (more false UNSAFE, never false SAFE).
+// conservative direction only (more false UNSAFE, never false SAFE). Phase
+// 1.5 (call-site-aware summaries) replaces it.
 //
-// The dependence rule for (2) is deliberately strict: every array/pointer
-// access in the loop body, read or write alike, must be indexed by exactly
-// the induction variable. This is sound *without* alias analysis for
-// accesses through the *same* base object: two references to the same array
-// parameter can never collide across iterations, because element i and
-// element i' of one object are the same location only when i == i'.
-//
-// IMPORTANT — this does NOT cover aliasing *between distinct* pointer
+// IMPORTANT — (3) does NOT cover aliasing *between distinct* pointer
 // parameters. `void f(double *a, double *b, int n) { for (i) a[i] = b[i]
-// + 1.0; }` verifies SAFE by this rule, but if the caller passes b == a + 1
-// (overlapping, shifted by one), the loop is really `a[i] = a[i+1] + 1.0` in
-// disguise: iteration k reads a[k+1], and iteration k+1 later writes a[k+1]
-// — a genuine cross-iteration hazard this check cannot see, because it never
-// reasons about whether two *different* array parameters might alias. That
-// is an unstated assumption this whole layer rests on, not a proven
-// guarantee: distinct pointer/array parameters are assumed not to alias
-// (the same promise C's `restrict` keyword makes explicit, here made
-// implicitly and unverified). Verifying it for real is exactly the
-// points-to analysis ROADMAP.md calls out as out of scope.
+// + 1.0; }` verifies SAFE, but if the caller passes b == a + 1 (overlapping,
+// shifted by one), the loop is really `a[i] = a[i+1] + 1.0` in disguise: a
+// genuine cross-iteration hazard, invisible because accesses through two
+// differently named pointers are never compared. Distinct pointer/array
+// parameters are assumed not to alias (the promise C's `restrict` makes
+// explicit, here made implicitly and unverified). Phase 1.6 makes it explicit
+// (prove disjointness, or emit a runtime overlap check).
 //
-// Known, documented over-approximations (real safe patterns marked UNSAFE
-// rather than the reverse — see NOTES.md for the write-up):
+// Known, documented over-approximations (real safe patterns not marked SAFE;
+// see NOTES.md):
 //   - `helper(&a[i])` where helper writes through its pointer parameter is
-//     flagged UNSAFE even though it is actually fine — the call-site-
-//     independence trade above, working as designed.
-//   - A local variable assigned a pointer returned from a call, then written
-//     through, is not traced back to what it points to.
-//   - `*(p + i) = x` (raw pointer arithmetic, not `p[i]`) is not recognized
-//     as induction-variable-indexed and is conservatively flagged.
-//   - Reductions (`sum += a[i]`) are flagged UNSAFE rather than recognized as
-//     a parallelizable pattern.
-//   - Any 2D-style access (`m[i][j]`, `a[i * cols + j]`) inside a loop nested
-//     over i then j is flagged UNSAFE: the outer subscript's index is j
-//     (or an affine expression), not the bare induction variable i of the
-//     loop being judged, and this layer checks every access against a single
-//     loop's own induction variable with no notion of "belongs to an inner
-//     loop nested inside this one." No 2D loop nest can currently verify
-//     SAFE — a real gap for any future matrix-shaped benchmark, not fixed
-//     here because none of the three current demo benchmarks are 2D.
+//     UNSAFE — the call-site-independence trade above (Phase 1.5).
+//   - Reductions (`sum += a[i]`) and scalars written before being read in
+//     each iteration are UNSAFE rather than reduction/private (Phase 1.4).
+//   - Subscripts AffineAccess cannot express (indirect `a[idx[i]]`, products
+//     of variables, triangular rows `a[i * n + j]` with `j < i`) and symbolic
+//     distances that can't be decided make a loop UNKNOWN.
 
 #ifndef P05_ANALYSIS_SAFETYANALYSIS_H
 #define P05_ANALYSIS_SAFETYANALYSIS_H
 
+#include "analysis/AffineAccess.h"
 #include "analysis/CallResolver.h"
 #include "analysis/LoopInfo.h"
 
@@ -106,6 +91,17 @@ struct FunctionEffects {
   /// UNSAFE, same distinction the verdict itself makes.
   bool HasUnknownWrite = false;
 
+  /// File-scope (or extern) variables the function reads or writes by name.
+  /// A loop that writes one of them while calling this function has a
+  /// dependence the loop body alone does not show.
+  llvm::SmallVector<const clang::VarDecl *, 4> GlobalsUsed;
+
+  /// Reads or writes memory through a pointer it was handed or computed
+  /// (a parameter, or a local pointer): what it touches depends on the
+  /// arguments, so a pointer argument into an array the loop writes is a
+  /// possible dependence.
+  bool AccessesThroughPointer = false;
+
   /// One entry per flagged write site, in source order, e.g. "writes through
   /// pointer parameter 'out'" or "writes global 'call_count'". Empty when
   /// none of the flags above are set.
@@ -121,6 +117,16 @@ struct LoopSafety {
 
   /// Populated whenever Verdict != Safe; empty when Verdict == Safe.
   std::vector<std::string> Reasons;
+
+  /// Phase 1.3's dependence-test tally (empty when the test did not run, e.g.
+  /// for an unrecognized loop).
+  std::string DependenceSummary;
+
+  /// Every access is exactly `base[i]` on a base declared outside the loop:
+  /// the only shape today's map(...[0:bound]) clauses size correctly. When
+  /// false, profitability must not choose GPU offload (see Profitability.cpp)
+  /// until Phase 2.1 sizes map regions from the affine ranges.
+  bool GpuMappable = true;
 };
 
 /// Computes and memoizes FunctionEffects, and aggregates them (together with
@@ -134,8 +140,8 @@ public:
   /// functions' reachable sets, can ask about the same function.
   const FunctionEffects &getEffects(const clang::FunctionDecl *FD);
 
-  /// Full verdict for one loop.
-  LoopSafety analyzeLoop(const LoopInfo &LI);
+  /// Full verdict for one loop, given its accesses (AffineAnalyzer).
+  LoopSafety analyzeLoop(const LoopInfo &LI, const LoopAccesses &Accesses);
 
 private:
   CallResolver &Resolver;

@@ -97,7 +97,10 @@ cl::opt<Policy> FlagPolicy(
                           "Cost-model argmin over seq/cpu/gpu (default)"),
                clEnumValN(Policy::Naive, "naive",
                           "Offload every SAFE loop unconditionally, guards "
-                          "dropped, cost model computed but not consulted")),
+                          "dropped, cost model computed but not consulted"),
+               clEnumValN(Policy::AllCpu, "all-cpu",
+                          "Testing: CPU parallel for on every SAFE loop, "
+                          "unconditionally")),
     cl::init(Policy::Gated), cl::cat(optionCategory()));
 
 // --- Unit helpers ------------------------------------------------------------
@@ -194,10 +197,12 @@ private:
 // --- Half 2: intraprocedural — which arrays the loop body touches, and in
 // which direction. -------------------------------------------------------
 //
-// Only meaningful for loops the safety pass has already verified SAFE, which
-// guarantees every array access is indexed by exactly the induction variable
-// (SafetyAnalysis.h's body-dependence rule) — so this visitor does not need
-// to re-check indexing, only record which base is touched and how.
+// Only meaningful for loops the safety pass has already verified SAFE. Since
+// Phase 1.3 that no longer implies every access is `base[i]` (the dependence
+// tests accept `b[i + 1]`, `m[i][j]`, ...), so the regions recorded here are
+// exact only when LoopSafety::GpuMappable holds; analyzeLoop declines GPU
+// offload otherwise. For the cost model they remain a per-iteration byte
+// estimate (which still ignores inner loops' trip counts — Phase 2).
 
 class RegionVisitor : public RecursiveASTVisitor<RegionVisitor> {
 public:
@@ -211,14 +216,26 @@ public:
   bool VisitBinaryOperator(BinaryOperator *BO) {
     if (!BO->isAssignmentOp())
       return true;
-    if (auto *ASE =
-            dyn_cast<ArraySubscriptExpr>(BO->getLHS()->IgnoreParenCasts())) {
+    const bool WholeElement =
+        isa<ArraySubscriptExpr>(BO->getLHS()->IgnoreParenCasts());
+    if (auto *ASE = elementOf(BO->getLHS())) {
       // A compound assignment (`a[i] += x`) reads the old value as well as
-      // writing the new one; a plain `=` only writes.
-      markAccess(ASE, /*Write=*/true, /*Read=*/BO->isCompoundAssignmentOp());
-      if (!BO->isCompoundAssignmentOp())
+      // writing the new one; a plain `=` only writes — unless it writes only
+      // a member (`a[i].x = v`), which leaves the rest of the element as it
+      // was, so the element is read (copied in) too.
+      const bool Reads = BO->isCompoundAssignmentOp() || !WholeElement;
+      markAccess(ASE, /*Write=*/true, /*Read=*/Reads);
+      if (!Reads)
         PureWriteTargets.insert(ASE);
     }
+    return true;
+  }
+
+  // `a[i]++` / `--a[i]`: read and written.
+  bool VisitUnaryOperator(UnaryOperator *UO) {
+    if (UO->isIncrementDecrementOp())
+      if (auto *ASE = elementOf(UO->getSubExpr()))
+        markAccess(ASE, /*Write=*/true, /*Read=*/true);
     return true;
   }
 
@@ -227,6 +244,19 @@ public:
       return true; // already recorded as write-only above
     markAccess(ASE, /*Write=*/false, /*Read=*/true);
     return true;
+  }
+
+  /// The array element an lvalue writes into: `a[i]`, or `a[i].f` (a member
+  /// store writes part of the element, so the element must be copied both
+  /// ways).
+  static ArraySubscriptExpr *elementOf(Expr *E) {
+    E = E->IgnoreParenCasts();
+    while (auto *ME = dyn_cast<MemberExpr>(E)) {
+      if (ME->isArrow())
+        return nullptr;
+      E = ME->getBase()->IgnoreParenCasts();
+    }
+    return dyn_cast<ArraySubscriptExpr>(E);
   }
 
 private:
@@ -631,10 +661,48 @@ ProfitabilityVerdict
 ProfitabilityAnalyzer::analyzeLoop(const LoopInfo &LI, const LoopSafety &Safety) {
   ProfitabilityVerdict V = priceLoop(LI, Safety);
   applyPolicy(V);
+
+  // Interlock (Phase 1.3): every map() clause is `base[0:bound]`, which is
+  // only the right region when each access is exactly `base[i]`. The
+  // dependence tests now prove loops SAFE whose accesses are not
+  // (`a[i] = b[i + 1]`, `m[i][j]`); offloading those would leave part of the
+  // touched memory unmapped on the device. Decline GPU offload for them —
+  // under either policy — until Phase 2.1 sizes regions from the affine
+  // ranges. Host threading needs no map, so it stays available whenever the
+  // cost model says threading beats sequential.
+  if (V.Target == OffloadTarget::GpuOffload && !Safety.GpuMappable) {
+    V.GuardExpr.reset();
+    if (V.CpuBeatsSeq) {
+      V.Target = OffloadTarget::CpuParallel;
+      V.Reasons.push_back(
+          "GPU offload declined: map() regions are only sized correctly when "
+          "every access is exactly base[i] (range-based maps are Phase 2.1) "
+          "-> CPU_PARALLEL, which needs no map");
+    } else {
+      V.Target = OffloadTarget::Sequential;
+      V.CpuGuardExpr.reset();
+      V.Reasons.push_back(
+          "GPU offload declined: map() regions are only sized correctly when "
+          "every access is exactly base[i] (range-based maps are Phase 2.1), "
+          "and threading does not beat sequential -> SEQUENTIAL");
+    }
+  }
   return V;
 }
 
 void ProfitabilityAnalyzer::applyPolicy(ProfitabilityVerdict &V) {
+  if (PolicyMode == Policy::AllCpu) {
+    if (!V.Evaluated) // never overrides the safety gate
+      return;
+    V.Reasons.push_back("all-cpu policy (testing): overriding " +
+                        toString(V.Target).str() +
+                        " -- CPU parallel for on every SAFE loop");
+    V.Target = OffloadTarget::CpuParallel;
+    V.GuardExpr.reset();
+    V.CpuGuardExpr.reset();
+    V.CpuBeatsSeq = true;
+    return;
+  }
   if (PolicyMode != Policy::Naive)
     return;
 

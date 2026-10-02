@@ -148,11 +148,14 @@ while building this comparison, is in `NOTES.md`, Days 19-21.
   unverified. Full points-to analysis is a research-grade problem, out of scope for
   a hackathon build. Documented in `SafetyAnalysis.h`, found by this project's own
   adversarial review.
-- **No 2D loop nest can currently verify `SAFE`.** `m[i][j]`-style access is always
-  flagged `UNSAFE`: the safety check validates every access against a single loop's
-  own induction variable, with no notion of an index belonging to a nested loop. A
-  completeness gap, not a soundness one — real matrix/stencil kernels would need
-  this closed first.
+- **Loop-carried dependences are decided by classic dependence tests**
+  (ZIV, GCD, strong SIV, Banerjee with symbolic bounds) over affine subscripts,
+  including 2-D/3-D nests and linearized `a[i*n + j]` indexing. Subscripts they
+  can't express (indirect `a[idx[i]]`, triangular rows) make a loop `UNKNOWN`, not
+  `SAFE`. Reductions are not yet recognized (they verify `UNSAFE`).
+- **GPU offload is only chosen when every access is exactly `base[i]`**, the one
+  shape today's `map(...[0:bound])` clauses size correctly. Other `SAFE` loops get a
+  CPU `parallel for` until map regions are computed from the subscript ranges.
 - **`WhileStmt`/`DoStmt` are not classified at all** — only canonical `for` loops are
   candidates.
 - **Arithmetic-operation counts are static, a lower bound.** A loop inside a called
@@ -210,6 +213,12 @@ The fixtures:
   recursion.
 - `tests/safety_cases.c` — twelve loops covering every `SAFE`/`UNSAFE`/`UNKNOWN`
   category, matched pairs in both directions.
+- `tests/dependence.c` — the dependence tests in both directions (independent by
+  ZIV/GCD/SIV/Banerjee, proven dependent, undecidable). It is also *run*:
+  `scripts/check_parallel.sh` rewrites it with every `SAFE` loop forced parallel
+  (`-policy all-cpu`), builds it and the original against
+  `eval/runtime/dependence_main.c`, and requires bit-identical output over 20 runs.
+  It is in CI, and was checked to fail on an injected wrong pragma.
 - `tests/affine.c` — affine subscript extraction: shifted, scaled and symbolic
   subscripts, true 2D arrays vs `double **`, delinearized `a[i*n + j]` (and the cases
   that must *not* delinearize), pointer arithmetic, forward-substituted locals, and

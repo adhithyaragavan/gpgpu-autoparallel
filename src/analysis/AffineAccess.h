@@ -46,9 +46,19 @@
 //     analyzed loop with an initializer, and never written again or
 //     address-taken; likewise a pointer declared in the loop as `P + e`,
 //     `P - e` or `&P[e]` is replaced by P with the offset folded in.
-//   - Only the delinearization pattern `X * N + J` is recognized, with J a
-//     clean induction variable of a loop running exactly 0..N-1 by 1 and N
-//     fixed for as long as that loop runs.
+//   - Only the delinearization pattern `X * N + j + c` is recognized (c
+//     constant, possibly peeled from outside), with j a clean induction
+//     variable whose whole range shifted by c provably stays in [0, N - 1]
+//     and N fixed for as long as j's loop runs. Each delinearized access
+//     records its row lengths; accesses with different ones are different
+//     shapes.
+//   - Subscripts stay inside the object's declared bounds (ISO C: `m[i][j+1]`
+//     past the end of a row is undefined behaviour, and is treated as if it
+//     can't reach the next row).
+//   - A local pointer set outside the loop is replaced by what it points
+//     into when it is initialized once with a constant offset; otherwise it is
+//     marked BaseMayAlias. Parameters and globals keep the no-alias
+//     assumption (DependenceTest.h).
 //   - A pointer passed to a call (`f(a)`, `f(a + i)`) is not an access here;
 //     what the callee does with it is Phase 1.5's call-site summaries.
 //   - Operands of sizeof/alignof are not accesses (they are not evaluated).
@@ -62,10 +72,12 @@
 #include "clang/AST/Decl.h"
 #include "clang/AST/Expr.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/MapVector.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -124,10 +136,55 @@ struct ArrayAccess {
   /// loop (`double *q = a + k; q[i]`) and was replaced by the pointer it is
   /// computed from: Base is then `a`, and the subscript includes the offset.
   bool BaseSubstituted = false;
+
+  /// Induction variables of the inner loops (strictly inside the analyzed
+  /// loop) that enclose this access, outermost first. A fact about one of
+  /// those loops ("it runs") may only be used for this access.
+  std::vector<const clang::VarDecl *> InnerIVs;
+
+  /// For a delinearized access: the row-length variable N of each inner
+  /// dimension. Two delinearized accesses have the same shape only if these
+  /// match exactly.
+  std::vector<const clang::VarDecl *> RowLengths;
+
+  /// Part of a `.field` access (`s[i].x`): the analysis is field-insensitive,
+  /// so two such accesses to one element may still touch different fields.
+  bool ViaMember = false;
+
+  /// Base is a local pointer set outside the loop to something this analysis
+  /// could not resolve: it may point into any other array.
+  bool BaseMayAlias = false;
+};
+
+/// Inclusive range of an induction variable, as affine bounds. Each bound may
+/// mention symbols and enclosing loops' induction variables (fixed while the
+/// analyzed loop runs); a bound that mentions the analyzed loop's or another
+/// inner loop's variable (a triangular nest) is reported as given and is the
+/// dependence test's job to treat as unknown. Missing = unbounded on that
+/// side (could not be expressed, or `!=` loops).
+struct IVRange {
+  std::optional<AffineExpr> Lo, Hi;
 };
 
 struct LoopAccesses {
   std::vector<ArrayAccess> Accesses;
+
+  /// The analyzed loop's induction variable (canonical); null when the loop
+  /// is unrecognized.
+  const clang::VarDecl *RootIV = nullptr;
+  /// Induction variables of enclosing recognized loops, outermost first: they
+  /// hold one value for the whole run of the analyzed loop.
+  std::vector<const clang::VarDecl *> OuterIVs;
+  /// Ranges of RootIV and of every inner recognized loop's variable. A
+  /// variable bound by two different loops inside gets an empty range.
+  llvm::DenseMap<const clang::VarDecl *, IVRange> Ranges;
+  /// Variables declared inside the analyzed loop (body or header clauses):
+  /// an array among them is private to each iteration.
+  llvm::DenseSet<const clang::VarDecl *> DeclaredInLoop;
+  /// The analyzed loop's iteration space can't be trusted (its variable, or
+  /// an enclosing one, is written inside it): every access is non-affine.
+  bool Poisoned = false;
+
   unsigned numAffine() const;
 };
 

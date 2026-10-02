@@ -45,8 +45,8 @@ def lit(text):
                   lambda m: "{{\\[\\[}}" if m.group() == "[[" else "{{\\{\\{}}", text)
 
 
-def tool_output(path):
-    args = [TOOL, path, "--"]
+def tool_output(path, flags=()):
+    args = [TOOL, *flags, path, "--"]
     if platform.system() == "Darwin":
         sdk = subprocess.run(["xcrun", "--show-sdk-path"], capture_output=True,
                              text=True, check=True).stdout.strip()
@@ -67,15 +67,22 @@ def main(paths):
     for path in paths:
         path = os.path.abspath(path)
         rel = os.path.relpath(path, REPO)
-        src = [l for l in open(path).read().split("\n")
-               if not re.match(r"\s*// (CHECK|CHECK-NEXT|RUN): ", l)]
+        lines = open(path).read().split("\n")
+        # A fixture may run the tool with extra flags (`// RUN: %p05 -policy
+        # naive %s ...`): keep its RUN line and snapshot with the same flags.
+        run_line = next((l for l in lines if l.startswith("// RUN: ")), None)
+        flags = []
+        if run_line:
+            m = re.match(r"// RUN: %p05 (.*?)%s", run_line)
+            flags = m.group(1).split() if m else []
+        src = [l for l in lines if not re.match(r"\s*// (CHECK|CHECK-NEXT|RUN): ", l)]
         # Run the tool on a stripped temp copy in the same directory (so its
         # line numbers match `src` and relative #includes still resolve), and
         # only touch the fixture once that has succeeded.
         tmp = os.path.join(os.path.dirname(path), ".gen_" + os.path.basename(path))
         try:
             open(tmp, "w").write("\n".join(src))
-            out = tool_output(tmp)
+            out = tool_output(tmp, flags)
         finally:
             if os.path.exists(tmp):
                 os.remove(tmp)
@@ -140,9 +147,21 @@ def main(paths):
             c.append(NEXT + "safety     : " + safety + A)
             si = next(i for i, l in enumerate(L) if l.startswith("  safety"))
             if safety != "SAFE":
-                c.append(L[si + 1].strip() + A)
+                c.append(lit(L[si + 1].strip()) + A)
+            deps = field("deps")
+            if deps:
+                c.append("deps       : " + lit(deps) + A)
             prof = field("profitability")
             c.append("profitability : " + re.sub(r">= \d+\)", ">= {{[0-9]+}})", prof) + A)
+            # For a GPU target the map() clauses are part of the verdict.
+            if prof.startswith("GPU_OFFLOAD"):
+                dl = next((l.strip() for l in L if "data/iteration:" in l), None)
+                if dl:
+                    c.append(lit(dl) + A)
+            # An interlock decision is part of the verdict: pin it when present.
+            decl = next((l.strip() for l in L if "GPU offload declined" in l), None)
+            if decl:
+                c.append(lit(decl) + A)
             checks[line] = (n, col, c)
 
             print(f"L{line}: SPEC> {spec_comment(src, line)[:160]}")
@@ -151,7 +170,7 @@ def main(paths):
             for x in acc[1:]:
                 print(f"             {x}")
 
-        new = [RUN] if os.path.basename(os.path.dirname(path)) == "tests" else []
+        new = [run_line or RUN] if os.path.basename(os.path.dirname(path)) == "tests" else []
         new.append(f"// CHECK: Analyzed {nloops} loop(s).")
         # The location CHECK uses the fixture's basename, not the temp copy's.
         for i, l in enumerate(src, start=1):

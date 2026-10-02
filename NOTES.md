@@ -1636,3 +1636,199 @@ correct. Two more wrong-form bugs and three small gaps were found and fixed, eac
   lines.
 - The round-2 fixes changed no pinned value in any other fixture.
 - All 7 lit tests pass.
+
+### 2026-10-02 — Phase 1.3: dependence tests replace "every subscript must be exactly i"
+
+**Decision:** New `src/analysis/DependenceTest.{h,cpp}`. For every pair of accesses to the same base
+where at least one writes (each writer is also paired with itself), the subscripts are equated per
+dimension:
+- the analyzed loop's variable becomes two distinct unknowns, i1 ≠ i2;
+- each inner loop's variable becomes two independent unknowns;
+- symbols and enclosing loops' variables are shared.
+
+Tests run cheapest first: ZIV, then GCD (symbols included), then strong SIV (exact distance; must be a
+nonzero multiple of the step and fit in the iteration span), then Banerjee per iteration order. The
+Banerjee ranges are affine in symbols (`AffineAccess` now records each loop variable's range).
+
+The sign of a symbolic extreme is decided with the facts "the analyzed loop runs ≥ 2 iterations" and
+"an inner loop that hosts the access runs ≥ 1", via a single-fact λ-multiplier argument. That proves,
+for example, `a[i]` vs `a[i+n]` with `i < n` independent.
+
+Outcome per pair:
+- independent;
+- **dependent**, proven: an exact distance, or "the same element on every iteration". This gives
+  UNSAFE.
+- **not disproved**: UNKNOWN.
+
+`SafetyAnalysis` drops its array/deref/arrow "exactly i" checks in favor of this. It keeps the scalar
+rules (Phase 1.4) and the callee-effect rules (Phase 1.5).
+
+**Reasoning, and how each verdict change was justified:**
+- **Every flip was listed and read against its code before being accepted**, not just regenerated.
+  - **About 40 loops went UNSAFE → SAFE.** They include every 2-D/3-D nest level with distinct
+    rows/elements (`m[i][j]`, `a[i*n + j]`, column-major, VLA, `double (*)[4]`), shifted
+    reads of other arrays, `a[n-i-1]`, `a[2i+1]`, and `a[4i + j]` with `j < 4`. Each was
+    confirmed parallel.
+  - **Fixes in the conservative direction:**
+    - `r6_body_pointer` (`q = a + n - i; q[i] += 1`) went **SAFE → UNSAFE**: "every iteration
+      touches the same element". This closes the live false SAFE found in the Phase 1.2 review.
+    - The `void*` views and the `asm` case went SAFE → UNKNOWN.
+    - Indirect writes like `a[idx[i]]` were reclassified UNSAFE → UNKNOWN. No race is proven; both
+      verdicts block parallelization.
+- **The map interlock** (found while designing, before any SAFE flip could reach codegen):
+  - **The problem:** every `map()` clause is `base[0:bound]`. That was only correct because "SAFE"
+    used to imply every subscript is exactly `i`. Offloading the newly-SAFE `a[i] = b[i+1]` or
+    `m[i][j]` would leave touched memory unmapped on the device.
+  - **The fix:** `LoopSafety::GpuMappable`. GPU offload is declined unless every access is exactly
+    `base[i]` on a base declared outside the loop, under every policy. Such loops degrade to CPU
+    `parallel for` if the cost model says threading beats sequential, else to sequential.
+  - **Verified:** the four demo benchmarks' rewrites are byte-identical to their tracked `.omp.c`
+    files. Phase 2.1 lifts the interlock by sizing maps from the affine ranges.
+- **Delinearization generalized**, because the fixture exposed the gap. `a[i*n + j - 1]` (row
+  prefix) and `a[(i-1)*n + j + 1]` (wavefront) were UNKNOWN. Now `X*N + j + c` is accepted when j's
+  actual range shifted by c provably stays in `[0, N-1]`:
+  - j counts up from a constant s to `j < N + e` (or `<=`), with s + c ≥ 0 and top + c ≤ N - 1;
+  - constants peeled from the outside are folded into c;
+  - unsigned arithmetic is never peeled.
+- **Honest UNKNOWN over claimed UNSAFE.** The wavefront's outer loop (`a[i][j]` vs `a[i-1][j+1]`) is
+  only dependent when the inner loop has room for the +1 shift (n ≥ 3). With a symbolic n that can't
+  be proven, so it is UNKNOWN, and the fixture's spec was corrected to say why.
+
+**Runtime evidence, not just verdicts:**
+- `tests/dependence.c`'s value-dependent functions are *run* by `scripts/check_parallel.sh`:
+  - the fixture is rewritten with every SAFE loop forced to `parallel for` (new testing policy
+    `-policy all-cpu`);
+  - it and the original are built against `eval/runtime/dependence_main.c` (pseudo-random inputs,
+    every output dumped);
+  - the outputs must be bit-identical over 20 runs at 8 threads.
+- 12 forced pragmas pass.
+- **The check discriminates:** injecting a `parallel for` on the UNSAFE `prefix_sum` produced a
+  mismatch on the first runs.
+- It now runs in CI (Linux needs `libomp-dev`).
+
+**Remaining gaps, honest:**
+- Triangular rows (`a[i*n + j]` with `j < i`) are not delinearized, so they come out UNKNOWN.
+- Reductions and scalar temporaries declared outside the body are UNSAFE (Phase 1.4).
+- The no-alias assumption between distinct pointer parameters stands (Phase 1.6).
+- The cost model's per-iteration bytes/ops still ignore inner loops' trip counts (Phase 2), so
+  CPU_PARALLEL guards for nests are rough.
+
+### 2026-10-02 — Phase 1.3 adversarial review: four new false SAFE verdicts, all fixed and run
+
+**Decision:** The fresh-context review produced **runtime evidence**, not just verdicts.
+- **What it found:** four loops that Phase 1.3 newly marked SAFE gave different results in parallel
+  (`scripts/check_parallel.sh`, mismatches mostly on run 1). A random-loop fuzzer, brute-forced over
+  small n and m, found the first one independently.
+- **Also found:** five older false-SAFE / bad-map paths through function calls, and three overclaimed
+  UNSAFE verdicts.
+- **Status:** all are fixed. Each is a fixture in `tests/dependence.c` ([D1]–[D7], [L1]), and the
+  value-dependent ones are added to the runtime driver. That driver now forces 16 pragmas and passes
+  30/30 runs.
+
+**Reasoning (bug → fix):**
+- **D1, HIGH: facts about unrelated inner loops.** "An inner loop runs" was used as a fact for every
+  pair. It is only true when one of the accesses is inside that loop: with `m = 0` a sibling loop is
+  empty, and `a[i]` vs `a[-m]` collide. Each access now records its enclosing inner loops
+  (`ArrayAccess::InnerIVs`), and only those loops' facts are used for a pair. The root's "≥ 2
+  iterations" fact is always valid.
+- **D2, HIGH: different row lengths compared dimension-wise.** `a[i*n + j]` and `a[i*m + k]` were
+  both treated as `[i][·]`. Each delinearized access now records its row-length variables
+  (`RowLengths`), and different ones mean different shapes, so the result is UNKNOWN.
+- **D3, HIGH: `static`/`extern` in the body treated as private.** They are one object shared by all
+  iterations. Only `hasLocalStorage()` variables are private now: in `DeclaredInLoop`, and in the
+  scalar rule's `LocalVars`. The scalar half of this predates Phase 1.3.
+- **D4, MEDIUM: local pointer aliases.** `double *q = a;` then `q[i+1]` vs `a[i]`. The hackathon "exactly
+  i" rule used to hide this. A local pointer set outside the loop is now resolved to what it points
+  into when it is initialized once, never reassigned in the function, and has a constant offset.
+  Otherwise it is `BaseMayAlias`, and pairs against any other base are UNKNOWN. Parameters and
+  globals keep the documented no-alias assumption.
+- **D5–D7, older, false SAFE through calls:**
+  - a callee writing through a pointer *derived* from its parameter (`q = p + 1; *q = …`) now
+    counts as possibly writing caller memory (UNKNOWN);
+  - a callee *reading* a global the loop writes is UNKNOWN;
+  - a callee reading or writing through a pointer argument into an array the loop writes is UNKNOWN.
+  This is coarse, conservative, and call-site independent. Phase 1.5 refines it.
+- **GPU maps:**
+  - The interlock now also declines offload when any call passes a pointer, when a callee uses a
+    global, when the loop's start is negative or unknown, or when a base may alias.
+  - The new `tests/interlock.c` runs under `-policy naive` and pins this: only the exactly-`a[i]`
+    loop reaches the GPU.
+  - The generator now keeps a fixture's own RUN flags.
+- **LOW, overclaimed UNSAFE:**
+  - A loop with at most one iteration has no carried dependence. Its summary is now "at most one
+    iteration".
+  - "Same element every iteration" through an inner loop is now only claimed when that inner
+    loop's range doesn't depend on the analyzed loop's variable (a triangular range can be empty).
+  - Accesses through `.field` are never a *proven* dependence, because the analysis is
+    field-insensitive.
+- **Stated assumption added:** subscripts stay within the declared bounds of the object. `m[i][j+1]`
+  past a row's end is ISO-C undefined behaviour and is treated as unable to reach the next row.
+
+**Re-verified:**
+- all 9 lit tests pass;
+- `check_parallel.sh` gives 30/30;
+- the four demo benchmarks' rewrites are byte-identical to their tracked `.omp.c` files.
+
+The reviewer's checks of the Banerjee formulas, the λ argument, strong SIV with negative steps, GCD,
+ranges and delinearization offsets all came back clean, plus ~9,000 fuzzed loops with only D1 as a
+false SAFE.
+
+### 2026-10-02 — Phase 1.3, second review round: the edges of what the analysis sees
+
+**Decision:** The second fresh-context review used two kinds of evidence. One was runtime: every
+false SAFE was confirmed by `check_parallel.sh` with a mismatch on the first run. The other was a new
+fuzzer that logs actual addresses per iteration. It brute-forces small parameter values and flags a
+SAFE verdict whenever two iterations touch the same address with a write.
+
+The core math held: **6,000 fuzzed loops gave 0 false SAFE** from the dependence tests, ranges,
+delinearization and facts. It found nine families of false SAFE *at the edges of what the analysis
+sees*, plus three bad GPU `map()` clauses under the **default** policy. All are fixed with broad
+conservative rules rather than per-case patches. Each has a fixture ([E1]–[E9] in
+`tests/dependence.c`; three map cases in `tests/interlock.c`). The value-dependent ones are in the
+runtime driver.
+
+**Reasoning (family → rule):**
+- **Pointers into callees by any route** (E1, E2):
+  - a local alias `q = a` passed to a reader;
+  - a pointer inside a struct passed by value;
+  - a pointer cast to `long`;
+  - `qs[0]` / `s.p` loaded from memory.
+
+  **Rule:** if a callee (transitively) touches memory through any pointer, every argument that is
+  not a plain number (`carriesNoPointer`: arithmetic type, no pointer-to-integer cast inside) is
+  checked. A named object counts: a named array, or a pointer parameter its function never reassigns
+  or lets escape. That conflicts only if the loop writes it. Anything else may point anywhere, so it
+  conflicts with *any* loop write. `pointerRoot` now crosses a subscript or member only under `&`
+  (address arithmetic), never through a load.
+- **Callee writes through a local that holds a pointer** (E3: struct, pointer array, integer). This
+  is now an unknown write unless the local is a plain array.
+- **Invisible effects in callees** (E4, E5): calls through function pointers, atomic builtins and
+  inline asm inside a callee now count as unknown writes.
+- **Invisible effects and early exits in the loop body** (E5, E9): atomics, asm, `break` (not inside a
+  nested loop/switch), `return` and `goto` make the loop UNKNOWN. For the exits, the pragma clang
+  would have been given doesn't even compile.
+- **No-alias assumption narrowed** (E6, E6'):
+  - A pointer parameter keeps it only while it still holds the caller's value. A parameter the
+    function reassigns or lets escape may alias.
+  - **Every global pointer may alias**, since it can be set anywhere. This costs some precision on
+    code that uses global pointers, in exchange for soundness.
+  - A callee using a global *pointer* conflicts with any loop write.
+  - A callee using a global conflicts with may-alias writes too (E7).
+- **The single-iteration shortcut** (E8) is skipped when the loop's variable is modified inside it.
+  The header range is then not the iteration space.
+- **GPU maps under the default policy:**
+  - `a[i]++` and `s[i].x = …` are now writes in `RegionVisitor`. A member store maps the element
+    `tofrom`, since the rest of the element must survive.
+  - Offload requires subscript syntax, so `*(b + i)` never gets an unmapped `b`.
+  - Any callee that touches memory through a pointer blocks offload.
+  - The generator now pins the `map()` line for every GPU verdict.
+
+**Re-verified:**
+- all 9 lit tests pass;
+- `check_parallel.sh` forces 16 pragmas and passes 30/30;
+- the demo benchmarks' rewrites are byte-identical to their tracked `.omp.c` files;
+- no existing fixture changed verdict, only reason wording.
+
+**Open, recorded:** the reviewer's address-logging fuzzer was the most effective tool this project
+has had, and it lived only in `/tmp`. It should become a committed tool (`eval/fuzz/`) and run in CI
+before Phase 1.4, so every later phase is fuzzed, not just reviewed.

@@ -67,6 +67,8 @@ unsigned LoopAccesses::numAffine() const {
 
 namespace {
 
+using Int = __int128;
+
 /// Single-line text of an expression: source text when it is on one line,
 /// otherwise Clang's pretty-printer (same rule as LoopAnalysis's
 /// getSourceText, for the same reason: reports and CHECK lines are per line).
@@ -258,6 +260,9 @@ struct Context {
   const ForStmt *Root;
   BodyFacts Facts;
   llvm::DenseSet<const VarDecl *> FunctionAddressTaken;
+  /// Facts over the whole enclosing function: used to tell whether a local
+  /// pointer set outside the loop is ever reassigned.
+  BodyFacts FunctionFacts;
 };
 
 /// Could something other than the listed Allowed statements write VD while
@@ -668,6 +673,15 @@ public:
         Chain.insert(Chain.begin(), IVBinding{canon(L.InductionVar), &L});
     }
     IVs.assign(Chain.begin(), Chain.end());
+    ChainLen = Chain.size();
+    const LoopInfo &Root = A.Loops[RootIndex];
+    if (Root.Kind != LoopKind::Unrecognized && Root.InductionVar) {
+      Out.RootIV = canon(Root.InductionVar);
+      for (size_t K = 0; K + 1 < Chain.size(); ++K)
+        Out.OuterIVs.push_back(Chain[K].Var);
+      // The root's bounds are evaluated with only the enclosing loops in scope.
+      recordRange(Root, llvm::ArrayRef<IVBinding>(Chain).drop_back());
+    }
 
     // If the analyzed loop's own variable, or an enclosing loop's, can change
     // inside this loop other than through its own header, its iteration space
@@ -687,6 +701,7 @@ public:
       if (!isCleanIV(B, C.Facts, C, Why)) {
         Poison = "induction variable " + quoted(B.Var) + " " + Why +
                  ", so the loop's iteration space is unknown";
+        Out.Poisoned = true;
         break;
       }
     }
@@ -704,6 +719,7 @@ public:
     if (It != A.IndexOf.end()) {
       const LoopInfo &LI = A.Loops[It->second];
       if (LI.Kind != LoopKind::Unrecognized && LI.InductionVar) {
+        recordRange(LI, IVs); // bounds see only the loops around this one
         IVs.push_back(IVBinding{canon(LI.InductionVar), &LI});
         Pushed = true;
       }
@@ -770,6 +786,44 @@ public:
   }
 
 private:
+  /// Range of loop L's induction variable, from its start and bound, built
+  /// with the induction variables in scope at L's header.
+  void recordRange(const LoopInfo &L, llvm::ArrayRef<IVBinding> InScope) {
+    const VarDecl *V = canon(L.InductionVar);
+    if (Out.Ranges.count(V)) { // bound by two loops: no single range
+      Out.Ranges[V] = IVRange();
+      return;
+    }
+    AffineBuilder B(C, InScope, IVsAtDecl);
+    std::string Why;
+    std::optional<AffineExpr> Start, Bound;
+    AffineExpr E;
+    if (L.StartExpr && B.build(L.StartExpr, E, Why))
+      Start = E;
+    if (L.BoundExpr && B.build(L.BoundExpr, E, Why))
+      Bound = E;
+    auto Shift = [&](std::optional<AffineExpr> X, int64_t K) {
+      if (X && __builtin_add_overflow(X->Const, K, &X->Const))
+        X.reset();
+      return X;
+    };
+    IVRange R;
+    if (L.Step && *L.Step > 0) {
+      R.Lo = Start;
+      if (L.CmpOp == BO_LT)
+        R.Hi = Shift(Bound, -1);
+      else if (L.CmpOp == BO_LE)
+        R.Hi = Bound;
+    } else if (L.Step && *L.Step < 0) {
+      R.Hi = Start;
+      if (L.CmpOp == BO_GT)
+        R.Lo = Shift(Bound, 1);
+      else if (L.CmpOp == BO_GE)
+        R.Lo = Bound;
+    }
+    Out.Ranges[V] = R;
+  }
+
   /// Record that the access E (and any element it is a member of) has kind
   /// K. Writing `s[i].x` writes element s[i]; writing `s[i].v[k]` or
   /// `p->v[k]` writes the object holding the array member v.
@@ -801,6 +855,21 @@ private:
     Acc.E = E;
     Acc.Text = exprText(E, C.Ctx);
     Acc.Kind = kindOf(E);
+    for (size_t K = ChainLen; K < IVs.size(); ++K)
+      Acc.InnerIVs.push_back(IVs[K].Var);
+    // `s[i].x`: is the element only reached through a `.` member?
+    DynTypedNodeList P = C.Ctx.getParents(*E);
+    while (!P.empty()) {
+      if (const auto *PE = P[0].get<Expr>()) {
+        if (isa<ParenExpr>(PE) || isa<ImplicitCastExpr>(PE)) {
+          P = C.Ctx.getParents(*PE);
+          continue;
+        }
+        if (const auto *ME = dyn_cast<MemberExpr>(PE))
+          Acc.ViaMember = !ME->isArrow();
+      }
+      break;
+    }
     return Acc;
   }
 
@@ -836,7 +905,7 @@ private:
   /// declared in the loop as `q = P`, `q = P + e`, `q = P - e` or
   /// `q = &P[e]` and never written again, in which case q[k] is P[e + k].
   bool resolveBase(const VarDecl *VD, AffineExpr &Offset, const VarDecl *&Base,
-                   std::string &Why, unsigned Depth = 0) {
+                   std::string &Why, bool &MayAlias, unsigned Depth = 0) {
     if (Depth > 8) {
       Why = "base pointer substitution is too deep";
       return false;
@@ -850,6 +919,52 @@ private:
       if (otherWrites(VD, C.Facts, {}, C, Why)) {
         Why = "base pointer " + quoted(VD) + " " + Why;
         return false;
+      }
+      // A pointer parameter keeps the documented no-alias assumption only
+      // while it still holds the caller's value: one the function reassigns
+      // or lets escape (`b = a;`, `&b`) may point anywhere. A global pointer
+      // can be set anywhere in the program, so it may always alias.
+      if (const auto *PVD = dyn_cast<ParmVarDecl>(VD)) {
+        if (C.FunctionFacts.WriteSites.count(VD) ||
+            C.FunctionAddressTaken.count(VD))
+          MayAlias = true;
+        Base = VD;
+        return true;
+      }
+      if (VD->hasGlobalStorage()) {
+        MayAlias = true;
+        Base = VD;
+        return true;
+      }
+      // A local pointer set outside the loop (`double *q = a + 1;`) can point
+      // into another named array. If it is initialized and never written
+      // again anywhere in the function, and the offset is a constant, it is
+      // replaced by what it points into; otherwise it may alias anything.
+      if (VD->hasLocalStorage()) {
+        const VarDecl *P = nullptr;
+        llvm::SmallVector<std::pair<const Expr *, int>, 4> Parts;
+        AffineExpr ConstOff;
+        bool Resolved =
+            VD->getInit() && !C.FunctionFacts.WriteSites.count(VD) &&
+            !C.FunctionAddressTaken.count(VD) &&
+            splitPointer(VD->getInit(), P, Parts) &&
+            elementType(VD->getType()) == elementType(P->getType());
+        for (const auto &[E, Sign] : Parts) {
+          Expr::EvalResult R;
+          std::optional<int64_t> K;
+          if (Resolved && !E->isValueDependent() && E->EvaluateAsInt(R, C.Ctx) &&
+              R.Val.isInt())
+            K = R.Val.getInt().tryExtValue();
+          if (!K || __builtin_add_overflow(ConstOff.Const, Sign * *K,
+                                           &ConstOff.Const))
+            Resolved = false;
+        }
+        if (Resolved) {
+          if (!resolveBase(P, Offset, Base, Why, MayAlias, Depth + 1))
+            return false;
+          return AffineBuilder::add(Offset, ConstOff, Why);
+        }
+        MayAlias = true;
       }
       Base = VD;
       return true;
@@ -893,7 +1008,7 @@ private:
         }
       }
     }
-    if (!resolveBase(P, Offset, Base, Why, Depth + 1))
+    if (!resolveBase(P, Offset, Base, Why, MayAlias, Depth + 1))
       return false;
     return AffineBuilder::add(Offset, Off, Why);
   }
@@ -963,7 +1078,7 @@ private:
     const VarDecl *Base = nullptr;
     std::string Why;
     if (Idx.size() == 1) {
-      if (!resolveBase(BaseVD, BaseOffset, Base, Why)) {
+      if (!resolveBase(BaseVD, BaseOffset, Base, Why, Acc.BaseMayAlias)) {
         nonAffine(Acc, Why, /*KeepBase=*/false);
         return;
       }
@@ -979,6 +1094,13 @@ private:
       return;
     } else {
       Base = BaseVD;
+      // A pointer to rows that isn't an unmodified parameter may point
+      // anywhere (local, global, or a reassigned/escaped parameter).
+      Acc.BaseMayAlias =
+          BaseVD->getType()->isPointerType() &&
+          (!isa<ParmVarDecl>(BaseVD) ||
+           C.FunctionFacts.WriteSites.count(BaseVD) ||
+           C.FunctionAddressTaken.count(BaseVD));
     }
     Acc.Base = Base;
     Acc.BaseSubstituted = Base != BaseVD;
@@ -1001,8 +1123,10 @@ private:
       if (Idx.size() == 1 && BaseOffset.isConstant() && BaseOffset.Const == 0) {
         std::vector<AffineExpr> Subs;
         std::vector<std::string> Dims;
-        if (delinearize(Idx[0], B, Subs, Dims)) {
+        std::vector<const VarDecl *> Ns;
+        if (delinearize(Idx[0], B, Subs, Dims, Ns)) {
           Acc.Subscripts = std::move(Subs);
+          Acc.RowLengths = std::move(Ns);
           // The outermost extent of a delinearized access is the row count,
           // which the declared 1-D size does not give.
           Dims.insert(Dims.begin(), std::string());
@@ -1034,7 +1158,7 @@ private:
     AffineExpr AE;
     const VarDecl *Base = nullptr;
     std::string Why;
-    if (!resolveBase(VD, AE, Base, Why)) {
+    if (!resolveBase(VD, AE, Base, Why, Acc.BaseMayAlias)) {
       nonAffine(Acc, Why, /*KeepBase=*/false);
       return;
     }
@@ -1082,19 +1206,47 @@ private:
     return Dims;
   }
 
-  /// `X * N + J` (any operand order) with N a variable that is fixed and J
-  /// a clean induction variable of a loop running exactly `0..N-1` by 1,
-  /// over the whole span J's loop runs: then 0 <= J < N at every access, so
-  /// the 1-D index is the 2-D index [X][J] of rows of length N. Recursive in
-  /// X, so `(i * n + j) * m + k` gives [i][j][k]. Dims receives the extents
-  /// of the inner dimensions only.
+  /// `X * N + J` (any operand order), optionally plus or minus constants,
+  /// where N is a fixed variable and J is `j + c` for a clean induction
+  /// variable j whose whole range, shifted by c, stays inside [0, N - 1]
+  /// (see rowIndexInRange). Then the 1-D index is the 2-D index [X][J] of
+  /// rows of length N. Recursive in X, so `(i * n + j) * m + k` gives
+  /// [i][j][k]; `i * n + j - 1` gives [i][j - 1]. Dims receives the extents
+  /// of the inner dimensions only. Offset accumulates constants peeled off
+  /// the outside (`(... ) - 1`).
   bool delinearize(const Expr *E, const AffineBuilder &B,
                    std::vector<AffineExpr> &Subs,
-                   std::vector<std::string> &Dims) {
+                   std::vector<std::string> &Dims,
+                   std::vector<const VarDecl *> &Ns, int64_t Offset = 0) {
     E = E->IgnoreParenImpCasts();
     const auto *Add = dyn_cast<BinaryOperator>(E);
-    if (!Add || Add->getOpcode() != BO_Add)
+    if (!Add || (Add->getOpcode() != BO_Add && Add->getOpcode() != BO_Sub))
       return false;
+
+    // Peel a constant term: `A + k`, `k + A`, `A - k`. Not in unsigned
+    // arithmetic, where a "negative" constant is a huge one.
+    if (!Add->getType()->isUnsignedIntegerOrEnumerationType()) {
+      for (int Side = 0; Side < 2; ++Side) {
+        if (Side == 0 && Add->getOpcode() == BO_Sub)
+          continue; // `k - A` negates A: not a peelable offset
+        const Expr *KE = Side ? Add->getRHS() : Add->getLHS();
+        const Expr *Rest = Side ? Add->getLHS() : Add->getRHS();
+        Expr::EvalResult R;
+        if (KE->isValueDependent() || !KE->EvaluateAsInt(R, C.Ctx) ||
+            !R.Val.isInt())
+          continue;
+        std::optional<int64_t> K = R.Val.getInt().tryExtValue();
+        int64_t NewOff;
+        if (!K || (Add->getOpcode() == BO_Sub
+                       ? __builtin_sub_overflow(Offset, *K, &NewOff)
+                       : __builtin_add_overflow(Offset, *K, &NewOff)))
+          continue;
+        return delinearize(Rest, B, Subs, Dims, Ns, NewOff);
+      }
+    }
+    if (Add->getOpcode() != BO_Add)
+      return false;
+
     for (int Order = 0; Order < 2; ++Order) {
       const Expr *MulE =
           (Order ? Add->getRHS() : Add->getLHS())->IgnoreParenImpCasts();
@@ -1105,53 +1257,72 @@ private:
       for (int MOrder = 0; MOrder < 2; ++MOrder) {
         const Expr *XE = MOrder ? Mul->getRHS() : Mul->getLHS();
         const VarDecl *N = asVar(MOrder ? Mul->getLHS() : Mul->getRHS());
-        const VarDecl *J = asVar(JE);
-        if (!N || !J || B.binding(N))
+        if (!N || B.binding(N))
+          continue;
+        // J must be exactly one induction variable plus a constant.
+        std::string Why;
+        AffineExpr JA;
+        if (!B.build(JE, JA, Why) || !JA.SymTerms.empty() ||
+            JA.IVTerms.size() != 1 || JA.IVTerms.begin()->second != 1)
+          continue;
+        const VarDecl *J = JA.IVTerms.begin()->first;
+        int64_t C0;
+        if (__builtin_add_overflow(JA.Const, Offset, &C0))
           continue;
         const IVBinding *JB = B.binding(J);
-        if (!JB || !rowIndexInRange(*JB, N))
+        if (!JB || !rowIndexInRange(*JB, N, C0))
           continue;
-        std::string Why;
         std::vector<AffineExpr> Outer;
         std::vector<std::string> OuterDims;
+        std::vector<const VarDecl *> OuterNs;
         AffineExpr X;
         if (B.build(XE, X, Why)) {
           Outer.push_back(std::move(X));
-        } else if (!delinearize(XE, B, Outer, OuterDims)) {
+        } else if (!delinearize(XE, B, Outer, OuterDims, OuterNs)) {
           continue;
         }
-        AffineExpr JA;
-        JA.IVTerms[J] = 1;
+        JA.Const = C0;
         Subs = std::move(Outer);
         Subs.push_back(std::move(JA));
         Dims = std::move(OuterDims);
         Dims.push_back(N->getNameAsString());
+        Ns = std::move(OuterNs);
+        Ns.push_back(N);
         return true;
       }
     }
     return false;
   }
 
-  /// Does 0 <= J < N hold at every point J's loop (JB.Loop) runs? Needs:
-  /// that loop has the shape `for (J = 0; J < N; J++)`; J changes only
-  /// through that loop's header; and N never changes while that loop runs.
-  /// When J's loop encloses the analyzed loop, "while it runs" covers more
-  /// than the analyzed loop, so its own body is checked.
-  bool rowIndexInRange(const IVBinding &JB, const VarDecl *N) {
+  /// Does 0 <= j + Off <= N - 1 hold at every point j's loop (JB.Loop) runs?
+  /// Needs: that loop counts up from a constant s to `j < N + e` (or
+  /// `j <= N + e`), so j lies in [s, N + e - 1] (or [s, N + e]), with
+  /// s + Off >= 0 and the top + Off <= N - 1; j changes only through that
+  /// loop's header; N never changes while that loop runs (when j's loop
+  /// encloses the analyzed loop, that covers more than the analyzed loop, so
+  /// its own body is checked); and j and N have the same type (an unsigned j
+  /// against a negative int N compares as unsigned; a narrower j can wrap).
+  bool rowIndexInRange(const IVBinding &JB, const VarDecl *N, int64_t Off) {
     const LoopInfo &L = *JB.Loop;
-    const auto *BD = dyn_cast_or_null<VarDecl>(L.BoundDecl);
-    if (L.Kind == LoopKind::Unrecognized || !L.Start || *L.Start != 0 ||
-        !L.Step || *L.Step != 1 || L.CmpOp != BO_LT || !BD ||
-        canon(BD) != N)
+    if (L.Kind == LoopKind::Unrecognized || !L.Start || !L.Step ||
+        *L.Step <= 0 || (L.CmpOp != BO_LT && L.CmpOp != BO_LE) ||
+        !L.BoundExpr)
       return false;
-    // `j < n` only proves 0 <= j < n when j and n have the same type: an
-    // unsigned j against a negative int n compares as unsigned, and a
-    // narrower j can wrap before reaching n.
     if (JB.Var->getType().getCanonicalType().getUnqualifiedType() !=
         N->getType().getCanonicalType().getUnqualifiedType())
       return false;
-    const BodyFacts &F = factsFor(L);
+    // The bound must be exactly N + e.
+    AffineBuilder BB(C, {}, IVsAtDecl);
+    AffineExpr Bound;
     std::string Why;
+    if (!BB.build(L.BoundExpr, Bound, Why) || !Bound.IVTerms.empty() ||
+        Bound.SymTerms.size() != 1 || Bound.SymTerms.begin()->first != N ||
+        Bound.SymTerms.begin()->second != 1)
+      return false;
+    const Int Top = Int(Bound.Const) - (L.CmpOp == BO_LT ? 1 : 0); // j <= N + Top
+    if (Int(*L.Start) + Off < 0 || Top + Off > -1)
+      return false;
+    const BodyFacts &F = factsFor(L);
     return isCleanIV(JB, F, C, Why) && isInvariant(N, F, C, Why);
   }
 
@@ -1182,6 +1353,9 @@ private:
   llvm::DenseMap<const ForStmt *, BodyFacts> OuterFacts;
   /// Non-empty when the analyzed loop's iteration space can't be trusted.
   std::string Poison;
+  /// Number of bindings belonging to the analyzed loop and its enclosing
+  /// loops; IVs beyond this index are inner loops'.
+  size_t ChainLen = 0;
 };
 
 AffineAnalyzer::AffineAnalyzer(ASTContext &Ctx,
@@ -1193,9 +1367,20 @@ AffineAnalyzer::AffineAnalyzer(ASTContext &Ctx,
 
 LoopAccesses AffineAnalyzer::analyzeLoop(size_t Index) {
   const ForStmt *FS = Loops[Index].Loop;
-  Context C{Ctx, FS, factsOf(FS), addressTakenIn(enclosingFunction(FS, Ctx))};
+  const FunctionDecl *FD = enclosingFunction(FS, Ctx);
+  BodyFacts FnFacts;
+  if (FD && FD->getBody()) {
+    BodyFactsVisitor FV(FnFacts);
+    FV.TraverseStmt(FD->getBody());
+  }
+  Context C{Ctx, FS, factsOf(FS), addressTakenIn(FD), std::move(FnFacts)};
 
   LoopAccesses Out;
+  // Only automatic variables are fresh per iteration: a `static` or `extern`
+  // declared in the body is one object shared by every iteration.
+  for (const auto &[VD, Def] : C.Facts.DeclaredHere)
+    if (Def->hasLocalStorage())
+      Out.DeclaredInLoop.insert(VD);
   AccessCollector Coll(*this, C, Index, Out);
   Coll.TraverseStmt(const_cast<Expr *>(FS->getCond()));
   Coll.TraverseStmt(const_cast<Expr *>(FS->getInc()));

@@ -18,7 +18,7 @@ static double helperA(double x) {
 }
 
 void two_level_chain(double *data, int n) {
-  // CHECK: call_chains.c:[[#LOOP0:@LINE+11]]:3{{$}}
+  // CHECK: call_chains.c:[[#LOOP0:@LINE+12]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
@@ -28,6 +28,7 @@ void two_level_chain(double *data, int n) {
   // CHECK-NEXT: W data[i] : [i]{{$}}
   // CHECK-NEXT: R data[i] : [i]{{$}}
   // CHECK-NEXT: safety     : SAFE{{$}}
+  // CHECK: deps       : 2 pair(s), 2 independent (2 SIV){{$}}
   // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
   for (int i = 0; i < n; i++) {
     data[i] = helperA(data[i]);
@@ -50,7 +51,7 @@ static double stepA(double x) {
 }
 
 void three_level_chain(double *data, int n) {
-  // CHECK: call_chains.c:[[#LOOP1:@LINE+11]]:3{{$}}
+  // CHECK: call_chains.c:[[#LOOP1:@LINE+12]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
@@ -60,6 +61,7 @@ void three_level_chain(double *data, int n) {
   // CHECK-NEXT: W data[i] : [i]{{$}}
   // CHECK-NEXT: R data[i] : [i]{{$}}
   // CHECK-NEXT: safety     : SAFE{{$}}
+  // CHECK: deps       : 2 pair(s), 2 independent (2 SIV){{$}}
   // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
   for (int i = 0; i < n; i++) {
     data[i] = stepA(data[i]);
@@ -78,7 +80,7 @@ static double helperC(double x) {
 }
 
 void opaque_callee(double *data, int n) {
-  // CHECK: call_chains.c:[[#LOOP2:@LINE+12]]:3{{$}}
+  // CHECK: call_chains.c:[[#LOOP2:@LINE+13]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
@@ -89,6 +91,7 @@ void opaque_callee(double *data, int n) {
   // CHECK-NEXT: R data[i] : [i]{{$}}
   // CHECK-NEXT: safety     : UNKNOWN{{$}}
   // CHECK: - 'helperC' reaches 'external_transform', which has no visible body{{$}}
+  // CHECK: deps       : 2 pair(s), 2 independent (2 SIV){{$}}
   // CHECK: profitability : SEQUENTIAL{{$}}
   for (int i = 0; i < n; i++) {
     data[i] = helperC(data[i]);
@@ -113,7 +116,7 @@ double pong(double x) {
 }
 
 void mutual_recursion(double *data, int n) {
-  // CHECK: call_chains.c:[[#LOOP3:@LINE+12]]:3{{$}}
+  // CHECK: call_chains.c:[[#LOOP3:@LINE+13]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
@@ -124,6 +127,7 @@ void mutual_recursion(double *data, int n) {
   // CHECK-NEXT: R data[i] : [i]{{$}}
   // CHECK-NEXT: safety     : UNKNOWN{{$}}
   // CHECK: - 'ping' recurses; call chain cannot be bounded{{$}}
+  // CHECK: deps       : 2 pair(s), 2 independent (2 SIV){{$}}
   // CHECK: profitability : SEQUENTIAL{{$}}
   for (int i = 0; i < n; i++) {
     data[i] = ping(data[i]);

@@ -16,7 +16,7 @@ static double pure_scale(double x, double factor) {
 }
 
 void safe_pure_callee(double *data, int n, double factor) {
-  // CHECK: safety_cases.c:[[#LOOP0:@LINE+11]]:3{{$}}
+  // CHECK: safety_cases.c:[[#LOOP0:@LINE+12]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
@@ -26,6 +26,7 @@ void safe_pure_callee(double *data, int n, double factor) {
   // CHECK-NEXT: W data[i] : [i]{{$}}
   // CHECK-NEXT: R data[i] : [i]{{$}}
   // CHECK-NEXT: safety     : SAFE{{$}}
+  // CHECK: deps       : 2 pair(s), 2 independent (2 SIV){{$}}
   // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
   for (int i = 0; i < n; i++) {
     data[i] = pure_scale(data[i], factor);
@@ -43,7 +44,7 @@ static double pure_step1(double x) {
 }
 
 void safe_transitive_pure(double *data, int n) {
-  // CHECK: safety_cases.c:[[#LOOP1:@LINE+11]]:3{{$}}
+  // CHECK: safety_cases.c:[[#LOOP1:@LINE+12]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
@@ -53,6 +54,7 @@ void safe_transitive_pure(double *data, int n) {
   // CHECK-NEXT: W data[i] : [i]{{$}}
   // CHECK-NEXT: R data[i] : [i]{{$}}
   // CHECK-NEXT: safety     : SAFE{{$}}
+  // CHECK: deps       : 2 pair(s), 2 independent (2 SIV){{$}}
   // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
   for (int i = 0; i < n; i++) {
     data[i] = pure_step1(data[i]);
@@ -62,7 +64,7 @@ void safe_transitive_pure(double *data, int n) {
 // SAFE — a scalar temporary declared inside the loop body is private per
 // iteration, not loop-carried.
 void safe_body_local_temp(double *data, int n) {
-  // CHECK: safety_cases.c:[[#LOOP2:@LINE+10]]:3{{$}}
+  // CHECK: safety_cases.c:[[#LOOP2:@LINE+11]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
@@ -71,6 +73,7 @@ void safe_body_local_temp(double *data, int n) {
   // CHECK-NEXT: R data[i] : [i]{{$}}
   // CHECK-NEXT: W data[i] : [i]{{$}}
   // CHECK-NEXT: safety     : SAFE{{$}}
+  // CHECK: deps       : 2 pair(s), 2 independent (2 SIV){{$}}
   // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
   for (int i = 0; i < n; i++) {
     double tmp = data[i] * 2.0;
@@ -89,7 +92,7 @@ static double counts_calls(double x) {
 }
 
 void unsafe_global_write(double *data, int n) {
-  // CHECK: safety_cases.c:[[#LOOP3:@LINE+12]]:3{{$}}
+  // CHECK: safety_cases.c:[[#LOOP3:@LINE+13]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
@@ -100,6 +103,7 @@ void unsafe_global_write(double *data, int n) {
   // CHECK-NEXT: R data[i] : [i]{{$}}
   // CHECK-NEXT: safety     : UNSAFE{{$}}
   // CHECK: - 'counts_calls' writes global 'call_count'{{$}}
+  // CHECK: deps       : 2 pair(s), 2 independent (2 SIV){{$}}
   // CHECK: profitability : SEQUENTIAL{{$}}
   for (int i = 0; i < n; i++) {
     data[i] = counts_calls(data[i]);
@@ -125,7 +129,7 @@ static double scale_and_touch(double x, double factor) {
 }
 
 void unsafe_transitive_global_write(double *data, int n, double factor) {
-  // CHECK: safety_cases.c:[[#LOOP4:@LINE+12]]:3{{$}}
+  // CHECK: safety_cases.c:[[#LOOP4:@LINE+13]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
@@ -136,6 +140,7 @@ void unsafe_transitive_global_write(double *data, int n, double factor) {
   // CHECK-NEXT: R data[i] : [i]{{$}}
   // CHECK-NEXT: safety     : UNSAFE{{$}}
   // CHECK: - 'scale_and_touch' transitively reaches 'mark_touched', which writes global 'touch_count'{{$}}
+  // CHECK: deps       : 2 pair(s), 2 independent (2 SIV){{$}}
   // CHECK: profitability : SEQUENTIAL{{$}}
   for (int i = 0; i < n; i++) {
     data[i] = scale_and_touch(data[i], factor);
@@ -153,7 +158,7 @@ static void accumulate(double *out, double v) {
 }
 
 void unsafe_pointer_param_write(double *data, int n, double *total) {
-  // CHECK: safety_cases.c:[[#LOOP5:@LINE+11]]:3{{$}}
+  // CHECK: safety_cases.c:[[#LOOP5:@LINE+12]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
@@ -163,6 +168,7 @@ void unsafe_pointer_param_write(double *data, int n, double *total) {
   // CHECK-NEXT: R data[i] : [i]{{$}}
   // CHECK-NEXT: safety     : UNSAFE{{$}}
   // CHECK: - 'accumulate' writes through pointer parameter 'out'{{$}}
+  // CHECK: deps       : 0 pair(s), 0 independent{{$}}
   // CHECK: profitability : SEQUENTIAL{{$}}
   for (int i = 0; i < n; i++) {
     accumulate(total, data[i]);
@@ -171,7 +177,7 @@ void unsafe_pointer_param_write(double *data, int n, double *total) {
 
 // UNSAFE — loop body reassigns its own induction variable.
 void unsafe_induction_var_reassigned(double *data, int n) {
-  // CHECK: safety_cases.c:[[#LOOP6:@LINE+13]]:3{{$}}
+  // CHECK: safety_cases.c:[[#LOOP6:@LINE+14]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
@@ -183,6 +189,7 @@ void unsafe_induction_var_reassigned(double *data, int n) {
   // CHECK-NEXT: R data[i] : non-affine: induction variable 'i' is modified inside the loop{{$}}
   // CHECK-NEXT: safety     : UNSAFE{{$}}
   // CHECK: - loop body reassigns the induction variable 'i'{{$}}
+  // CHECK: deps       : 3 pair(s), 0 independent{{$}}
   // CHECK: profitability : SEQUENTIAL{{$}}
   for (int i = 0; i < n; i++) {
     data[i] = pure_scale(data[i], 2.0);
@@ -195,7 +202,7 @@ void unsafe_induction_var_reassigned(double *data, int n) {
 // variable alone, so a parallel schedule can read stale or not-yet-written
 // data depending on iteration order.
 void unsafe_neighbor_access(double *data, int n) {
-  // CHECK: safety_cases.c:[[#LOOP7:@LINE+12]]:3{{$}}
+  // CHECK: safety_cases.c:[[#LOOP7:@LINE+13]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
@@ -205,7 +212,8 @@ void unsafe_neighbor_access(double *data, int n) {
   // CHECK-NEXT: W data[i] : [i]{{$}}
   // CHECK-NEXT: R data[i - 1] : [i - 1]{{$}}
   // CHECK-NEXT: safety     : UNSAFE{{$}}
-  // CHECK: - array access not indexed by the induction variable alone: 'data[i - 1]'{{$}}
+  // CHECK: - W data[i] and R data[i - 1]: the same element is touched 1 iteration(s) apart{{$}}
+  // CHECK: deps       : 2 pair(s), 1 independent (1 SIV){{$}}
   // CHECK: profitability : SEQUENTIAL{{$}}
   for (int i = 1; i < n; i++) {
     data[i] = pure_scale(data[i - 1], 2.0);
@@ -215,7 +223,7 @@ void unsafe_neighbor_access(double *data, int n) {
 // UNSAFE — scatter access: the index into `data` is itself data-dependent,
 // so which element each iteration touches cannot be determined statically.
 void unsafe_scatter_write(double *data, const int *idx, int n) {
-  // CHECK: safety_cases.c:[[#LOOP8:@LINE+11]]:3{{$}}
+  // CHECK: safety_cases.c:[[#LOOP8:@LINE+12]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
@@ -223,8 +231,9 @@ void unsafe_scatter_write(double *data, const int *idx, int n) {
   // CHECK: accesses   : 2 (1 affine){{$}}
   // CHECK-NEXT: W data[idx[i]] : non-affine: subscript reads memory ('idx[i]'){{$}}
   // CHECK-NEXT: R idx[i] : [i]{{$}}
-  // CHECK-NEXT: safety     : UNSAFE{{$}}
-  // CHECK: - array access not indexed by the induction variable alone: 'data[idx[i]]'{{$}}
+  // CHECK-NEXT: safety     : UNKNOWN{{$}}
+  // CHECK: - cannot test W data[idx[i]]: W data[idx[i]] is non-affine (subscript reads memory ('idx[i]')){{$}}
+  // CHECK: deps       : 1 pair(s), 0 independent{{$}}
   // CHECK: profitability : SEQUENTIAL{{$}}
   for (int i = 0; i < n; i++) {
     data[idx[i]] = 0.0;
@@ -237,7 +246,7 @@ void unsafe_scatter_write(double *data, const int *idx, int n) {
 // directly in the loop body rather than through a callee).
 double unsafe_reduction(const double *data, int n) {
   double total = 0.0;
-  // CHECK: safety_cases.c:[[#LOOP9:@LINE+10]]:3{{$}}
+  // CHECK: safety_cases.c:[[#LOOP9:@LINE+11]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
@@ -246,6 +255,7 @@ double unsafe_reduction(const double *data, int n) {
   // CHECK-NEXT: R data[i] : [i]{{$}}
   // CHECK-NEXT: safety     : UNSAFE{{$}}
   // CHECK: - loop-carried dependence: writes to 'total', which is not declared inside the loop body{{$}}
+  // CHECK: deps       : 0 pair(s), 0 independent{{$}}
   // CHECK: profitability : SEQUENTIAL{{$}}
   for (int i = 0; i < n; i++) {
     total += data[i];
@@ -262,7 +272,7 @@ double unsafe_reduction(const double *data, int n) {
 double external_effect(double x);
 
 void unknown_opaque_callee(double *data, int n) {
-  // CHECK: safety_cases.c:[[#LOOP10:@LINE+12]]:3{{$}}
+  // CHECK: safety_cases.c:[[#LOOP10:@LINE+13]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
@@ -273,6 +283,7 @@ void unknown_opaque_callee(double *data, int n) {
   // CHECK-NEXT: R data[i] : [i]{{$}}
   // CHECK-NEXT: safety     : UNKNOWN{{$}}
   // CHECK: - 'external_effect' has no visible body in this TU{{$}}
+  // CHECK: deps       : 2 pair(s), 2 independent (2 SIV){{$}}
   // CHECK: profitability : SEQUENTIAL{{$}}
   for (int i = 0; i < n; i++) {
     data[i] = external_effect(data[i]);
@@ -282,7 +293,7 @@ void unknown_opaque_callee(double *data, int n) {
 // UNKNOWN — call through a function pointer; LoopInfo::HasIndirectCall fires
 // because the callee cannot be resolved to a FunctionDecl at all.
 void unknown_indirect_call(double *data, int n, double (*fn)(double)) {
-  // CHECK: safety_cases.c:[[#LOOP11:@LINE+11]]:3{{$}}
+  // CHECK: safety_cases.c:[[#LOOP11:@LINE+12]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
@@ -292,6 +303,7 @@ void unknown_indirect_call(double *data, int n, double (*fn)(double)) {
   // CHECK-NEXT: R data[i] : [i]{{$}}
   // CHECK-NEXT: safety     : UNKNOWN{{$}}
   // CHECK: - loop body contains an indirect call that cannot be resolved{{$}}
+  // CHECK: deps       : 2 pair(s), 2 independent (2 SIV){{$}}
   // CHECK: profitability : SEQUENTIAL{{$}}
   for (int i = 0; i < n; i++) {
     data[i] = fn(data[i]);

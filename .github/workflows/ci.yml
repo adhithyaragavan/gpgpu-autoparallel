@@ -21,7 +21,8 @@ jobs:
           # every exported target's files exist, and aborts find_package otherwise.
           sudo apt-get install -y -qq ninja-build \
             "libclang-$LLVM_VERSION-dev" "llvm-$LLVM_VERSION-dev" "llvm-$LLVM_VERSION-tools" \
-            "clang-tools-$LLVM_VERSION" "libpolly-$LLVM_VERSION-dev" "libclang-cpp$LLVM_VERSION-dev"
+            "clang-tools-$LLVM_VERSION" "libpolly-$LLVM_VERSION-dev" "libclang-cpp$LLVM_VERSION-dev" \
+            "libomp-$LLVM_VERSION-dev"
           # Ubuntu 24.04's system Python is externally managed (PEP 668): no bare pip.
           pipx install lit
 
@@ -32,3 +33,6 @@ jobs:
 
       - name: Verdict regression tests (lit + FileCheck)
         run: FILECHECK="/usr/lib/llvm-$LLVM_VERSION/bin/FileCheck" lit -v tests
+
+      - name: Runtime check of SAFE verdicts (parallel vs sequential, bit-identical)
+        run: CC="/usr/lib/llvm-$LLVM_VERSION/bin/clang" RUNS=20 scripts/check_parallel.sh

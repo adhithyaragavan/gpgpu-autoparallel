@@ -16,9 +16,9 @@ void perfect2(double *a, int n, int m) {
   // CHECK: nest ivs   : i{{$}}
   // CHECK: accesses   : 1 (1 affine){{$}}
   // CHECK-NEXT: W a[i * m + j] : [i][j] delinearized, dims [?][m]{{$}}
-  // CHECK-NEXT: safety     : UNSAFE{{$}}
-  // CHECK: - array access not indexed by the induction variable alone: 'a[i * m + j]'{{$}}
-  // CHECK: profitability : SEQUENTIAL{{$}}
+  // CHECK-NEXT: safety     : SAFE{{$}}
+  // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
+  // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
   for (int i = 0; i < n; i++)
     // depth 1, parent = outer, 0 children, not perfect, rectangular. ivs: i, j
     // CHECK: nests.c:[[#LOOP1:@LINE+10]]:5{{$}}
@@ -28,9 +28,9 @@ void perfect2(double *a, int n, int m) {
     // CHECK: nest ivs   : i, j{{$}}
     // CHECK: accesses   : 1 (1 affine){{$}}
     // CHECK-NEXT: W a[i * m + j] : [i][j] delinearized, dims [?][m]{{$}}
-    // CHECK-NEXT: safety     : UNSAFE{{$}}
-    // CHECK: - array access not indexed by the induction variable alone: 'a[i * m + j]'{{$}}
-    // CHECK: profitability : SEQUENTIAL{{$}}
+    // CHECK-NEXT: safety     : SAFE{{$}}
+    // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
+    // CHECK: profitability : CPU_PARALLEL if (m >= {{[0-9]+}}){{$}}
     for (int j = 0; j < m; j++)
       a[i * m + j] = 0.0;
 }
@@ -45,9 +45,9 @@ void perfect3(double *a, int n) {
   // CHECK: nest ivs   : i{{$}}
   // CHECK: accesses   : 1 (1 affine){{$}}
   // CHECK-NEXT: W a[(i * n + j) * n + k] : [i][j][k] delinearized, dims [?][n][n]{{$}}
-  // CHECK-NEXT: safety     : UNSAFE{{$}}
-  // CHECK: - array access not indexed by the induction variable alone: 'a[(i * n + j) * n + k]'{{$}}
-  // CHECK: profitability : SEQUENTIAL{{$}}
+  // CHECK-NEXT: safety     : SAFE{{$}}
+  // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
+  // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
   for (int i = 0; i < n; i++) {
     // depth 1, 1 child, perfect. ivs: i, j
     // CHECK: nests.c:[[#LOOP3:@LINE+10]]:5{{$}}
@@ -57,9 +57,9 @@ void perfect3(double *a, int n) {
     // CHECK: nest ivs   : i, j{{$}}
     // CHECK: accesses   : 1 (1 affine){{$}}
     // CHECK-NEXT: W a[(i * n + j) * n + k] : [i][j][k] delinearized, dims [?][n][n]{{$}}
-    // CHECK-NEXT: safety     : UNSAFE{{$}}
-    // CHECK: - array access not indexed by the induction variable alone: 'a[(i * n + j) * n + k]'{{$}}
-    // CHECK: profitability : SEQUENTIAL{{$}}
+    // CHECK-NEXT: safety     : SAFE{{$}}
+    // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
+    // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
     for (int j = 0; j < n; j++) {
       // depth 2, parent = the j loop, 0 children. ivs: i, j, k
       // CHECK: nests.c:[[#LOOP4:@LINE+10]]:7{{$}}
@@ -69,9 +69,9 @@ void perfect3(double *a, int n) {
       // CHECK: nest ivs   : i, j, k{{$}}
       // CHECK: accesses   : 1 (1 affine){{$}}
       // CHECK-NEXT: W a[(i * n + j) * n + k] : [i][j][k] delinearized, dims [?][n][n]{{$}}
-      // CHECK-NEXT: safety     : UNSAFE{{$}}
-      // CHECK: - array access not indexed by the induction variable alone: 'a[(i * n + j) * n + k]'{{$}}
-      // CHECK: profitability : SEQUENTIAL{{$}}
+      // CHECK-NEXT: safety     : SAFE{{$}}
+      // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
+      // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
       for (int k = 0; k < n; k++) {
         a[(i * n + j) * n + k] = 1.0;
       }
@@ -90,9 +90,9 @@ void imperfect(double *a, double *rowsum, int n) {
   // CHECK: accesses   : 2 (2 affine){{$}}
   // CHECK-NEXT: W rowsum[i] : [i]{{$}}
   // CHECK-NEXT: W a[i * n + j] : [i][j] delinearized, dims [?][n]{{$}}
-  // CHECK-NEXT: safety     : UNSAFE{{$}}
-  // CHECK: - array access not indexed by the induction variable alone: 'a[i * n + j]'{{$}}
-  // CHECK: profitability : SEQUENTIAL{{$}}
+  // CHECK-NEXT: safety     : SAFE{{$}}
+  // CHECK: deps       : 2 pair(s), 2 independent (2 SIV){{$}}
+  // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
   for (int i = 0; i < n; i++) {
     rowsum[i] = 0.0;
     // depth 1, parent = outer. ivs: i, j
@@ -103,9 +103,9 @@ void imperfect(double *a, double *rowsum, int n) {
     // CHECK: nest ivs   : i, j{{$}}
     // CHECK: accesses   : 1 (1 affine){{$}}
     // CHECK-NEXT: W a[i * n + j] : [i][j] delinearized, dims [?][n]{{$}}
-    // CHECK-NEXT: safety     : UNSAFE{{$}}
-    // CHECK: - array access not indexed by the induction variable alone: 'a[i * n + j]'{{$}}
-    // CHECK: profitability : SEQUENTIAL{{$}}
+    // CHECK-NEXT: safety     : SAFE{{$}}
+    // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
+    // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
     for (int j = 0; j < n; j++)
       a[i * n + j] = 2.0;
   }
@@ -122,9 +122,9 @@ void imperfect_null_stmt(double *a, int n) {
   // CHECK: nest ivs   : i{{$}}
   // CHECK: accesses   : 1 (1 affine){{$}}
   // CHECK-NEXT: W a[i * n + j] : [i][j] delinearized, dims [?][n]{{$}}
-  // CHECK-NEXT: safety     : UNSAFE{{$}}
-  // CHECK: - array access not indexed by the induction variable alone: 'a[i * n + j]'{{$}}
-  // CHECK: profitability : SEQUENTIAL{{$}}
+  // CHECK-NEXT: safety     : SAFE{{$}}
+  // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
+  // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
   for (int i = 0; i < n; i++) {
     ;
     // depth 1, parent = outer
@@ -135,9 +135,9 @@ void imperfect_null_stmt(double *a, int n) {
     // CHECK: nest ivs   : i, j{{$}}
     // CHECK: accesses   : 1 (1 affine){{$}}
     // CHECK-NEXT: W a[i * n + j] : [i][j] delinearized, dims [?][n]{{$}}
-    // CHECK-NEXT: safety     : UNSAFE{{$}}
-    // CHECK: - array access not indexed by the induction variable alone: 'a[i * n + j]'{{$}}
-    // CHECK: profitability : SEQUENTIAL{{$}}
+    // CHECK-NEXT: safety     : SAFE{{$}}
+    // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
+    // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
     for (int j = 0; j < n; j++)
       a[i * n + j] = 3.0;
   }
@@ -146,27 +146,29 @@ void imperfect_null_stmt(double *a, int n) {
 // --- Triangular nests -------------------------------------------------------
 void triangular_bound(double *a, int n) {
   // depth 0, 1 child, perfect, rectangular itself
-  // CHECK: nests.c:[[#LOOP9:@LINE+10]]:3{{$}}
+  // CHECK: nests.c:[[#LOOP9:@LINE+11]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 1 child loop(s), perfect nest{{$}}
   // CHECK: nest ivs   : i{{$}}
   // CHECK: accesses   : 1 (0 affine){{$}}
   // CHECK-NEXT: W a[i * n + j] : non-affine: subscript multiplies two non-constant terms ('i * n'){{$}}
-  // CHECK-NEXT: safety     : UNSAFE{{$}}
-  // CHECK: - array access not indexed by the induction variable alone: 'a[i * n + j]'{{$}}
+  // CHECK-NEXT: safety     : UNKNOWN{{$}}
+  // CHECK: - cannot test W a[i * n + j]: W a[i * n + j] is non-affine (subscript multiplies two non-constant terms ('i * n')){{$}}
+  // CHECK: deps       : 1 pair(s), 0 independent{{$}}
   // CHECK: profitability : SEQUENTIAL{{$}}
   for (int i = 0; i < n; i++)
     // depth 1, TRIANGULAR: the bound `i` is the outer induction variable
-    // CHECK: nests.c:[[#LOOP10:@LINE+10]]:5{{$}}
+    // CHECK: nests.c:[[#LOOP10:@LINE+11]]:5{{$}}
     // CHECK: kind       : VARIABLE_BOUND{{$}}
     // CHECK: trip count : <not statically known>{{$}}
     // CHECK: nest       : depth 1, parent [[#LOOP9]]:3, 0 child loop(s), triangular{{$}}
     // CHECK: nest ivs   : i, j{{$}}
     // CHECK: accesses   : 1 (0 affine){{$}}
     // CHECK-NEXT: W a[i * n + j] : non-affine: subscript multiplies two non-constant terms ('i * n'){{$}}
-    // CHECK-NEXT: safety     : UNSAFE{{$}}
-    // CHECK: - array access not indexed by the induction variable alone: 'a[i * n + j]'{{$}}
+    // CHECK-NEXT: safety     : UNKNOWN{{$}}
+    // CHECK: - cannot test W a[i * n + j]: W a[i * n + j] is non-affine (subscript multiplies two non-constant terms ('i * n')){{$}}
+    // CHECK: deps       : 1 pair(s), 0 independent{{$}}
     // CHECK: profitability : SEQUENTIAL{{$}}
     for (int j = 0; j < i; j++)
       a[i * n + j] = 4.0;
@@ -174,27 +176,29 @@ void triangular_bound(double *a, int n) {
 
 void triangular_start(double *a, int n) {
   // depth 0, 1 child, perfect
-  // CHECK: nests.c:[[#LOOP11:@LINE+10]]:3{{$}}
+  // CHECK: nests.c:[[#LOOP11:@LINE+11]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 1 child loop(s), perfect nest{{$}}
   // CHECK: nest ivs   : i{{$}}
   // CHECK: accesses   : 1 (0 affine){{$}}
   // CHECK-NEXT: W a[i * n + j] : non-affine: subscript multiplies two non-constant terms ('i * n'){{$}}
-  // CHECK-NEXT: safety     : UNSAFE{{$}}
-  // CHECK: - array access not indexed by the induction variable alone: 'a[i * n + j]'{{$}}
+  // CHECK-NEXT: safety     : UNKNOWN{{$}}
+  // CHECK: - cannot test W a[i * n + j]: W a[i * n + j] is non-affine (subscript multiplies two non-constant terms ('i * n')){{$}}
+  // CHECK: deps       : 1 pair(s), 0 independent{{$}}
   // CHECK: profitability : SEQUENTIAL{{$}}
   for (int i = 0; i < n; i++)
     // depth 1, TRIANGULAR: the start `i + 1` uses the outer induction variable
-    // CHECK: nests.c:[[#LOOP12:@LINE+10]]:5{{$}}
+    // CHECK: nests.c:[[#LOOP12:@LINE+11]]:5{{$}}
     // CHECK: kind       : VARIABLE_BOUND{{$}}
     // CHECK: trip count : <not statically known>{{$}}
     // CHECK: nest       : depth 1, parent [[#LOOP11]]:3, 0 child loop(s), triangular{{$}}
     // CHECK: nest ivs   : i, j{{$}}
     // CHECK: accesses   : 1 (0 affine){{$}}
     // CHECK-NEXT: W a[i * n + j] : non-affine: subscript multiplies two non-constant terms ('i * n'){{$}}
-    // CHECK-NEXT: safety     : UNSAFE{{$}}
-    // CHECK: - array access not indexed by the induction variable alone: 'a[i * n + j]'{{$}}
+    // CHECK-NEXT: safety     : UNKNOWN{{$}}
+    // CHECK: - cannot test W a[i * n + j]: W a[i * n + j] is non-affine (subscript multiplies two non-constant terms ('i * n')){{$}}
+    // CHECK: deps       : 1 pair(s), 0 independent{{$}}
     // CHECK: profitability : SEQUENTIAL{{$}}
     for (int j = i + 1; j < n; j++)
       a[i * n + j] = 5.0;
@@ -211,9 +215,9 @@ void siblings(double *a, double *b, int n) {
   // CHECK: accesses   : 2 (2 affine){{$}}
   // CHECK-NEXT: W a[i * n + j] : [i][j] delinearized, dims [?][n]{{$}}
   // CHECK-NEXT: W b[i * n + k] : [i][k] delinearized, dims [?][n]{{$}}
-  // CHECK-NEXT: safety     : UNSAFE{{$}}
-  // CHECK: - array access not indexed by the induction variable alone: 'a[i * n + j]'{{$}}
-  // CHECK: profitability : SEQUENTIAL{{$}}
+  // CHECK-NEXT: safety     : SAFE{{$}}
+  // CHECK: deps       : 2 pair(s), 2 independent (2 SIV){{$}}
+  // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
   for (int i = 0; i < n; i++) {
     // depth 1, parent = outer
     // CHECK: nests.c:[[#LOOP14:@LINE+10]]:5{{$}}
@@ -223,9 +227,9 @@ void siblings(double *a, double *b, int n) {
     // CHECK: nest ivs   : i, j{{$}}
     // CHECK: accesses   : 1 (1 affine){{$}}
     // CHECK-NEXT: W a[i * n + j] : [i][j] delinearized, dims [?][n]{{$}}
-    // CHECK-NEXT: safety     : UNSAFE{{$}}
-    // CHECK: - array access not indexed by the induction variable alone: 'a[i * n + j]'{{$}}
-    // CHECK: profitability : SEQUENTIAL{{$}}
+    // CHECK-NEXT: safety     : SAFE{{$}}
+    // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
+    // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
     for (int j = 0; j < n; j++)
       a[i * n + j] = 6.0;
     // depth 1, parent = outer (a sibling, not a child of the j loop)
@@ -236,9 +240,9 @@ void siblings(double *a, double *b, int n) {
     // CHECK: nest ivs   : i, k{{$}}
     // CHECK: accesses   : 1 (1 affine){{$}}
     // CHECK-NEXT: W b[i * n + k] : [i][k] delinearized, dims [?][n]{{$}}
-    // CHECK-NEXT: safety     : UNSAFE{{$}}
-    // CHECK: - array access not indexed by the induction variable alone: 'b[i * n + k]'{{$}}
-    // CHECK: profitability : SEQUENTIAL{{$}}
+    // CHECK-NEXT: safety     : SAFE{{$}}
+    // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
+    // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
     for (int k = 0; k < n; k++)
       b[i * n + k] = 7.0;
   }
@@ -264,7 +268,7 @@ void inside_unrecognized(double *a, int n) {
     // Its bound uses i, but i is not a recognized induction variable, so it is
     // NOT flagged triangular; the "inside an unrecognized loop" flag is what
     // keeps later phases conservative here.
-    // CHECK: nests.c:[[#LOOP17:@LINE+9]]:5{{$}}
+    // CHECK: nests.c:[[#LOOP17:@LINE+10]]:5{{$}}
     // CHECK: kind       : VARIABLE_BOUND{{$}}
     // CHECK: trip count : <not statically known>{{$}}
     // CHECK: nest       : depth 1, parent [[#LOOP16]]:3, 0 child loop(s), inside an unrecognized loop{{$}}
@@ -272,6 +276,7 @@ void inside_unrecognized(double *a, int n) {
     // CHECK: accesses   : 1 (1 affine){{$}}
     // CHECK-NEXT: W a[j] : [j]{{$}}
     // CHECK-NEXT: safety     : SAFE{{$}}
+    // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
     // CHECK: profitability : CPU_PARALLEL if (i >= {{[0-9]+}}){{$}}
     for (int j = 0; j < i; j++)
       a[j] = 8.0;
@@ -281,7 +286,7 @@ void inside_unrecognized(double *a, int n) {
 void inside_while(double *a, int n, int steps) {
   while (steps-- > 0) {
     // depth 0 (no enclosing FOR), INSIDE WHILE/DO
-    // CHECK: nests.c:[[#LOOP18:@LINE+10]]:5{{$}}
+    // CHECK: nests.c:[[#LOOP18:@LINE+11]]:5{{$}}
     // CHECK: kind       : VARIABLE_BOUND{{$}}
     // CHECK: trip count : <not statically known>{{$}}
     // CHECK: nest       : depth 0, 0 child loop(s), inside while/do or a loop header{{$}}
@@ -290,6 +295,7 @@ void inside_while(double *a, int n, int steps) {
     // CHECK-NEXT: W a[i] : [i]{{$}}
     // CHECK-NEXT: R a[i] : [i]{{$}}
     // CHECK-NEXT: safety     : SAFE{{$}}
+    // CHECK: deps       : 2 pair(s), 2 independent (2 SIV){{$}}
     // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
     for (int i = 0; i < n; i++)
       a[i] = a[i] * 0.5;
@@ -299,7 +305,7 @@ void inside_while(double *a, int n, int steps) {
 void inside_do(double *a, int n, int steps) {
   do {
     // depth 0, INSIDE WHILE/DO
-    // CHECK: nests.c:[[#LOOP19:@LINE+10]]:5{{$}}
+    // CHECK: nests.c:[[#LOOP19:@LINE+11]]:5{{$}}
     // CHECK: kind       : VARIABLE_BOUND{{$}}
     // CHECK: trip count : <not statically known>{{$}}
     // CHECK: nest       : depth 0, 0 child loop(s), inside while/do or a loop header{{$}}
@@ -308,6 +314,7 @@ void inside_do(double *a, int n, int steps) {
     // CHECK-NEXT: W a[i] : [i]{{$}}
     // CHECK-NEXT: R a[i] : [i]{{$}}
     // CHECK-NEXT: safety     : SAFE{{$}}
+    // CHECK: deps       : 2 pair(s), 2 independent (2 SIV){{$}}
     // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
     for (int i = 0; i < n; i++)
       a[i] = a[i] + 1.0;
@@ -323,9 +330,9 @@ void for_while_for(double *a, int n, int steps) {
   // CHECK: nest ivs   : i{{$}}
   // CHECK: accesses   : 1 (1 affine){{$}}
   // CHECK-NEXT: W a[i * n + j] : [i][j] delinearized, dims [?][n]{{$}}
-  // CHECK-NEXT: safety     : UNSAFE{{$}}
-  // CHECK: - array access not indexed by the induction variable alone: 'a[i * n + j]'{{$}}
-  // CHECK: profitability : SEQUENTIAL{{$}}
+  // CHECK-NEXT: safety     : SAFE{{$}}
+  // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
+  // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
   for (int i = 0; i < n; i++) {
     int s = steps;
     while (s-- > 0) {
@@ -338,9 +345,9 @@ void for_while_for(double *a, int n, int steps) {
       // CHECK: nest ivs   : i, j{{$}}
       // CHECK: accesses   : 1 (1 affine){{$}}
       // CHECK-NEXT: W a[i * n + j] : [i][j] delinearized, dims [?][n]{{$}}
-      // CHECK-NEXT: safety     : UNSAFE{{$}}
-      // CHECK: - array access not indexed by the induction variable alone: 'a[i * n + j]'{{$}}
-      // CHECK: profitability : SEQUENTIAL{{$}}
+      // CHECK-NEXT: safety     : SAFE{{$}}
+      // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
+      // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
       for (int j = 0; j < n; j++)
         a[i * n + j] = 9.0;
     }
@@ -352,33 +359,35 @@ void loop_in_init_clause(double *a, int n) {
   // depth 0, 2 children: the j loop, and the k loop (k sits in j's init
   // clause, which is still inside this loop's body). Perfect nest: the body's
   // only statement is the j loop.
-  // CHECK: nests.c:[[#LOOP22:@LINE+10]]:3{{$}}
+  // CHECK: nests.c:[[#LOOP22:@LINE+11]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 2 child loop(s), perfect nest{{$}}
   // CHECK: nest ivs   : o{{$}}
   // CHECK: accesses   : 1 (0 affine){{$}}
   // CHECK-NEXT: W a[o * n + j] : non-affine: subscript multiplies two non-constant terms ('o * n'){{$}}
-  // CHECK-NEXT: safety     : UNSAFE{{$}}
-  // CHECK: - array access not indexed by the induction variable alone: 'a[o * n + j]'{{$}}
+  // CHECK-NEXT: safety     : UNKNOWN{{$}}
+  // CHECK: - cannot test W a[o * n + j]: W a[o * n + j] is non-affine (subscript multiplies two non-constant terms ('o * n')){{$}}
+  // CHECK: deps       : 1 pair(s), 0 independent{{$}}
   // CHECK: profitability : SEQUENTIAL{{$}}
   for (int o = 0; o < n; o++) {
     // depth 1, parent = the o loop, 0 children: the k loop sits in this loop's
     // init clause, not its body, so it is NOT this loop's child.
-    // CHECK: nests.c:[[#LOOP23:@LINE+10]]:5{{$}}
+    // CHECK: nests.c:[[#LOOP23:@LINE+11]]:5{{$}}
     // CHECK: kind       : VARIABLE_BOUND{{$}}
     // CHECK: trip count : <not statically known>{{$}}
     // CHECK: nest       : depth 1, parent [[#LOOP22]]:3, 0 child loop(s){{$}}
     // CHECK: nest ivs   : o, j{{$}}
     // CHECK: accesses   : 1 (0 affine){{$}}
     // CHECK-NEXT: W a[o * n + j] : non-affine: subscript multiplies two non-constant terms ('o * n'){{$}}
-    // CHECK-NEXT: safety     : UNSAFE{{$}}
-    // CHECK: - array access not indexed by the induction variable alone: 'a[o * n + j]'{{$}}
+    // CHECK-NEXT: safety     : UNKNOWN{{$}}
+    // CHECK: - cannot test W a[o * n + j]: W a[o * n + j] is non-affine (subscript multiplies two non-constant terms ('o * n')){{$}}
+    // CHECK: deps       : 1 pair(s), 0 independent{{$}}
     // CHECK: profitability : SEQUENTIAL{{$}}
     for (int j = ({
            int s = 0;
            // depth 1, parent = the o loop (not the j loop). ivs: o, k
-           // CHECK: nests.c:[[#LOOP24:@LINE+9]]:12{{$}}
+           // CHECK: nests.c:[[#LOOP24:@LINE+10]]:12{{$}}
            // CHECK: kind       : CONSTANT_BOUND{{$}}
            // CHECK: trip count : 4{{$}}
            // CHECK: nest       : depth 1, parent [[#LOOP22]]:3, 0 child loop(s){{$}}
@@ -386,6 +395,7 @@ void loop_in_init_clause(double *a, int n) {
            // CHECK: accesses   : 0 (0 affine){{$}}
            // CHECK-NEXT: safety     : UNSAFE{{$}}
            // CHECK: - loop-carried dependence: writes to 's', which is not declared inside the loop body{{$}}
+           // CHECK: deps       : 0 pair(s), 0 independent{{$}}
            // CHECK: profitability : SEQUENTIAL{{$}}
            for (int k = 0; k < 4; k++)
              s += k;
@@ -399,7 +409,7 @@ void loop_in_init_clause(double *a, int n) {
 // --- A loop in a called function is not a child ------------------------------
 static void callee_with_loop(double *row, int n) {
   // depth 0: lexically outside any loop, even though it runs inside one
-  // CHECK: nests.c:[[#LOOP25:@LINE+9]]:3{{$}}
+  // CHECK: nests.c:[[#LOOP25:@LINE+10]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
@@ -407,6 +417,7 @@ static void callee_with_loop(double *row, int n) {
   // CHECK: accesses   : 1 (1 affine){{$}}
   // CHECK-NEXT: W row[j] : [j]{{$}}
   // CHECK-NEXT: safety     : SAFE{{$}}
+  // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
   // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
   for (int j = 0; j < n; j++)
     row[j] = 11.0;
@@ -414,7 +425,7 @@ static void callee_with_loop(double *row, int n) {
 
 void caller(double *a, int n) {
   // depth 0, 0 children: the callee's loop is not lexically nested here
-  // CHECK: nests.c:[[#LOOP26:@LINE+11]]:3{{$}}
+  // CHECK: nests.c:[[#LOOP26:@LINE+12]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
@@ -424,6 +435,7 @@ void caller(double *a, int n) {
   // CHECK-NEXT: & a[i * n] : non-affine: subscript multiplies two non-constant terms ('i * n'){{$}}
   // CHECK-NEXT: safety     : UNSAFE{{$}}
   // CHECK: - 'callee_with_loop' writes through pointer parameter 'row'{{$}}
+  // CHECK: deps       : 0 pair(s), 0 independent{{$}}
   // CHECK: profitability : SEQUENTIAL{{$}}
   for (int i = 0; i < n; i++)
     callee_with_loop(&a[i * n], n);
@@ -449,7 +461,7 @@ void loop_in_cond_clause(double *a, int n) {
   for (int j = 0; j < ({
                     int s = 0;
                     // depth 0, INSIDE WHILE/DO OR A LOOP HEADER (re-run per j)
-                    // CHECK: nests.c:[[#LOOP28:@LINE+9]]:21{{$}}
+                    // CHECK: nests.c:[[#LOOP28:@LINE+10]]:21{{$}}
                     // CHECK: kind       : CONSTANT_BOUND{{$}}
                     // CHECK: trip count : 2{{$}}
                     // CHECK: nest       : depth 0, 0 child loop(s), inside while/do or a loop header{{$}}
@@ -457,6 +469,7 @@ void loop_in_cond_clause(double *a, int n) {
                     // CHECK: accesses   : 0 (0 affine){{$}}
                     // CHECK-NEXT: safety     : UNSAFE{{$}}
                     // CHECK: - loop-carried dependence: writes to 's', which is not declared inside the loop body{{$}}
+                    // CHECK: deps       : 0 pair(s), 0 independent{{$}}
                     // CHECK: profitability : SEQUENTIAL{{$}}
                     for (int k = 0; k < 2; k++)
                       s += k;
@@ -472,7 +485,7 @@ void loop_in_while_cond(double *a, int n) {
   while (({
     int s = 0;
     // depth 0, INSIDE WHILE/DO OR A LOOP HEADER
-    // CHECK: nests.c:[[#LOOP29:@LINE+9]]:5{{$}}
+    // CHECK: nests.c:[[#LOOP29:@LINE+10]]:5{{$}}
     // CHECK: kind       : CONSTANT_BOUND{{$}}
     // CHECK: trip count : 2{{$}}
     // CHECK: nest       : depth 0, 0 child loop(s), inside while/do or a loop header{{$}}
@@ -480,6 +493,7 @@ void loop_in_while_cond(double *a, int n) {
     // CHECK: accesses   : 0 (0 affine){{$}}
     // CHECK-NEXT: safety     : UNSAFE{{$}}
     // CHECK: - loop-carried dependence: writes to 's', which is not declared inside the loop body{{$}}
+    // CHECK: deps       : 0 pair(s), 0 independent{{$}}
     // CHECK: profitability : SEQUENTIAL{{$}}
     for (int k = 0; k < 2; k++)
       s += k;
@@ -492,7 +506,7 @@ void loop_in_while_cond(double *a, int n) {
 // the inner i, not the outer one, so it is NOT triangular.
 void shadowing(double *a, int n) {
   // depth 0, 1 child, perfect
-  // CHECK: nests.c:[[#LOOP30:@LINE+10]]:3{{$}}
+  // CHECK: nests.c:[[#LOOP30:@LINE+11]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 1 child loop(s), perfect nest{{$}}
@@ -500,11 +514,12 @@ void shadowing(double *a, int n) {
   // CHECK: accesses   : 1 (1 affine){{$}}
   // CHECK-NEXT: W a[i] : [i]{{$}}
   // CHECK-NEXT: safety     : UNSAFE{{$}}
-  // CHECK: - array access not indexed by the induction variable alone: 'a[i]'{{$}}
+  // CHECK: - W a[i]: every iteration touches the same element{{$}}
+  // CHECK: deps       : 1 pair(s), 0 independent{{$}}
   // CHECK: profitability : SEQUENTIAL{{$}}
   for (int i = 0; i < n; i++)
     // depth 1, NOT triangular. ivs: i, i (two different variables both named i)
-    // CHECK: nests.c:[[#LOOP31:@LINE+9]]:5{{$}}
+    // CHECK: nests.c:[[#LOOP31:@LINE+10]]:5{{$}}
     // CHECK: kind       : VARIABLE_BOUND{{$}}
     // CHECK: trip count : <not statically known>{{$}}
     // CHECK: nest       : depth 1, parent [[#LOOP30]]:3, 0 child loop(s){{$}}
@@ -512,6 +527,7 @@ void shadowing(double *a, int n) {
     // CHECK: accesses   : 1 (1 affine){{$}}
     // CHECK-NEXT: W a[i] : [i]{{$}}
     // CHECK-NEXT: safety     : SAFE{{$}}
+    // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
     // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
     for (int i = 0; i < n; i++)
       a[i] = 14.0;
@@ -520,15 +536,16 @@ void shadowing(double *a, int n) {
 // Recognized -> unrecognized -> recognized.
 void rec_unrec_rec(double *a, int n) {
   // depth 0, 1 child, perfect. ivs: i
-  // CHECK: nests.c:[[#LOOP32:@LINE+10]]:3{{$}}
+  // CHECK: nests.c:[[#LOOP32:@LINE+11]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 1 child loop(s), perfect nest{{$}}
   // CHECK: nest ivs   : i{{$}}
   // CHECK: accesses   : 1 (1 affine){{$}}
   // CHECK-NEXT: W a[k] : [k]{{$}}
-  // CHECK-NEXT: safety     : UNSAFE{{$}}
-  // CHECK: - array access not indexed by the induction variable alone: 'a[k]'{{$}}
+  // CHECK-NEXT: safety     : UNKNOWN{{$}}
+  // CHECK: - could not prove W a[k] independent{{$}}
+  // CHECK: deps       : 1 pair(s), 0 independent{{$}}
   // CHECK: profitability : SEQUENTIAL{{$}}
   for (int i = 0; i < n; i++)
     // UNRECOGNIZED, depth 1, 1 child, perfect. ivs: i (its own j is not trusted)
@@ -545,7 +562,7 @@ void rec_unrec_rec(double *a, int n) {
     for (int j = 1; j < n; j *= 2)
       // depth 2, INSIDE AN UNRECOGNIZED LOOP, TRIANGULAR (bound uses the
       // trusted outer i). ivs: i, k
-      // CHECK: nests.c:[[#LOOP34:@LINE+9]]:7{{$}}
+      // CHECK: nests.c:[[#LOOP34:@LINE+10]]:7{{$}}
       // CHECK: kind       : VARIABLE_BOUND{{$}}
       // CHECK: trip count : <not statically known>{{$}}
       // CHECK: nest       : depth 2, parent [[#LOOP33]]:5, 0 child loop(s), triangular, inside an unrecognized loop{{$}}
@@ -553,6 +570,7 @@ void rec_unrec_rec(double *a, int n) {
       // CHECK: accesses   : 1 (1 affine){{$}}
       // CHECK-NEXT: W a[k] : [k]{{$}}
       // CHECK-NEXT: safety     : SAFE{{$}}
+      // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
       // CHECK: profitability : CPU_PARALLEL if (i >= {{[0-9]+}}){{$}}
       for (int k = 0; k < i; k++)
         a[k] = 15.0;
@@ -568,9 +586,9 @@ void pragma_body(double *a, int n) {
   // CHECK: nest ivs   : i{{$}}
   // CHECK: accesses   : 1 (1 affine){{$}}
   // CHECK-NEXT: W a[i * n + j] : [i][j] delinearized, dims [?][n]{{$}}
-  // CHECK-NEXT: safety     : UNSAFE{{$}}
-  // CHECK: - array access not indexed by the induction variable alone: 'a[i * n + j]'{{$}}
-  // CHECK: profitability : SEQUENTIAL{{$}}
+  // CHECK-NEXT: safety     : SAFE{{$}}
+  // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
+  // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
   for (int i = 0; i < n; i++) {
 #pragma clang loop unroll(disable)
     // depth 1, parent = outer
@@ -581,9 +599,9 @@ void pragma_body(double *a, int n) {
     // CHECK: nest ivs   : i, j{{$}}
     // CHECK: accesses   : 1 (1 affine){{$}}
     // CHECK-NEXT: W a[i * n + j] : [i][j] delinearized, dims [?][n]{{$}}
-    // CHECK-NEXT: safety     : UNSAFE{{$}}
-    // CHECK: - array access not indexed by the induction variable alone: 'a[i * n + j]'{{$}}
-    // CHECK: profitability : SEQUENTIAL{{$}}
+    // CHECK-NEXT: safety     : SAFE{{$}}
+    // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
+    // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
     for (int j = 0; j < n; j++)
       a[i * n + j] = 16.0;
   }
@@ -599,9 +617,9 @@ void double_braces(double *a, int n) {
   // CHECK: nest ivs   : i{{$}}
   // CHECK: accesses   : 1 (1 affine){{$}}
   // CHECK-NEXT: W a[i * n + j] : [i][j] delinearized, dims [?][n]{{$}}
-  // CHECK-NEXT: safety     : UNSAFE{{$}}
-  // CHECK: - array access not indexed by the induction variable alone: 'a[i * n + j]'{{$}}
-  // CHECK: profitability : SEQUENTIAL{{$}}
+  // CHECK-NEXT: safety     : SAFE{{$}}
+  // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
+  // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
   for (int i = 0; i < n; i++) {
     {
       // depth 1, parent = outer
@@ -612,9 +630,9 @@ void double_braces(double *a, int n) {
       // CHECK: nest ivs   : i, j{{$}}
       // CHECK: accesses   : 1 (1 affine){{$}}
       // CHECK-NEXT: W a[i * n + j] : [i][j] delinearized, dims [?][n]{{$}}
-      // CHECK-NEXT: safety     : UNSAFE{{$}}
-      // CHECK: - array access not indexed by the induction variable alone: 'a[i * n + j]'{{$}}
-      // CHECK: profitability : SEQUENTIAL{{$}}
+      // CHECK-NEXT: safety     : SAFE{{$}}
+      // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
+      // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
       for (int j = 0; j < n; j++)
         a[i * n + j] = 17.0;
     }
@@ -631,9 +649,9 @@ void labelled_inner(double *a, int n) {
   // CHECK: nest ivs   : i{{$}}
   // CHECK: accesses   : 1 (1 affine){{$}}
   // CHECK-NEXT: W a[i * n + j] : [i][j] delinearized, dims [?][n]{{$}}
-  // CHECK-NEXT: safety     : UNSAFE{{$}}
-  // CHECK: - array access not indexed by the induction variable alone: 'a[i * n + j]'{{$}}
-  // CHECK: profitability : SEQUENTIAL{{$}}
+  // CHECK-NEXT: safety     : SAFE{{$}}
+  // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
+  // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
   for (int i = 0; i < n; i++) {
   inner:
     // depth 1, parent = outer
@@ -644,9 +662,9 @@ void labelled_inner(double *a, int n) {
     // CHECK: nest ivs   : i, j{{$}}
     // CHECK: accesses   : 1 (1 affine){{$}}
     // CHECK-NEXT: W a[i * n + j] : [i][j] delinearized, dims [?][n]{{$}}
-    // CHECK-NEXT: safety     : UNSAFE{{$}}
-    // CHECK: - array access not indexed by the induction variable alone: 'a[i * n + j]'{{$}}
-    // CHECK: profitability : SEQUENTIAL{{$}}
+    // CHECK-NEXT: safety     : SAFE{{$}}
+    // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
+    // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
     for (int j = 0; j < n; j++)
       a[i * n + j] = 18.0;
   }
@@ -663,9 +681,9 @@ void sizeof_bound(double (*m)[4], int n) {
   // CHECK: nest ivs   : i{{$}}
   // CHECK: accesses   : 1 (1 affine){{$}}
   // CHECK-NEXT: W m[i][j] : [i][j]{{$}}
-  // CHECK-NEXT: safety     : UNSAFE{{$}}
-  // CHECK: - array access not indexed by the induction variable alone: 'm[i][j]'{{$}}
-  // CHECK: profitability : SEQUENTIAL{{$}}
+  // CHECK-NEXT: safety     : SAFE{{$}}
+  // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
+  // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
   for (int i = 0; i < n; i++)
     // CONSTANT_BOUND, trip 4, NOT triangular
     // CHECK: nests.c:[[#LOOP42:@LINE+10]]:5{{$}}
@@ -675,8 +693,8 @@ void sizeof_bound(double (*m)[4], int n) {
     // CHECK: nest ivs   : i, j{{$}}
     // CHECK: accesses   : 1 (1 affine){{$}}
     // CHECK-NEXT: W m[i][j] : [i][j]{{$}}
-    // CHECK-NEXT: safety     : UNSAFE{{$}}
-    // CHECK: - array access not indexed by the induction variable alone: 'm[i]'{{$}}
+    // CHECK-NEXT: safety     : SAFE{{$}}
+    // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
     // CHECK: profitability : SEQUENTIAL{{$}}
     for (int j = 0; j < (int)(sizeof(m[i]) / sizeof(double)); j++)
       m[i][j] = 19.0;
