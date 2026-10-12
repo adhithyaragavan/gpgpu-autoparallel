@@ -158,7 +158,7 @@ static void accumulate(double *out, double v) {
 }
 
 void unsafe_pointer_param_write(double *data, int n, double *total) {
-  // CHECK: safety_cases.c:[[#LOOP5:@LINE+13]]:3{{$}}
+  // CHECK: safety_cases.c:[[#LOOP5:@LINE+14]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
@@ -170,6 +170,7 @@ void unsafe_pointer_param_write(double *data, int n, double *total) {
   // CHECK-NEXT: safety     : UNSAFE{{$}}
   // CHECK: - RW accumulate(): *out: every iteration touches the same element{{$}}
   // CHECK: deps       : 1 pair(s), 0 independent{{$}}
+  // CHECK: alias      : 'data' and 'total' may overlap: checked at run time{{$}}
   // CHECK: profitability : SEQUENTIAL{{$}}
   for (int i = 0; i < n; i++) {
     accumulate(total, data[i]);
@@ -224,7 +225,7 @@ void unsafe_neighbor_access(double *data, int n) {
 // UNSAFE — scatter access: the index into `data` is itself data-dependent,
 // so which element each iteration touches cannot be determined statically.
 void unsafe_scatter_write(double *data, const int *idx, int n) {
-  // CHECK: safety_cases.c:[[#LOOP8:@LINE+12]]:3{{$}}
+  // CHECK: safety_cases.c:[[#LOOP8:@LINE+13]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
@@ -235,6 +236,7 @@ void unsafe_scatter_write(double *data, const int *idx, int n) {
   // CHECK-NEXT: safety     : UNKNOWN{{$}}
   // CHECK: - cannot test W data[idx[i]]: W data[idx[i]] is non-affine (subscript reads memory ('idx[i]')){{$}}
   // CHECK: deps       : 1 pair(s), 0 independent{{$}}
+  // CHECK: alias      : 'data' and 'idx' can't overlap (incompatible element types){{$}}
   // CHECK: profitability : SEQUENTIAL{{$}}
   for (int i = 0; i < n; i++) {
     data[idx[i]] = 0.0;

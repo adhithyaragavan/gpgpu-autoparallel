@@ -160,7 +160,7 @@ for name in "${BENCHMARKS[@]}"; do
   # flags, an older commit, a benchmark that used to annotate) would be
   # silently treated as this run's output below.
   rm -f "$omp_src"
-  if "$TOOL" --rewrite -o "$omp_src" "$src" -- "${SYSROOT_ARGS[@]}" >"$report" 2>&1; then
+  if "$TOOL" --rewrite --whole-program -o "$omp_src" "$src" -- "${SYSROOT_ARGS[@]}" >"$report" 2>&1; then
     record "$name" "regenerate" "PASS"
   else
     record "$name" "regenerate" "FAIL (p05tool exited nonzero; see $report)"
@@ -411,7 +411,7 @@ for name in "${BENCHMARKS[@]}"; do
   # only writes -o's target when it has something to annotate, it never
   # truncates a pre-existing file there.
   rm -f "$naive_src"
-  if "$TOOL" --rewrite --policy=naive -o "$naive_src" "$src" -- "${SYSROOT_ARGS[@]}" >"$naive_report" 2>&1; then
+  if "$TOOL" --rewrite --policy=naive --whole-program -o "$naive_src" "$src" -- "${SYSROOT_ARGS[@]}" >"$naive_report" 2>&1; then
     record "$name" "naive-regenerate" "PASS"
   else
     record "$name" "naive-regenerate" "FAIL (p05tool exited nonzero; see $naive_report)"

@@ -19,7 +19,7 @@ static void set1(long *p, long v) { p[1] = v + p[0]; }
 
 // SAFE: set0(&a[i]) writes a[i].
 void s_elem(long *a, const long *b, int n) {
-  // CHECK: summaries.c:[[#LOOP0:@LINE+12]]:3{{$}}
+  // CHECK: summaries.c:[[#LOOP0:@LINE+14]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
@@ -30,6 +30,8 @@ void s_elem(long *a, const long *b, int n) {
   // CHECK-NEXT: W set0(): p[0] : [i] of 'a'{{$}}
   // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
+  // CHECK: alias      : 'b' and 'a' may overlap: checked at run time{{$}}
+  // CHECK: alias guard: ((__INTPTR_TYPE__)b + 8 * ((__INTPTR_TYPE__)(n - 1) + 1) <= (__INTPTR_TYPE__)a + 0 || (__INTPTR_TYPE__)a + 8 * ((__INTPTR_TYPE__)(n - 1) + 1) <= (__INTPTR_TYPE__)b + 0){{$}}
   // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
   for (int i = 0; i < n; i++)
     set0(&a[i], b[i]);
@@ -61,7 +63,7 @@ static void put_next(long *p, int k) { p[k + 1] = p[k] * 2; }
 
 // SAFE: put(a, i) writes a[i].
 void s_index(long *a, const long *b, int n) {
-  // CHECK: summaries.c:[[#LOOP2:@LINE+12]]:3{{$}}
+  // CHECK: summaries.c:[[#LOOP2:@LINE+14]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
@@ -72,6 +74,8 @@ void s_index(long *a, const long *b, int n) {
   // CHECK-NEXT: W put(): p[k] : [i] of 'a'{{$}}
   // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
+  // CHECK: alias      : 'b' and 'a' may overlap: checked at run time{{$}}
+  // CHECK: alias guard: ((__INTPTR_TYPE__)b + 8 * ((__INTPTR_TYPE__)(n - 1) + 1) <= (__INTPTR_TYPE__)a + 0 || (__INTPTR_TYPE__)a + 8 * ((__INTPTR_TYPE__)(n - 1) + 1) <= (__INTPTR_TYPE__)b + 0){{$}}
   // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
   for (int i = 0; i < n; i++)
     put(a, i, b[i] + 1);
@@ -98,7 +102,7 @@ void u_index_next(long *a, int n) {
 
 // SAFE: two calls, even and odd elements.
 void s_two_calls(long *a, const long *b, int n) {
-  // CHECK: summaries.c:[[#LOOP4:@LINE+14]]:3{{$}}
+  // CHECK: summaries.c:[[#LOOP4:@LINE+16]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
@@ -111,6 +115,8 @@ void s_two_calls(long *a, const long *b, int n) {
   // CHECK-NEXT: W put(): p[k] : [2*i + 1] of 'a'{{$}}
   // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: deps       : 3 pair(s), 3 independent (1 GCD, 2 SIV){{$}}
+  // CHECK: alias      : 'b' and 'a' may overlap: checked at run time{{$}}
+  // CHECK: alias guard: ((__INTPTR_TYPE__)b + 8 * ((__INTPTR_TYPE__)(n - 1) + 1) <= (__INTPTR_TYPE__)a + 0 || (__INTPTR_TYPE__)a + 8 * ((__INTPTR_TYPE__)(2*n - 1) + 1) <= (__INTPTR_TYPE__)b + 0){{$}}
   // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
   for (int i = 0; i < n; i++) {
     put(a, 2 * i, b[i]);
@@ -121,7 +127,7 @@ void s_two_calls(long *a, const long *b, int n) {
 // UNSAFE: the second call writes the element the first one writes one
 // iteration later.
 void u_two_calls(long *a, const long *b, int n) {
-  // CHECK: summaries.c:[[#LOOP5:@LINE+15]]:3{{$}}
+  // CHECK: summaries.c:[[#LOOP5:@LINE+16]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
@@ -135,6 +141,7 @@ void u_two_calls(long *a, const long *b, int n) {
   // CHECK-NEXT: safety     : UNSAFE{{$}}
   // CHECK: - W put(): p[k] and W put(): p[k]: the same element is touched 1 iteration(s) apart{{$}}
   // CHECK: deps       : 3 pair(s), 2 independent (2 SIV){{$}}
+  // CHECK: alias      : 'b' and 'a' may overlap: checked at run time{{$}}
   // CHECK: profitability : SEQUENTIAL{{$}}
   for (int i = 0; i < n; i++) {
     put(a, 2 * i, b[i]);
@@ -276,7 +283,7 @@ static void bump_next_from(long *q) { bump(q + 1, q[0]); }
 
 // SAFE: bump_next(&a[i]) -> bump(&a[i + 1]): one element per iteration.
 void s_transitive(long *a, const long *b, int n) {
-  // CHECK: summaries.c:[[#LOOP14:@LINE+12]]:3{{$}}
+  // CHECK: summaries.c:[[#LOOP14:@LINE+14]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
@@ -287,6 +294,8 @@ void s_transitive(long *a, const long *b, int n) {
   // CHECK-NEXT: RW bump_next(): bump(): p[0] : [i + 1] of 'a'{{$}}
   // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
+  // CHECK: alias      : 'b' and 'a' may overlap: checked at run time{{$}}
+  // CHECK: alias guard: ((__INTPTR_TYPE__)b + 8 * ((__INTPTR_TYPE__)(n - 2) + 1) <= (__INTPTR_TYPE__)a + 8 || (__INTPTR_TYPE__)a + 8 * ((__INTPTR_TYPE__)(n - 1) + 1) <= (__INTPTR_TYPE__)b + 0){{$}}
   // CHECK: profitability : CPU_PARALLEL if (n - 1 >= {{[0-9]+}}){{$}}
   for (int i = 0; i < n - 1; i++)
     bump_next(&a[i], b[i]);
@@ -319,7 +328,7 @@ static void g_tick(void) { g_count++; }
 
 // SAFE: g_put(i) writes g_tab[i] (callers keep n <= NG).
 void s_global_elem(const long *b, int n) {
-  // CHECK: summaries.c:[[#LOOP16:@LINE+12]]:3{{$}}
+  // CHECK: summaries.c:[[#LOOP16:@LINE+14]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
@@ -330,6 +339,8 @@ void s_global_elem(const long *b, int n) {
   // CHECK-NEXT: W g_put(): g_tab[k] : [i] of 'g_tab'{{$}}
   // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
+  // CHECK: alias      : 'b' and 'g_tab' may overlap: checked at run time{{$}}
+  // CHECK: alias guard: ((__INTPTR_TYPE__)b + 8 * ((__INTPTR_TYPE__)(n - 1) + 1) <= (__INTPTR_TYPE__)g_tab + 0 || (__INTPTR_TYPE__)g_tab + 8 * ((__INTPTR_TYPE__)(n - 1) + 1) <= (__INTPTR_TYPE__)b + 0){{$}}
   // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
   for (int i = 0; i < n; i++)
     g_put(i, b[i]);
@@ -337,7 +348,7 @@ void s_global_elem(const long *b, int n) {
 
 // UNSAFE: every iteration adds into g_tab[0].
 void u_global_same(const long *b, int n) {
-  // CHECK: summaries.c:[[#LOOP17:@LINE+13]]:3{{$}}
+  // CHECK: summaries.c:[[#LOOP17:@LINE+14]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
@@ -349,6 +360,7 @@ void u_global_same(const long *b, int n) {
   // CHECK-NEXT: safety     : UNSAFE{{$}}
   // CHECK: - RW g_add0(): g_tab[0]: every iteration touches the same element{{$}}
   // CHECK: deps       : 1 pair(s), 0 independent{{$}}
+  // CHECK: alias      : 'b' and 'g_tab' may overlap: checked at run time{{$}}
   // CHECK: profitability : SEQUENTIAL{{$}}
   for (int i = 0; i < n; i++)
     g_add0(b[i]);
@@ -356,7 +368,7 @@ void u_global_same(const long *b, int n) {
 
 // UNSAFE: a global scalar written by name.
 void u_global_scalar(long *a, int n) {
-  // CHECK: summaries.c:[[#LOOP18:@LINE+12]]:3{{$}}
+  // CHECK: summaries.c:[[#LOOP18:@LINE+13]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
@@ -367,6 +379,7 @@ void u_global_scalar(long *a, int n) {
   // CHECK-NEXT: safety     : UNSAFE{{$}}
   // CHECK: - 'g_tick' writes global 'g_count'{{$}}
   // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
+  // CHECK: alias      : 'a' and 'g_count' may overlap: checked at run time{{$}}
   // CHECK: profitability : SEQUENTIAL{{$}}
   for (int i = 0; i < n; i++) {
     a[i] = i;
@@ -378,7 +391,7 @@ void u_global_scalar(long *a, int n) {
 
 // SAFE: t is declared in the loop, so every iteration has its own.
 void s_addr_private(long *a, const long *b, int n) {
-  // CHECK: summaries.c:[[#LOOP19:@LINE+13]]:3{{$}}
+  // CHECK: summaries.c:[[#LOOP19:@LINE+15]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
@@ -390,6 +403,8 @@ void s_addr_private(long *a, const long *b, int n) {
   // CHECK-NEXT: RW bump(): p[0] : [0] of 't'{{$}}
   // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: deps       : 1 pair(s), 1 independent (1 SIV); 1 on loop-private arrays skipped{{$}}
+  // CHECK: alias      : 'b' and 'a' may overlap: checked at run time{{$}}
+  // CHECK: alias guard: ((__INTPTR_TYPE__)b + 8 * ((__INTPTR_TYPE__)(n - 1) + 1) <= (__INTPTR_TYPE__)a + 0 || (__INTPTR_TYPE__)a + 8 * ((__INTPTR_TYPE__)(n - 1) + 1) <= (__INTPTR_TYPE__)b + 0){{$}}
   // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
   for (int i = 0; i < n; i++) {
     long t = 0;
@@ -492,7 +507,7 @@ void k_recursive(long *a, int n) {
 
 // UNKNOWN: indirect subscript inside the callee.
 void k_indirect(long *a, const int *idx, int n) {
-  // CHECK: summaries.c:[[#LOOP24:@LINE+13]]:3{{$}}
+  // CHECK: summaries.c:[[#LOOP24:@LINE+14]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
@@ -504,6 +519,7 @@ void k_indirect(long *a, const int *idx, int n) {
   // CHECK-NEXT: safety     : UNKNOWN{{$}}
   // CHECK: - cannot test W through_idx(): p[idx[k]]: W through_idx(): p[idx[k]] is non-affine (subscript reads memory ('idx[k]')){{$}}
   // CHECK: deps       : 1 pair(s), 0 independent{{$}}
+  // CHECK: alias      : 'a' and 'idx' can't overlap (incompatible element types){{$}}
   // CHECK: profitability : SEQUENTIAL{{$}}
   for (int i = 0; i < n; i++)
     through_idx(a, idx, i);
@@ -529,7 +545,7 @@ void k_reassigned_param(long *a, int n) {
 
 // UNKNOWN: the callee indexes with a global the loop could change.
 void k_global_subscript(long *a, int n) {
-  // CHECK: summaries.c:[[#LOOP26:@LINE+13]]:3{{$}}
+  // CHECK: summaries.c:[[#LOOP26:@LINE+14]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
@@ -541,6 +557,7 @@ void k_global_subscript(long *a, int n) {
   // CHECK-NEXT: safety     : UNKNOWN{{$}}
   // CHECK: - cannot test W a[i] and W at_global_off(): p[g_off]: W at_global_off(): p[g_off] is non-affine ('at_global_off' indexes with 'g_off', which is not one of its parameters (the loop could change it between calls)){{$}}
   // CHECK: deps       : 3 pair(s), 1 independent (1 SIV){{$}}
+  // CHECK: alias      : 'a' and 'g_off' can't overlap (incompatible element types){{$}}
   // CHECK: profitability : SEQUENTIAL{{$}}
   for (int i = 0; i < n; i++) {
     a[i] = 2;

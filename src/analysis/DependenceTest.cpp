@@ -328,7 +328,7 @@ bool exactlyRootIV(const ArrayAccess &X, const LoopAccesses &A) {
   // Subscript syntax only: the map regions are collected from `a[i]`
   // expressions (Profitability.cpp's RegionVisitor), not from `*(a + i)`.
   if (!X.Base || !X.Affine || X.Subscripts.size() != 1 || X.Delinearized ||
-      X.BaseSubstituted || !llvm::isa<clang::ArraySubscriptExpr>(X.E))
+      X.BaseSubstituted || !llvm::isa_and_nonnull<clang::ArraySubscriptExpr>(X.E))
     return false;
   const AffineExpr &S = X.Subscripts[0];
   return S.SymTerms.empty() && S.Const == 0 && S.IVTerms.size() == 1 &&
@@ -337,7 +337,52 @@ bool exactlyRootIV(const ArrayAccess &X, const LoopAccesses &A) {
 
 } // namespace
 
-LoopDependence testLoopDependences(const LoopAccesses &A, int64_t RootStep) {
+llvm::StringRef toString(AliasProof P) {
+  switch (P) {
+  case AliasProof::Distinct:
+    return "distinct objects";
+  case AliasProof::Types:
+    return "incompatible element types";
+  case AliasProof::Restrict:
+    return "restrict";
+  case AliasProof::Callers:
+    return "every call passes disjoint objects";
+  case AliasProof::Unproven:
+    return "unproven";
+  }
+  return "unproven";
+}
+
+bool subscriptBounds(const AffineExpr &S, const LoopAccesses &A,
+                     AffineExpr &Lo, AffineExpr &Hi) {
+  Extreme Min, Max;
+  for (Extreme *X : {&Min, &Max}) {
+    const bool WantMax = X == &Max;
+    AffineExpr Fixed;
+    Fixed.SymTerms = S.SymTerms;
+    Fixed.Const = S.Const;
+    X->add(Fixed, 1);
+    for (const auto &[V, C] : S.IVTerms) {
+      if (std::find(A.OuterIVs.begin(), A.OuterIVs.end(), V) !=
+          A.OuterIVs.end()) {
+        AffineExpr T;
+        T.IVTerms[V] = C;
+        X->add(T, 1);
+        continue;
+      }
+      IVRange R = usableRange(A, V);
+      X->addTerm(C, R.Lo, R.Hi, WantMax);
+    }
+  }
+  if (Min.Inf || Max.Inf)
+    return false;
+  Lo = Min.E;
+  Hi = Max.E;
+  return true;
+}
+
+LoopDependence testLoopDependences(const LoopAccesses &A, int64_t RootStep,
+                                   const AliasOracle *Alias) {
   LoopDependence D;
   auto Note = [&D](DepOutcome O, std::string Reason) {
     if (O > D.Outcome)
@@ -437,6 +482,16 @@ LoopDependence testLoopDependences(const LoopAccesses &A, int64_t RootStep) {
                    "' is a pointer that may point into '" +
                    (X.BaseMayAlias ? Y : X).Base->getNameAsString() +
                    "' (" + describe(X) + ", " + describe(Y) + ")");
+          continue;
+        }
+        if (Alias) {
+          const AliasProof P = (*Alias)(X.Base, Y.Base);
+          if (P != AliasProof::Distinct &&
+              llvm::none_of(D.AliasPairs, [&](const AliasPair &Q) {
+                return (Q.A == X.Base && Q.B == Y.Base) ||
+                       (Q.A == Y.Base && Q.B == X.Base);
+              }))
+            D.AliasPairs.push_back({X.Base, Y.Base, P});
         }
         continue;
       }

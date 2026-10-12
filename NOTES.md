@@ -2149,3 +2149,125 @@ and run in its runtime driver.
   and -O0.
 - Both reproducers are UNKNOWN.
 - Fuzz seeds 1–15 and 300–339: no false SAFE.
+
+### 2026-10-13 — Phase 1.6: aliasing made explicit instead of assumed
+
+**Decision:** New `src/analysis/AliasAnalysis.{h,cpp}` removes the soundness hole documented in
+`SafetyAnalysis.h` since Week 2. Accesses through two differently named bases used to be assumed
+disjoint. `f(long *a, const long *b)` writing `a[i] = b[i + 1]` was SAFE, yet with `b == a` it is
+`a[i] = a[i + 1]`. Now DependenceTest asks an oracle about every pair of differently named bases
+where one is written:
+- **Distinct:** two named objects; a pointer parameter against this call's own automatic objects; a
+  `const` object; or a static/global object whose address never escapes, meaning every use reads,
+  writes or directly subscripts it by name. This counts only when all uses are visible: a static
+  local, a `static` global, or any global under `-whole-program`.
+- **Types:** element types that C's strict-aliasing rule keeps apart (never char, void or records).
+  This is the same assumption AffineAccess already makes.
+- **Restrict:** either base is a `restrict` pointer parameter.
+- **Callers:** every call of the function passes disjoint objects. Callers' own parameters are
+  proven the same way, up to 3 levels. This needs all calls visible: the function is `static` (or
+  `-whole-program` is given), its address is never taken, and the calls are prototyped.
+- **Unproven:** the tool builds a run-time check that the byte ranges the loop touches through the
+  two bases don't overlap.
+  - Each subscript's extremes come from the loop's and inner loops' ranges (`subscriptBounds`, the
+    same arithmetic as Banerjee). Multi-dimensional and delinearized accesses are linearized with
+    their row lengths.
+  - The test is integer arithmetic on `__INTPTR_TYPE__`, so it forms no out-of-bounds pointer and
+    compares no pointers across objects.
+  - It is conjoined into `if(parallel: ...)` under every policy. A false check runs the loop on one
+    thread.
+  - If no range can be computed, the loop is UNKNOWN.
+
+A pointer parameter can also point at a global the loop reads by name, so non-array, non-const
+globals read in the loop or in a reachable callee join the accesses as one-element reads.
+
+**User decisions (2026-10-13):**
+- GPU offload needs a static proof. A runtime-checked loop stays on the host: a false `if(target:)`
+  still runs teams/parallel on the host, and overlapping arrays can't be mapped as separate regions.
+- The caller proof covers only `static` functions, unless `-whole-program` says no other TU calls
+  this file's functions.
+  - `scripts/build_and_run.sh` passes `-whole-program`, because the benchmarks are complete programs.
+  - So do the RUN lines of `profitability_cases.c` and `interlock.c`, to keep their GPU coverage.
+- `-alias=assume` keeps the old assumption as the ablation baseline. It is byte-identical to `70764bd`
+  on all 16 fixtures and benchmarks.
+
+**Fixture changes:**
+- Lines added only. The generator now pins `alias :` and `alias guard:` (the field regex needed
+  `\s*`).
+- Across the old fixtures: 35 pairs checked at run time, 14 proven by callers, 11 by element types.
+- With `-whole-program`, every verdict in the benchmarks and GPU fixtures equals HEAD's.
+- One loop was briefly SAFE → UNKNOWN (`dependence.c`, a `static double t[64]` declared in the loop
+  body). It is SAFE again through the escape rule, because `t` is only ever subscripted.
+
+**New fixture `tests/alias.c`:** run-time checked (two parameters, delinearized rows, a parameter
+vs a global array, a parameter vs a global scalar, a static function with one overlapping call);
+proven (restrict, element types, callers); UNKNOWN (prefix sum: the inner range depends on `i`).
+`eval/runtime/alias_main.c` calls every checked loop with **overlapping** arguments too: `b == a`,
+rows shifted by one, `p == g_arr`.
+
+**Evidence:**
+- 13 lit tests pass.
+- `check_parallel.sh` passes on alias.c, dependence.c, summaries.c (30 runs each) and scalars.c, at
+  -O2 and -O0.
+- Mutation checks: with `-alias=assume` (no guards), alias.c mismatches on run 1, and the fuzzer
+  finds 8 mismatches in seeds 1–15.
+- The fuzzer now repeats its differential run with `B == A`, `B == A + 1` and `C == B - 1`. Seeds
+  1–15 and 100–159 are clean.
+
+**Precision cost:** fuzz seeds 1–15 go from SAFE 87 to 79. The lost loops read a non-affine subscript
+(`B[i % 3]`, `A[i * n + j]`, `h_get(p, o)`) of a pointer that could be the written one. No range
+means no check, and UNKNOWN is the honest answer. Possible follow-ups: bound non-affine subscripts
+by the array's known size; check triangular ranges at their outer extremes.
+
+### 2026-10-13 — Phase 1.6 adversarial review: four wrong guards, one contract hole, fixed
+
+**Decision:** A fresh-context review found these, confirmed by runtime mismatch or compile error:
+1. **A shadowed parameter.** A base reached through a resolved local pointer (`long *x = a;` then a
+   block with its own `long *a`) was named `a` in the guard, which meant the inner local at the
+   pragma. Runtime mismatch.
+2. **A global reached only through a callee:**
+   - declared after the loop, the emitted pragma didn't compile (`use of undeclared identifier`);
+   - shadowed by an enumerator, the guard silently compared against 0. Runtime mismatch.
+3. **A global pointer read by name was sized as its pointee** (1 byte for a `char *`), not as the
+   8-byte variable. `c` legally pointing into it raced. Runtime mismatch.
+4. **`-whole-program` also made external globals "never escaping".** That is stronger than the flag's
+   contract: another TU can take `&g`.
+5. **Types proof:** `void *` against `long *`, and `const long *` against `long *`, were called
+   incompatible element types. Compilers' TBAA treats these as aliasing. Runtime mismatch.
+   `long` against `long long` overlapping is ISO undefined, but the overlap is real in practice.
+
+**Fixes:**
+- Every name a guard writes must mean its declaration just before the loop. That covers bases, the
+  symbols and enclosing-loop variables in their subscripts, row lengths, and the symbols in the used
+  ranges. Nothing else in the function (a variable, enumerator, typedef or function, in any block)
+  may share the name, and a global must have a declaration before the loop. Otherwise there is no
+  check and the loop is UNKNOWN.
+- A by-name access (no expression) is sized by the variable's own type.
+- The never-escapes proof is limited to static locals and internal-linkage globals.
+- Any two pointer element types, and integers of the same width, may alias.
+- Quality: identical non-affine guard pieces are deduplicated, and `+1` is applied after the cast to
+  `__INTPTR_TYPE__`.
+
+All review cases are pinned in `tests/alias.c` (`k_shadowed_param`, `k_late_global`,
+`k_enum_shadow`, `rt_global_ptr`, `rt_void_ptrs`, `rt_same_width`). The driver calls the
+checked ones with overlapping arguments.
+
+**Fuzzer harness bug found on the way:** the aliased differential variants reused the disjoint run's
+valid parameter combos. But aliasing changes control flow: seed 531, `C == B - 1`, took a branch
+that wrote `H[10][0]` past `H`, and that UB differed at -O2. The instrumented build now also runs
+each variant, with the aliased parameter's region set to the buffer it points into, and each variant
+is differential-tested only on its own valid runs.
+
+**Evidence:**
+- 13 lit tests pass.
+- `check_parallel.sh` passes on alias.c, dependence.c, summaries.c (30 runs) and scalars.c.
+- Without guards (`-alias=assume`), alias.c and fuzz seeds 1–15 still mismatch, so the mutation
+  checks still bite.
+- Fuzz seeds 1–15 and 500–539 are clean.
+- `-alias=assume` is byte-identical to `70764bd` on all 17 fixtures and benchmarks.
+
+**Precision losses the review noted, not fixed:**
+- A parameter reassigned before the loop is BaseMayAlias.
+- A static-local buffer can't be named in a guard.
+- `long (*a)[m]` VLA rows aren't linearized.
+- A callee loop bound by a global is unbounded.

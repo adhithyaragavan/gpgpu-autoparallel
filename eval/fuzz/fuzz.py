@@ -16,8 +16,12 @@ every loop the tool calls SAFE against ground truth:
    hashes must match. This also catches emitted pragmas that don't compile.
 
 Stated assumptions the generator respects, so the oracle tests the tool's
-analysis and not its documented assumptions: distinct pointer parameters point
-at disjoint buffers, and subscripts stay inside the object they index. A loop
+analysis and not its documented assumptions: subscripts stay inside the object
+they index, and (for the address oracle only) distinct pointer parameters point
+at disjoint buffers. The differential run also repeats every file with
+overlapping parameters (B == A, B == A + 1, C == B - 1): since Phase 1.6 a SAFE
+loop over two pointers is either proven disjoint or guarded by a run-time
+overlap check, so it must still match the sequential build. A loop
 instance during which some access leaves its object is discarded, not counted;
 only runs that never leave an object are used for the differential run.
 
@@ -501,15 +505,30 @@ static void setup(int f, int c) {
 """
 
 LOG_MAIN = COMBO_INIT + """\
-int main(void) {
+int main(int argc, char **argv) {
   rt_init();
   rt_region(RG, G, 64);
   rt_region(RH, &H[0][0], 64);
+  // Aliasing variant (as in the plain driver): the aliased parameter's
+  // accesses must stay inside the buffer it now points into, so its region
+  // becomes that buffer. Only the V (valid) lines of such a run are used.
+  int alias = argc > 1 ? atoi(argv[1]) : 0;
+  u64 *pa = PA, *pb = PB, *pc = PC;
+  if (alias == 1 || alias == 2) {
+    pb = alias == 1 ? pa : pa + 1;
+    region_lo[RB] = region_lo[RA]; region_hi[RB] = region_hi[RA];
+    region_origin[RB] = pb;
+  }
+  if (alias == 3) {
+    pc = pb - 1;
+    region_lo[RC] = region_lo[RB]; region_hi[RC] = region_hi[RB];
+    region_origin[RC] = pc;
+  }
   for (int f = 0; f < NFUNCS; f++)
     for (int c = 0; c < (int)(sizeof combos / sizeof combos[0]); c++) {
       setup(f, c);
       rt_begin(f, combos[c][0], combos[c][1], combos[c][2]);
-      fns[f](PA, PB, PC, PM, combos[c][0], combos[c][1], combos[c][2]);
+      fns[f](pa, pb, pc, PM, combos[c][0], combos[c][1], combos[c][2]);
       rt_end();
     }
   rt_finish();
@@ -523,12 +542,19 @@ PLAIN_MAIN = COMBO_INIT + """\
 int main(int argc, char **argv) {
   rt_alloc();
   FILE *in = fopen(argv[1], "r");
+  // Optional aliasing variant (Phase 1.6): 1: B == A, 2: B == A + 1,
+  // 3: C == B - 1. Every subscript a valid run uses stays inside buf.
+  int alias = argc > 2 ? atoi(argv[2]) : 0;
+  u64 *pa = PA, *pb = PB, *pc = PC;
+  if (alias == 1) pb = pa;
+  if (alias == 2) pb = pa + 1;
+  if (alias == 3) pc = pb - 1;
   int f, n, m, k;
   while (fscanf(in, "%d %d %d %d", &f, &n, &m, &k) == 4) {
     int c = 0;
     while (combos[c][0] != n || combos[c][1] != m || combos[c][2] != k) c++;
     setup(f, c);
-    u64 r = fns[f](PA, PB, PC, PM, n, m, k);
+    u64 r = fns[f](pa, pb, pc, PM, n, m, k);
     u64 h = rt_hash(1469598103934665603ULL, buf, 4 * REGION_ELEMS * sizeof(u64));
     h = rt_hash(h, G, sizeof G);
     h = rt_hash(h, H, sizeof H);
@@ -705,15 +731,42 @@ def fuzz_file(seed, nfuncs, work, tool, cc, sysroot, omp, runs, stats, failures)
         return
     stats["pragmas"] = stats.get("pragmas", 0) + open(par_src).read().count("#pragma omp")
     env = dict(os.environ, OMP_NUM_THREADS=os.environ.get("OMP_NUM_THREADS", "8"))
-    for _ in range(runs):
-        got = run([par, vfile], env=env)
-        if got.returncode != 0 or got.stdout != want:
-            bad = [a for a, b in zip(want.splitlines(), got.stdout.splitlines()) if a != b]
-            first = bad[0].split() if bad else ["?"]
-            fn = function_text(src_lines, int(first[0])) if first[0].isdigit() else ""
-            fail("mismatch", f"parallel output differs (first: f{first[0]}, n m k = "
-                             f"{' '.join(first[1:4])}; exit {got.returncode})\n{fn}")
-            break
+    # Variant 0: disjoint parameters. 1-3: overlapping ones (B == A, B == A + 1,
+    # C == B - 1), which the address oracle doesn't model: a SAFE loop whose
+    # safety rests on a run-time alias check must then run sequentially, so the
+    # parallel output must still match.
+    for variant in (0, 1, 2, 3):
+        if variant:
+            # Aliasing can change control flow, so the runs valid without it
+            # may not be: take the variant's own valid runs from the
+            # instrumented build.
+            lres = run([exe, str(variant)])
+            if lres.returncode != 0:
+                fail("harness", f"instrumented aliased run {variant} exited "
+                                f"{lres.returncode}")
+                return
+            vvalid = [" ".join(l.split()[1:]) for l in lres.stdout.splitlines()
+                      if l.startswith("V ")]
+            vfile = os.path.join(work, f"valid{variant}.txt")
+            with open(vfile, "w") as fh:
+                fh.write("\n".join(vvalid) + "\n")
+            seq_res = run([seq, vfile, str(variant)])
+            if seq_res.returncode != 0:
+                fail("harness", f"sequential aliased run {variant} exited "
+                                f"{seq_res.returncode}")
+                return
+            want = seq_res.stdout
+            stats["alias_variants"] = stats.get("alias_variants", 0) + 1
+        for _ in range(runs):
+            got = run([par, vfile] + ([str(variant)] if variant else []), env=env)
+            if got.returncode != 0 or got.stdout != want:
+                bad = [a for a, b in zip(want.splitlines(), got.stdout.splitlines()) if a != b]
+                first = bad[0].split() if bad else ["?"]
+                fn = function_text(src_lines, int(first[0])) if first[0].isdigit() else ""
+                fail("mismatch", f"parallel output differs (aliasing variant {variant}; "
+                                 f"first: f{first[0]}, n m k = "
+                                 f"{' '.join(first[1:4])}; exit {got.returncode})\n{fn}")
+                return
 
 
 def function_text(src_lines, f):

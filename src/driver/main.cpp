@@ -74,6 +74,9 @@ public:
     p05::AffineAnalyzer Affine(Context, Collector.getLoops());
     p05::ScalarAnalyzer Scalars(Context, p05::fpReductionsFromFlags());
     p05::SummaryAnalyzer Summaries(Affine);
+    p05::AliasAnalyzer Alias(Context, p05::wholeProgramFromFlags());
+    if (p05::aliasModeFromFlags() == p05::AliasMode::Check)
+      Safety.setAliasAnalyzer(&Alias);
     const bool UseSummaries =
         p05::ipaModeFromFlags() == p05::IpaMode::Summaries;
     p05::ProfitabilityAnalyzer Profitability(Resolver, Context, Machine,

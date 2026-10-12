@@ -14,7 +14,7 @@ void opaque_call(void);
 
 // W a[i] : [i]   R b[i + 1] : [i + 1]   R b[2 * i - 3] : [2*i - 3]
 void shifts(double *a, const double *b, int n) {
-  // CHECK: affine.c:[[#LOOP0:@LINE+12]]:3{{$}}
+  // CHECK: affine.c:[[#LOOP0:@LINE+14]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
@@ -25,6 +25,8 @@ void shifts(double *a, const double *b, int n) {
   // CHECK-NEXT: R b[2 * i - 3] : [2*i - 3]{{$}}
   // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
+  // CHECK: alias      : 'a' and 'b' may overlap: checked at run time{{$}}
+  // CHECK: alias guard: ((__INTPTR_TYPE__)a + 8 * ((__INTPTR_TYPE__)(n - 1) + 1) <= (__INTPTR_TYPE__)b + 8 || (__INTPTR_TYPE__)b + (8 * ((__INTPTR_TYPE__)(n) + 1) > 8 * ((__INTPTR_TYPE__)(2*n - 5) + 1) ? 8 * ((__INTPTR_TYPE__)(n) + 1) : 8 * ((__INTPTR_TYPE__)(2*n - 5) + 1)) <= (__INTPTR_TYPE__)a + 16){{$}}
   // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
   for (int i = 2; i < n; i++)
     a[i] = b[i + 1] + b[2 * i - 3];
@@ -320,7 +322,7 @@ void wrong_start(double *a, int n) {
 
 // W *(p + i) : [i]   R *(q - i) : [-i]   W *p : [0]
 void pointer_forms(double *p, const double *q, int n) {
-  // CHECK: affine.c:[[#LOOP20:@LINE+13]]:3{{$}}
+  // CHECK: affine.c:[[#LOOP20:@LINE+14]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
@@ -332,6 +334,7 @@ void pointer_forms(double *p, const double *q, int n) {
   // CHECK-NEXT: safety     : UNSAFE{{$}}
   // CHECK: - writes to a target this analysis cannot resolve to a variable{{$}}
   // CHECK: deps       : 3 pair(s), 1 independent (1 SIV){{$}}
+  // CHECK: alias      : 'p' and 'q' may overlap: checked at run time{{$}}
   // CHECK: profitability : SEQUENTIAL{{$}}
   for (int i = 0; i < n; i++) {
     *(p + i) = *(q - i);
@@ -448,7 +451,7 @@ void inner_iv_modified(double *a, int n) {
 
 // R idx[i] : [i]   W a[idx[i]] : non-affine (subscript reads memory)
 void indirect(double *a, const int *idx, int n) {
-  // CHECK: affine.c:[[#LOOP27:@LINE+12]]:3{{$}}
+  // CHECK: affine.c:[[#LOOP27:@LINE+13]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
@@ -459,6 +462,7 @@ void indirect(double *a, const int *idx, int n) {
   // CHECK-NEXT: safety     : UNKNOWN{{$}}
   // CHECK: - cannot test W a[idx[i]]: W a[idx[i]] is non-affine (subscript reads memory ('idx[i]')){{$}}
   // CHECK: deps       : 1 pair(s), 0 independent{{$}}
+  // CHECK: alias      : 'a' and 'idx' can't overlap (incompatible element types){{$}}
   // CHECK: profitability : SEQUENTIAL{{$}}
   for (int i = 0; i < n; i++)
     a[idx[i]] = 13.0;
@@ -510,7 +514,7 @@ void changing_offset(double *a, int n) {
 // A global symbol with a call in the loop: the call could change it.
 // W a[i + g_bound] : non-affine (a call could modify it)
 void global_with_call(double *a, int n) {
-  // CHECK: affine.c:[[#LOOP30:@LINE+12]]:3{{$}}
+  // CHECK: affine.c:[[#LOOP30:@LINE+13]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
@@ -521,6 +525,7 @@ void global_with_call(double *a, int n) {
   // CHECK-NEXT: safety     : UNKNOWN{{$}}
   // CHECK: - 'opaque_call' has no visible body in this TU{{$}}
   // CHECK: deps       : 1 pair(s), 0 independent{{$}}
+  // CHECK: alias      : 'a' and 'g_bound' can't overlap (incompatible element types){{$}}
   // CHECK: profitability : SEQUENTIAL{{$}}
   for (int i = 0; i < n; i++) {
     a[i + g_bound] = 18.0;
@@ -531,7 +536,7 @@ void global_with_call(double *a, int n) {
 // A global symbol and no call or aliasing write: invariant.
 // W a[i + g_bound] : [i + g_bound]
 void global_without_call(double *a, int n) {
-  // CHECK: affine.c:[[#LOOP31:@LINE+10]]:3{{$}}
+  // CHECK: affine.c:[[#LOOP31:@LINE+11]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
@@ -540,6 +545,7 @@ void global_without_call(double *a, int n) {
   // CHECK-NEXT: W a[i + g_bound] : [i + g_bound]{{$}}
   // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
+  // CHECK: alias      : 'a' and 'g_bound' can't overlap (incompatible element types){{$}}
   // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
   for (int i = 0; i < n; i++)
     a[i + g_bound] = 19.0;
@@ -611,7 +617,7 @@ void member_base(struct vec *s) {
 // RW a[i] (+=), RW b[i] (++), & c[i] (address taken)
 void consume(double *x);
 void kinds(double *a, int *b, double *c, int n) {
-  // CHECK: affine.c:[[#LOOP35:@LINE+14]]:3{{$}}
+  // CHECK: affine.c:[[#LOOP35:@LINE+17]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
@@ -624,6 +630,9 @@ void kinds(double *a, int *b, double *c, int n) {
   // CHECK-NEXT: safety     : UNKNOWN{{$}}
   // CHECK: - 'consume' has no visible body in this TU{{$}}
   // CHECK: deps       : 2 pair(s), 2 independent (2 SIV){{$}}
+  // CHECK: alias      : 'a' and 'b' can't overlap (incompatible element types){{$}}
+  // CHECK: alias      : 'a' and 'c' may overlap: checked at run time{{$}}
+  // CHECK: alias      : 'b' and 'c' can't overlap (incompatible element types){{$}}
   // CHECK: profitability : SEQUENTIAL{{$}}
   for (int i = 0; i < n; i++) {
     a[i] += 1.0;
@@ -1261,7 +1270,7 @@ void r10_asm(int *a, int n) {
 // [R11] sizeof of a VLA type evaluates its size: RW a[i + 1] IS an access
 // (and W b[i] : [i]).
 void r11_sizeof_vla(int *a, long *b, int n) {
-  // CHECK: affine.c:[[#LOOP71:@LINE+11]]:3{{$}}
+  // CHECK: affine.c:[[#LOOP71:@LINE+12]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
@@ -1271,6 +1280,7 @@ void r11_sizeof_vla(int *a, long *b, int n) {
   // CHECK-NEXT: RW a[i + 1] : [i + 1]{{$}}
   // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: deps       : 2 pair(s), 2 independent (2 SIV){{$}}
+  // CHECK: alias      : 'b' and 'a' can't overlap (incompatible element types){{$}}
   // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
   for (int i = 0; i < n; i++)
     b[i] = sizeof(int[a[i + 1]++]);

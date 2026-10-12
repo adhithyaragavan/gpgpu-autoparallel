@@ -13,7 +13,7 @@ long g_count;
 // SAFE, private(t): t is written before it is read in every iteration.
 void s_temp(long *b, const long *a, int n) {
   long t;
-  // CHECK: scalars.c:[[#LOOP0:@LINE+12]]:3{{$}}
+  // CHECK: scalars.c:[[#LOOP0:@LINE+14]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
@@ -24,6 +24,8 @@ void s_temp(long *b, const long *a, int n) {
   // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
   // CHECK: scalars    : private(t){{$}}
+  // CHECK: alias      : 'a' and 'b' may overlap: checked at run time{{$}}
+  // CHECK: alias guard: ((__INTPTR_TYPE__)a + 8 * ((__INTPTR_TYPE__)(n - 1) + 1) <= (__INTPTR_TYPE__)b + 0 || (__INTPTR_TYPE__)b + 8 * ((__INTPTR_TYPE__)(n - 1) + 1) <= (__INTPTR_TYPE__)a + 0){{$}}
   // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
   for (int i = 0; i < n; i++) {
     t = a[i] * 3;
@@ -34,7 +36,7 @@ void s_temp(long *b, const long *a, int n) {
 // PolyBench style: counters declared at the top. Outer loop SAFE, private(j).
 void s_polybench(long *b, const long *a, int n) {
   int i, j;
-  // CHECK: scalars.c:[[#LOOP1:@LINE+12]]:3{{$}}
+  // CHECK: scalars.c:[[#LOOP1:@LINE+14]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 1 child loop(s), perfect nest{{$}}
@@ -45,9 +47,11 @@ void s_polybench(long *b, const long *a, int n) {
   // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
   // CHECK: scalars    : private(j){{$}}
+  // CHECK: alias      : 'b' and 'a' may overlap: checked at run time{{$}}
+  // CHECK: alias guard: ((__INTPTR_TYPE__)b + 8 * (((__INTPTR_TYPE__)(n - 1)) * (__INTPTR_TYPE__)n + (__INTPTR_TYPE__)(n - 1) + 1) <= (__INTPTR_TYPE__)a + 8 * ((0) * (__INTPTR_TYPE__)n + 0) || (__INTPTR_TYPE__)a + 8 * (((__INTPTR_TYPE__)(n - 1)) * (__INTPTR_TYPE__)n + (__INTPTR_TYPE__)(n - 1) + 1) <= (__INTPTR_TYPE__)b + 8 * ((0) * (__INTPTR_TYPE__)n + 0)){{$}}
   // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
   for (i = 0; i < n; i++)
-    // CHECK: scalars.c:[[#LOOP2:@LINE+11]]:5{{$}}
+    // CHECK: scalars.c:[[#LOOP2:@LINE+13]]:5{{$}}
     // CHECK: kind       : VARIABLE_BOUND{{$}}
     // CHECK: trip count : <not statically known>{{$}}
     // CHECK: nest       : depth 1, parent [[#LOOP1]]:3, 0 child loop(s){{$}}
@@ -57,6 +61,8 @@ void s_polybench(long *b, const long *a, int n) {
     // CHECK-NEXT: R a[i * n + j] : [i][j] delinearized, dims [?][n]{{$}}
     // CHECK-NEXT: safety     : SAFE{{$}}
     // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
+    // CHECK: alias      : 'b' and 'a' may overlap: checked at run time{{$}}
+    // CHECK: alias guard: ((__INTPTR_TYPE__)b + 8 * (((__INTPTR_TYPE__)(i)) * (__INTPTR_TYPE__)n + (__INTPTR_TYPE__)(n - 1) + 1) <= (__INTPTR_TYPE__)a + 8 * (((__INTPTR_TYPE__)(i)) * (__INTPTR_TYPE__)n + 0) || (__INTPTR_TYPE__)a + 8 * (((__INTPTR_TYPE__)(i)) * (__INTPTR_TYPE__)n + (__INTPTR_TYPE__)(n - 1) + 1) <= (__INTPTR_TYPE__)b + 8 * (((__INTPTR_TYPE__)(i)) * (__INTPTR_TYPE__)n + 0)){{$}}
     // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
     for (j = 0; j < n; j++)
       b[i * n + j] = a[i * n + j] + j;
@@ -223,7 +229,7 @@ long s_nested_sum(const long *a, int n) {
 // SAFE, lastprivate(x): x is read after the loop and written every iteration
 long s_last(long *b, const long *a, int n) {
   long x = 0;
-  // CHECK: scalars.c:[[#LOOP11:@LINE+12]]:3{{$}}
+  // CHECK: scalars.c:[[#LOOP11:@LINE+14]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
@@ -234,6 +240,8 @@ long s_last(long *b, const long *a, int n) {
   // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
   // CHECK: scalars    : lastprivate(x){{$}}
+  // CHECK: alias      : 'a' and 'b' may overlap: checked at run time{{$}}
+  // CHECK: alias guard: ((__INTPTR_TYPE__)a + 8 * ((__INTPTR_TYPE__)(n - 1) + 1) <= (__INTPTR_TYPE__)b + 0 || (__INTPTR_TYPE__)b + 8 * ((__INTPTR_TYPE__)(n - 1) + 1) <= (__INTPTR_TYPE__)a + 0){{$}}
   // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
   for (int i = 0; i < n; i++) {
     x = a[i] * 2;
@@ -385,7 +393,7 @@ long u_mixed_ops(const long *a, int n) {
 // UNSAFE: the running value is read elsewhere (a prefix sum, not a reduction).
 long u_read_elsewhere(long *b, const long *a, int n) {
   long s = 0;
-  // CHECK: scalars.c:[[#LOOP19:@LINE+12]]:3{{$}}
+  // CHECK: scalars.c:[[#LOOP19:@LINE+13]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
@@ -396,6 +404,7 @@ long u_read_elsewhere(long *b, const long *a, int n) {
   // CHECK-NEXT: safety     : UNSAFE{{$}}
   // CHECK: - loop-carried dependence: 's' carries a value from one iteration to the next{{$}}
   // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
+  // CHECK: alias      : 'a' and 'b' may overlap: checked at run time{{$}}
   // CHECK: profitability : SEQUENTIAL{{$}}
   for (int i = 0; i < n; i++) {
     s += a[i];
@@ -463,7 +472,7 @@ void u_global(const long *a, int n) {
 void u_address_taken(long *b, const long *a, int n) {
   long t = 0;
   long *pt = &t;
-  // CHECK: scalars.c:[[#LOOP23:@LINE+13]]:3{{$}}
+  // CHECK: scalars.c:[[#LOOP23:@LINE+14]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
@@ -475,6 +484,7 @@ void u_address_taken(long *b, const long *a, int n) {
   // CHECK-NEXT: safety     : UNSAFE{{$}}
   // CHECK: - 'pt' is a pointer that may point into 'b' (W b[i], R *pt){{$}}
   // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
+  // CHECK: alias      : 'a' and 'b' may overlap: checked at run time{{$}}
   // CHECK: profitability : SEQUENTIAL{{$}}
   for (int i = 0; i < n; i++) {
     t = a[i];
@@ -530,7 +540,7 @@ int k_ivout(long *a, int n) {
 // [S1] The running value of the "reduction" is used: a prefix sum.
 void r_prefix(long *a, const long *b, int n) {
   long s = 0;
-  // CHECK: scalars.c:[[#LOOP26:@LINE+12]]:3{{$}}
+  // CHECK: scalars.c:[[#LOOP26:@LINE+13]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
@@ -541,6 +551,7 @@ void r_prefix(long *a, const long *b, int n) {
   // CHECK-NEXT: safety     : UNSAFE{{$}}
   // CHECK: - loop-carried dependence: 's' carries a value from one iteration to the next{{$}}
   // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
+  // CHECK: alias      : 'a' and 'b' may overlap: checked at run time{{$}}
   // CHECK: profitability : SEQUENTIAL{{$}}
   for (int i = 0; i < n; i++)
     a[i] = (s += b[i]);
@@ -549,7 +560,7 @@ void r_prefix(long *a, const long *b, int n) {
 // [S1'] Used in a condition.
 void r_prefix_if(long *a, const long *b, int n) {
   long s = 0;
-  // CHECK: scalars.c:[[#LOOP27:@LINE+12]]:3{{$}}
+  // CHECK: scalars.c:[[#LOOP27:@LINE+13]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
@@ -560,6 +571,7 @@ void r_prefix_if(long *a, const long *b, int n) {
   // CHECK-NEXT: safety     : UNSAFE{{$}}
   // CHECK: - loop-carried dependence: 's' carries a value from one iteration to the next{{$}}
   // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
+  // CHECK: alias      : 'b' and 'a' may overlap: checked at run time{{$}}
   // CHECK: profitability : SEQUENTIAL{{$}}
   for (int i = 0; i < n; i++)
     if ((s += b[i]) > 100)

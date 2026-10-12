@@ -263,6 +263,11 @@ struct ProfitabilityVerdict {
   /// verdict), e.g. " private(j) reduction(+: sum)".
   std::string ScalarClauses;
 
+  /// Phase 1.6: run-time no-overlap checks the loop's safety depends on
+  /// (LoopSafety::AliasGuard). Conjoined into every parallel pragma's if(),
+  /// under every policy; a loop that has one is never GPU-offloaded.
+  std::string AliasGuard;
+
   /// False when the loop never reached the cost model — an unsafe or
   /// unverifiable loop is not "modelled and found unprofitable", it is not
   /// modelled at all, and the report must not imply otherwise.

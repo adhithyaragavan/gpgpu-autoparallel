@@ -662,6 +662,26 @@ ProfitabilityAnalyzer::analyzeLoop(const LoopInfo &LI, const LoopSafety &Safety)
   ProfitabilityVerdict V = priceLoop(LI, Safety);
   applyPolicy(V);
   V.ScalarClauses = Safety.ScalarClauses;
+  V.AliasGuard = Safety.AliasGuard;
+
+  // Phase 1.6: a false if(target:) still runs teams/parallel on the host,
+  // and overlapping arrays can't be mapped as separate regions, so a loop
+  // whose pointers are only checked apart at run time stays on the host.
+  if (V.Target == OffloadTarget::GpuOffload && !V.AliasGuard.empty()) {
+    V.GuardExpr.reset();
+    if (V.CpuBeatsSeq) {
+      V.Target = OffloadTarget::CpuParallel;
+      V.Reasons.push_back("GPU offload declined: pointer disjointness is only "
+                          "checked at run time -> CPU_PARALLEL, guarded by "
+                          "the check");
+    } else {
+      V.Target = OffloadTarget::Sequential;
+      V.CpuGuardExpr.reset();
+      V.Reasons.push_back("GPU offload declined: pointer disjointness is only "
+                          "checked at run time, and threading does not beat "
+                          "sequential -> SEQUENTIAL");
+    }
+  }
 
   // Interlock (Phase 1.3): every map() clause is `base[0:bound]`, which is
   // only the right region when each access is exactly `base[i]`. The

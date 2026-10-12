@@ -1,4 +1,4 @@
-// RUN: %p05 -policy naive %s -- %cflags | FileCheck %s
+// RUN: %p05 -policy naive -whole-program %s -- %cflags | FileCheck %s
 // CHECK: Analyzed 11 loop(s).
 // Phase 1.3 GPU-map interlock (Profitability.cpp, LoopSafety::GpuMappable).
 // Run under -policy naive, which tries to offload EVERY safe loop: the map()
@@ -28,7 +28,7 @@ static double scaled(double x) { return x * g_scale; }
 
 // Exactly a[i] from 0: GPU_OFFLOAD (naive), the one shape maps cover.
 void exact(double *a, const double *b, int n) {
-  // CHECK: interlock.c:[[#LOOP1:@LINE+12]]:3{{$}}
+  // CHECK: interlock.c:[[#LOOP1:@LINE+13]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
@@ -38,6 +38,7 @@ void exact(double *a, const double *b, int n) {
   // CHECK-NEXT: R b[i] : [i]{{$}}
   // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
+  // CHECK: alias      : 'a' and 'b' can't overlap (every call passes disjoint objects){{$}}
   // CHECK: profitability : GPU_OFFLOAD{{$}}
   // CHECK: - data/iteration: 16 B across 2 region(s): a (map(from: a[0:n]), 8 B/elem), b (map(to: b[0:n]), 8 B/elem){{$}}
   for (int i = 0; i < n; i++)
@@ -46,7 +47,7 @@ void exact(double *a, const double *b, int n) {
 
 // Reads b[i + 1]: b[0:n] would miss b[n]. Declined.
 void shifted(double *a, const double *b, int n) {
-  // CHECK: interlock.c:[[#LOOP2:@LINE+12]]:3{{$}}
+  // CHECK: interlock.c:[[#LOOP2:@LINE+13]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
@@ -56,6 +57,7 @@ void shifted(double *a, const double *b, int n) {
   // CHECK-NEXT: R b[i + 1] : [i + 1]{{$}}
   // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
+  // CHECK: alias      : 'a' and 'b' can't overlap (every call passes disjoint objects){{$}}
   // CHECK: profitability : CPU_PARALLEL{{$}}
   // CHECK: - GPU offload declined: map() regions are only sized correctly when every access is exactly base[i] (range-based maps are Phase 2.1) -> CPU_PARALLEL, which needs no map{{$}}
   for (int i = 0; i < n; i++)
@@ -112,7 +114,7 @@ void negative_start(double *a, int n) {
 // The callee reads all of a through a pointer argument; no map for a.
 // Declined.
 void pointer_argument(double *b, const double *a, int n) {
-  // CHECK: interlock.c:[[#LOOP6:@LINE+13]]:3{{$}}
+  // CHECK: interlock.c:[[#LOOP6:@LINE+14]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
@@ -123,6 +125,7 @@ void pointer_argument(double *b, const double *a, int n) {
   // CHECK-NEXT: R total(): p[k] : [k] of 'a'{{$}}
   // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
+  // CHECK: alias      : 'b' and 'a' can't overlap (every call passes disjoint objects){{$}}
   // CHECK: profitability : CPU_PARALLEL{{$}}
   // CHECK: - GPU offload declined: map() regions are only sized correctly when every access is exactly base[i] (range-based maps are Phase 2.1) -> CPU_PARALLEL, which needs no map{{$}}
   for (int i = 0; i < n; i++)
@@ -131,7 +134,7 @@ void pointer_argument(double *b, const double *a, int n) {
 
 // The callee reads a global that no map clause covers. Declined.
 void callee_global(double *a, const double *b, int n) {
-  // CHECK: interlock.c:[[#LOOP7:@LINE+13]]:3{{$}}
+  // CHECK: interlock.c:[[#LOOP7:@LINE+15]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
@@ -142,6 +145,8 @@ void callee_global(double *a, const double *b, int n) {
   // CHECK-NEXT: R b[i] : [i]{{$}}
   // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
+  // CHECK: alias      : 'a' and 'b' can't overlap (every call passes disjoint objects){{$}}
+  // CHECK: alias      : 'a' and 'g_scale' can't overlap (incompatible element types){{$}}
   // CHECK: profitability : CPU_PARALLEL{{$}}
   // CHECK: - GPU offload declined: map() regions are only sized correctly when every access is exactly base[i] (range-based maps are Phase 2.1) -> CPU_PARALLEL, which needs no map{{$}}
   for (int i = 0; i < n; i++)
@@ -151,7 +156,7 @@ void callee_global(double *a, const double *b, int n) {
 // Increment of the exact element: GPU_OFFLOAD, and a must be mapped tofrom
 // (the device's writes come back), not to.
 void increment(double *a, const double *b, int n) {
-  // CHECK: interlock.c:[[#LOOP8:@LINE+14]]:3{{$}}
+  // CHECK: interlock.c:[[#LOOP8:@LINE+15]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
@@ -163,6 +168,7 @@ void increment(double *a, const double *b, int n) {
   // CHECK-NEXT: R b[i] : [i]{{$}}
   // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: deps       : 5 pair(s), 5 independent (5 SIV){{$}}
+  // CHECK: alias      : 'a' and 'b' can't overlap (every call passes disjoint objects){{$}}
   // CHECK: profitability : GPU_OFFLOAD{{$}}
   // CHECK: - data/iteration: 24 B across 2 region(s): a (map(tofrom: a[0:n]), 8 B/elem), b (map(to: b[0:n]), 8 B/elem){{$}}
   for (int i = 0; i < n; i++) {
@@ -174,7 +180,7 @@ void increment(double *a, const double *b, int n) {
 // A member store writes part of the element: s must be mapped tofrom.
 struct pt2 { double x, y; };
 void member_store(struct pt2 *s, const double *b, int n) {
-  // CHECK: interlock.c:[[#LOOP9:@LINE+12]]:3{{$}}
+  // CHECK: interlock.c:[[#LOOP9:@LINE+13]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
@@ -184,6 +190,7 @@ void member_store(struct pt2 *s, const double *b, int n) {
   // CHECK-NEXT: R b[i] : [i]{{$}}
   // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
+  // CHECK: alias      : 's' and 'b' can't overlap (every call passes disjoint objects){{$}}
   // CHECK: profitability : GPU_OFFLOAD{{$}}
   // CHECK: - data/iteration: 40 B across 2 region(s): s (map(tofrom: s[0:n]), 16 B/elem), b (map(to: b[0:n]), 8 B/elem){{$}}
   for (int i = 0; i < n; i++)
@@ -193,7 +200,7 @@ void member_store(struct pt2 *s, const double *b, int n) {
 // *(b + i) is not subscript syntax, so no region would be collected for b.
 // Declined.
 void deref_form(double *a, const double *b, int n) {
-  // CHECK: interlock.c:[[#LOOP10:@LINE+12]]:3{{$}}
+  // CHECK: interlock.c:[[#LOOP10:@LINE+13]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
@@ -203,6 +210,7 @@ void deref_form(double *a, const double *b, int n) {
   // CHECK-NEXT: R *(b + i) : [i]{{$}}
   // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
+  // CHECK: alias      : 'a' and 'b' can't overlap (every call passes disjoint objects){{$}}
   // CHECK: profitability : CPU_PARALLEL{{$}}
   // CHECK: - GPU offload declined: map() regions are only sized correctly when every access is exactly base[i] (range-based maps are Phase 2.1) -> CPU_PARALLEL, which needs no map{{$}}
   for (int i = 0; i < n; i++)

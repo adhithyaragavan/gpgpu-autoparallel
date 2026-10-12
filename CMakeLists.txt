@@ -24,6 +24,7 @@ add_executable(p05tool
   src/analysis/DependenceTest.cpp
   src/analysis/ScalarAnalysis.cpp
   src/analysis/Summaries.cpp
+  src/analysis/AliasAnalysis.cpp
   src/codegen/OmpRewriter.cpp
 )
 

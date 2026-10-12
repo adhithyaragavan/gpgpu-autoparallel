@@ -6,6 +6,7 @@
 #include "clang/AST/RecursiveASTVisitor.h"
 #include "clang/Basic/LangOptions.h"
 #include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/SetVector.h"
 
 #include <functional>
 
@@ -678,8 +679,56 @@ LoopSafety SafetyAnalyzer::analyzeLoop(const LoopInfo &LI,
     Safety.Reasons.push_back(R);
   }
 
+  // Phase 1.6: a pointer parameter may point at a global the loop (or a
+  // callee) reads by name, so each such global joins the accesses as a read
+  // of its one element. Const globals can't be written through a pointer.
+  LoopAccesses WithGlobals;
+  const LoopAccesses *All = &Accesses;
+  const FunctionDecl *Fn = Alias ? Alias->enclosingFunction(LI.Loop) : nullptr;
+  if (Fn) {
+    WithGlobals = Accesses;
+    llvm::SetVector<const VarDecl *> Named;
+    auto Consider = [&](const VarDecl *G) {
+      if (G && G->hasGlobalStorage() && !G->getType()->isArrayType() &&
+          !G->getType().isConstQualified())
+        Named.insert(G->getCanonicalDecl());
+    };
+    struct NameVisitor : RecursiveASTVisitor<NameVisitor> {
+      std::function<void(const VarDecl *)> F;
+      bool VisitDeclRefExpr(DeclRefExpr *DRE) {
+        F(dyn_cast<VarDecl>(DRE->getDecl()));
+        return true;
+      }
+    } NV;
+    NV.F = Consider;
+    NV.TraverseStmt(const_cast<Expr *>(LI.Loop->getCond()));
+    NV.TraverseStmt(const_cast<Expr *>(LI.Loop->getInc()));
+    NV.TraverseStmt(const_cast<Stmt *>(LI.Loop->getBody()));
+    for (const FunctionDecl *Callee : LI.Callees)
+      ForEachReachable(Callee,
+                       [&](const FunctionDecl *, const FunctionEffects &E) {
+                         for (const VarDecl *G : E.GlobalsUsed)
+                           Consider(G);
+                       });
+    for (const VarDecl *G : Named) {
+      ArrayAccess X;
+      X.Text = G->getNameAsString() + " (by name)";
+      X.Kind = AccessKind::Read;
+      X.Base = G;
+      X.Affine = true;
+      X.Subscripts.push_back(AffineExpr());
+      X.DimExtents.push_back(std::string());
+      WithGlobals.Accesses.push_back(std::move(X));
+    }
+    All = &WithGlobals;
+  }
+
   // Array/pointer accesses: can two iterations touch the same element?
-  LoopDependence Dep = testLoopDependences(Accesses, LI.Step ? *LI.Step : 1);
+  AliasOracle Oracle = [&](const ValueDecl *A, const ValueDecl *B) {
+    return Alias->proof(Fn, A, B);
+  };
+  LoopDependence Dep = testLoopDependences(*All, LI.Step ? *LI.Step : 1,
+                                           Fn ? &Oracle : nullptr);
   if (Dep.Outcome == DepOutcome::Dependent)
     escalate(Safety.Verdict, SafetyVerdict::Unsafe);
   else if (Dep.Outcome == DepOutcome::Unknown)
@@ -687,6 +736,33 @@ LoopSafety SafetyAnalyzer::analyzeLoop(const LoopInfo &LI,
   for (std::string &R : Dep.Reasons)
     Safety.Reasons.push_back(std::move(R));
   Safety.DependenceSummary = dependenceSummary(Dep);
+
+  // Bases that might overlap: proven apart, or checked at run time.
+  std::vector<std::string> Checks;
+  for (const AliasPair &P : Dep.AliasPairs) {
+    const std::string Pair = "'" + P.A->getNameAsString() + "' and '" +
+                             P.B->getNameAsString() + "'";
+    if (P.Proof != AliasProof::Unproven) {
+      Safety.AliasNotes.push_back(Pair + " can't overlap (" +
+                                  toString(P.Proof).str() + ")");
+      continue;
+    }
+    std::string Why;
+    if (std::optional<std::string> C =
+            Alias->runtimeCheck(Fn, LI.Loop->getBeginLoc(), P.A, P.B, *All,
+                                Why)) {
+      Checks.push_back(*C);
+      Safety.AliasNotes.push_back(Pair + " may overlap: checked at run time");
+      continue;
+    }
+    escalate(Safety.Verdict, SafetyVerdict::Unknown);
+    Safety.Reasons.push_back(Pair + " may overlap (not restrict, and not "
+                             "every call is known to pass disjoint "
+                             "objects), and no run-time check is possible: " +
+                             Why);
+  }
+  for (const std::string &C : Checks)
+    Safety.AliasGuard += (Safety.AliasGuard.empty() ? "" : " && ") + C;
 
   // Scalars the loop writes by name (ScalarAnalysis.h).
   for (const std::string &R : Scalars.UnsafeReasons) {
@@ -716,6 +792,10 @@ void printSafetyReport(llvm::raw_ostream &OS, const LoopSafety &Safety) {
     OS << "  deps       : " << Safety.DependenceSummary << "\n";
   if (Safety.Verdict == SafetyVerdict::Safe && !Safety.ScalarClauses.empty())
     OS << "  scalars    :" << Safety.ScalarClauses << "\n";
+  for (const std::string &N : Safety.AliasNotes)
+    OS << "  alias      : " << N << "\n";
+  if (Safety.Verdict == SafetyVerdict::Safe && !Safety.AliasGuard.empty())
+    OS << "  alias guard: " << Safety.AliasGuard << "\n";
   OS << "\n";
 }
 

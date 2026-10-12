@@ -82,7 +82,7 @@ void perfect3(double *a, int n) {
 // --- Imperfect nest ---------------------------------------------------------
 void imperfect(double *a, double *rowsum, int n) {
   // depth 0, 1 child, NOT perfect: a statement sits beside the inner loop
-  // CHECK: nests.c:[[#LOOP5:@LINE+11]]:3{{$}}
+  // CHECK: nests.c:[[#LOOP5:@LINE+13]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 1 child loop(s){{$}}
@@ -92,6 +92,8 @@ void imperfect(double *a, double *rowsum, int n) {
   // CHECK-NEXT: W a[i * n + j] : [i][j] delinearized, dims [?][n]{{$}}
   // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: deps       : 2 pair(s), 2 independent (2 SIV){{$}}
+  // CHECK: alias      : 'rowsum' and 'a' may overlap: checked at run time{{$}}
+  // CHECK: alias guard: ((__INTPTR_TYPE__)rowsum + 8 * ((__INTPTR_TYPE__)(n - 1) + 1) <= (__INTPTR_TYPE__)a + 8 * ((0) * (__INTPTR_TYPE__)n + 0) || (__INTPTR_TYPE__)a + 8 * (((__INTPTR_TYPE__)(n - 1)) * (__INTPTR_TYPE__)n + (__INTPTR_TYPE__)(n - 1) + 1) <= (__INTPTR_TYPE__)rowsum + 0){{$}}
   // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
   for (int i = 0; i < n; i++) {
     rowsum[i] = 0.0;
@@ -207,7 +209,7 @@ void triangular_start(double *a, int n) {
 // --- Sibling inner loops ----------------------------------------------------
 void siblings(double *a, double *b, int n) {
   // depth 0, 2 children, NOT perfect (two statements in the body)
-  // CHECK: nests.c:[[#LOOP13:@LINE+11]]:3{{$}}
+  // CHECK: nests.c:[[#LOOP13:@LINE+13]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 2 child loop(s){{$}}
@@ -217,6 +219,8 @@ void siblings(double *a, double *b, int n) {
   // CHECK-NEXT: W b[i * n + k] : [i][k] delinearized, dims [?][n]{{$}}
   // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: deps       : 2 pair(s), 2 independent (2 SIV){{$}}
+  // CHECK: alias      : 'a' and 'b' may overlap: checked at run time{{$}}
+  // CHECK: alias guard: ((__INTPTR_TYPE__)a + 8 * (((__INTPTR_TYPE__)(n - 1)) * (__INTPTR_TYPE__)n + (__INTPTR_TYPE__)(n - 1) + 1) <= (__INTPTR_TYPE__)b + 8 * ((0) * (__INTPTR_TYPE__)n + 0) || (__INTPTR_TYPE__)b + 8 * (((__INTPTR_TYPE__)(n - 1)) * (__INTPTR_TYPE__)n + (__INTPTR_TYPE__)(n - 1) + 1) <= (__INTPTR_TYPE__)a + 8 * ((0) * (__INTPTR_TYPE__)n + 0)){{$}}
   // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
   for (int i = 0; i < n; i++) {
     // depth 1, parent = outer

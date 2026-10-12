@@ -33,15 +33,13 @@
 // parameter is flagged regardless of which argument any call passed) is kept
 // behind -ipa=coarse as the ablation baseline.
 //
-// IMPORTANT — (3) does NOT cover aliasing *between distinct* pointer
-// parameters. `void f(double *a, double *b, int n) { for (i) a[i] = b[i]
-// + 1.0; }` verifies SAFE, but if the caller passes b == a + 1 (overlapping,
-// shifted by one), the loop is really `a[i] = a[i+1] + 1.0` in disguise: a
-// genuine cross-iteration hazard, invisible because accesses through two
-// differently named pointers are never compared. Distinct pointer/array
-// parameters are assumed not to alias (the promise C's `restrict` makes
-// explicit, here made implicitly and unverified). Phase 1.6 makes it explicit
-// (prove disjointness, or emit a runtime overlap check).
+// Aliasing between differently named bases (Phase 1.6, AliasAnalysis.h):
+// `void f(double *a, double *b, int n) { for (i) a[i] = b[i + 1]; }` is
+// `a[i] = a[i + 1]` in disguise when a caller passes b == a. Each such pair
+// is proven disjoint (distinct objects, element types, restrict, every
+// caller) or guarded by a run-time overlap check (LoopSafety::AliasGuard,
+// conjoined into every parallel pragma's if()); when neither is possible the
+// loop is UNKNOWN. -alias=assume restores the old unverified assumption.
 //
 // Known, documented over-approximations (real safe patterns not marked SAFE;
 // see NOTES.md):
@@ -59,6 +57,7 @@
 #define P05_ANALYSIS_SAFETYANALYSIS_H
 
 #include "analysis/AffineAccess.h"
+#include "analysis/AliasAnalysis.h"
 #include "analysis/CallResolver.h"
 #include "analysis/LoopInfo.h"
 #include "analysis/ScalarAnalysis.h"
@@ -133,6 +132,13 @@ struct LoopSafety {
   /// for an unrecognized loop).
   std::string DependenceSummary;
 
+  /// Phase 1.6: one line per pair of bases that might have overlapped, with
+  /// how that was settled (a proof, or a run-time check).
+  std::vector<std::string> AliasNotes;
+  /// Conjunction of the run-time no-overlap checks the loop's safety depends
+  /// on; empty when none. Must guard every parallel pragma for this loop.
+  std::string AliasGuard;
+
   /// Every access is exactly `base[i]` on a base declared outside the loop:
   /// the only shape today's map(...[0:bound]) clauses size correctly. When
   /// false, profitability must not choose GPU offload (see Profitability.cpp)
@@ -146,6 +152,10 @@ struct LoopSafety {
 class SafetyAnalyzer {
 public:
   explicit SafetyAnalyzer(CallResolver &Resolver) : Resolver(Resolver) {}
+
+  /// Phase 1.6: settle pointer aliasing with Alias. Without one (-alias=
+  /// assume) differently named bases are assumed never to overlap.
+  void setAliasAnalyzer(AliasAnalyzer *A) { Alias = A; }
 
   /// Side effects of FD's own body. Memoized: several loops, or several
   /// functions' reachable sets, can ask about the same function.
@@ -163,6 +173,7 @@ public:
 
 private:
   CallResolver &Resolver;
+  AliasAnalyzer *Alias = nullptr;
   llvm::DenseMap<const clang::FunctionDecl *, FunctionEffects> Cache;
 };
 

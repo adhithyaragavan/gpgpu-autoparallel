@@ -111,7 +111,7 @@ def main(paths):
 
             def field(key):
                 # "key<spaces>:" exactly, so "nest" doesn't also match "nest ivs".
-                pat = re.compile(r"  " + re.escape(key) + r"\s+:")
+                pat = re.compile(r"  " + re.escape(key) + r"\s*:")
                 return next((l.split(":", 1)[1].strip() for l in L
                              if pat.match(l)), None)
 
@@ -154,6 +154,13 @@ def main(paths):
             scal = field("scalars")
             if scal:
                 c.append("scalars    : " + lit(scal) + A)
+            # Phase 1.6: how each possibly-overlapping pair of bases was
+            # settled, and the run-time check the verdict depends on.
+            c += ["alias      : " + lit(l.split(":", 1)[1].strip()) + A
+                  for l in L if re.match(r"  alias\s+:", l)]
+            guard = field("alias guard")
+            if guard:
+                c.append("alias guard: " + lit(guard) + A)
             prof = field("profitability")
             c.append("profitability : " + re.sub(r">= \d+\)", ">= {{[0-9]+}})", prof) + A)
             # For a GPU target the map() clauses are part of the verdict.

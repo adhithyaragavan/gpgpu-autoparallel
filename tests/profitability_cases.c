@@ -1,4 +1,4 @@
-// RUN: %p05 %s -- %cflags | FileCheck %s
+// RUN: %p05 -whole-program %s -- %cflags | FileCheck %s
 // CHECK: Analyzed 11 loop(s).
 // Days 11-13 fixture for ProfitabilityAnalyzer. Expected target is written
 // above each loop, matching the safety_cases.c / loop_shapes.c convention: a
@@ -39,7 +39,7 @@ static double heavy_kernel(double x) {
 
 // GPU_OFFLOAD -- constant trip 65536, intensity 5.0 flop/byte.
 void gpu_offload_case(double *out, const double *in) {
-  // CHECK: profitability_cases.c:[[#LOOP0:@LINE+13]]:3{{$}}
+  // CHECK: profitability_cases.c:[[#LOOP0:@LINE+14]]:3{{$}}
   // CHECK: kind       : CONSTANT_BOUND{{$}}
   // CHECK: trip count : 65536{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
@@ -50,6 +50,7 @@ void gpu_offload_case(double *out, const double *in) {
   // CHECK-NEXT: R in[i] : [i]{{$}}
   // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
+  // CHECK: alias      : 'out' and 'in' can't overlap (every call passes disjoint objects){{$}}
   // CHECK: profitability : GPU_OFFLOAD{{$}}
   // CHECK: - data/iteration: 16 B across 2 region(s): out (map(from: out[0:65536]), 8 B/elem), in (map(to: in[0:65536]), 8 B/elem){{$}}
   for (int i = 0; i < 65536; i++) {
@@ -64,7 +65,7 @@ void gpu_offload_case(double *out, const double *in) {
 // path: this loop is worth a GPU only above a threshold the cost model
 // solves for (not one that was picked), not unconditionally.
 void gpu_conditional_case(double *out, const double *in, int n) {
-  // CHECK: profitability_cases.c:[[#LOOP1:@LINE+13]]:3{{$}}
+  // CHECK: profitability_cases.c:[[#LOOP1:@LINE+14]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
@@ -75,6 +76,7 @@ void gpu_conditional_case(double *out, const double *in, int n) {
   // CHECK-NEXT: R in[i] : [i]{{$}}
   // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
+  // CHECK: alias      : 'out' and 'in' can't overlap (every call passes disjoint objects){{$}}
   // CHECK: profitability : GPU_OFFLOAD if (n >= {{[0-9]+}}){{$}}
   // CHECK: - data/iteration: 16 B across 2 region(s): out (map(from: out[0:n]), 8 B/elem), in (map(to: in[0:n]), 8 B/elem){{$}}
   for (int i = 0; i < n; i++) {
@@ -87,7 +89,7 @@ void gpu_conditional_case(double *out, const double *in, int n) {
 // CPU_PARALLEL -- large constant trip, low intensity. The SAXPY shape: one
 // add, two array touches, transfer-bound on any real PCIe link.
 void cpu_low_intensity_case(double *y, const double *x) {
-  // CHECK: profitability_cases.c:[[#LOOP2:@LINE+12]]:3{{$}}
+  // CHECK: profitability_cases.c:[[#LOOP2:@LINE+13]]:3{{$}}
   // CHECK: kind       : CONSTANT_BOUND{{$}}
   // CHECK: trip count : 65536{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
@@ -98,6 +100,7 @@ void cpu_low_intensity_case(double *y, const double *x) {
   // CHECK-NEXT: R x[i] : [i]{{$}}
   // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: deps       : 2 pair(s), 2 independent (2 SIV){{$}}
+  // CHECK: alias      : 'y' and 'x' can't overlap (every call passes disjoint objects){{$}}
   // CHECK: profitability : CPU_PARALLEL{{$}}
   for (int i = 0; i < 65536; i++) {
     y[i] = y[i] + x[i];
@@ -207,7 +210,7 @@ void unsafe_gate_case(double *data, int n) {
 // `if(parallel: n >= T)` rather than a bare pragma; T is solved from the
 // cost model, not picked.
 void cpu_conditional_case(double *y, const double *x, int n) {
-  // CHECK: profitability_cases.c:[[#LOOP7:@LINE+12]]:3{{$}}
+  // CHECK: profitability_cases.c:[[#LOOP7:@LINE+13]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
@@ -218,6 +221,7 @@ void cpu_conditional_case(double *y, const double *x, int n) {
   // CHECK-NEXT: R x[i] : [i]{{$}}
   // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: deps       : 2 pair(s), 2 independent (2 SIV){{$}}
+  // CHECK: alias      : 'y' and 'x' can't overlap (every call passes disjoint objects){{$}}
   // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
   for (int i = 0; i < n; i++) {
     y[i] = y[i] + x[i];
@@ -242,7 +246,7 @@ void cpu_conditional_case(double *y, const double *x, int n) {
 // priced at 0 us instead of ~87 us, under-counting t_gpu about 5x. See
 // NOTES.md 2026-10-02.
 void gpu_offload_descending_case(double *out, const double *in) {
-  // CHECK: profitability_cases.c:[[#LOOP8:@LINE+13]]:3{{$}}
+  // CHECK: profitability_cases.c:[[#LOOP8:@LINE+14]]:3{{$}}
   // CHECK: kind       : CONSTANT_BOUND{{$}}
   // CHECK: trip count : 65536{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
@@ -253,6 +257,7 @@ void gpu_offload_descending_case(double *out, const double *in) {
   // CHECK-NEXT: R in[i] : [i]{{$}}
   // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
+  // CHECK: alias      : 'out' and 'in' can't overlap (every call passes disjoint objects){{$}}
   // CHECK: profitability : GPU_OFFLOAD{{$}}
   // CHECK: - data/iteration: 16 B across 2 region(s): out (map(from: out[0:0]), 8 B/elem), in (map(to: in[0:0]), 8 B/elem){{$}}
   for (int i = 65535; i >= 0; i--) {
@@ -281,7 +286,7 @@ void gpu_offload_descending_case(double *out, const double *in) {
 // named reason rather than a fabricated one. See NOTES.md's Days 17-18
 // entry.
 void unguardable_bound_case(double *out, const double *in, int start) {
-  // CHECK: profitability_cases.c:[[#LOOP9:@LINE+12]]:3{{$}}
+  // CHECK: profitability_cases.c:[[#LOOP9:@LINE+13]]:3{{$}}
   // CHECK: kind       : CONSTANT_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
@@ -292,6 +297,7 @@ void unguardable_bound_case(double *out, const double *in, int start) {
   // CHECK-NEXT: R in[i] : [i]{{$}}
   // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
+  // CHECK: alias      : 'out' and 'in' can't overlap (every call passes disjoint objects){{$}}
   // CHECK: profitability : SEQUENTIAL{{$}}
   for (int i = start; i < 8192; i++) {
     out[i] = heavy_kernel(in[i]);
@@ -305,7 +311,7 @@ void unguardable_bound_case(double *out, const double *in, int start) {
 // `#pragma omp parallel for if(parallel: ...)`, where a raw newline would end
 // the pragma early (found 2026-10-02 during the Phase 1.1 review fixes).
 void multiline_bound_case(double *y, const double *x, int n) {
-  // CHECK: profitability_cases.c:[[#LOOP10:@LINE+12]]:3{{$}}
+  // CHECK: profitability_cases.c:[[#LOOP10:@LINE+13]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
@@ -316,6 +322,7 @@ void multiline_bound_case(double *y, const double *x, int n) {
   // CHECK-NEXT: R x[i] : [i]{{$}}
   // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: deps       : 2 pair(s), 2 independent (2 SIV){{$}}
+  // CHECK: alias      : 'y' and 'x' can't overlap (every call passes disjoint objects){{$}}
   // CHECK: profitability : CPU_PARALLEL if (n - 1 >= {{[0-9]+}}){{$}}
   for (int i = 0; i < n
                       - 1; i++) {

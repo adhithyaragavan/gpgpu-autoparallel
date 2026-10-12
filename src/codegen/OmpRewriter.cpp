@@ -76,8 +76,13 @@ std::string buildGpuPragma(const ProfitabilityVerdict &V) {
 /// `if`, and an unqualified `if()` doesn't say so explicitly.
 std::string buildCpuPragma(const ProfitabilityVerdict &V) {
   std::string Pragma = "#pragma omp parallel for";
-  if (V.CpuGuardExpr)
-    Pragma += " if(parallel: " + *V.CpuGuardExpr + ")";
+  // Phase 1.6: the run-time no-overlap check is a safety condition, so it is
+  // conjoined with the cost model's guard, never replaced by it.
+  std::string Cond = V.CpuGuardExpr ? *V.CpuGuardExpr : std::string();
+  if (!V.AliasGuard.empty())
+    Cond = Cond.empty() ? V.AliasGuard : "(" + Cond + ") && " + V.AliasGuard;
+  if (!Cond.empty())
+    Pragma += " if(parallel: " + Cond + ")";
   return Pragma + V.ScalarClauses;
 }
 
