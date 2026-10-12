@@ -152,7 +152,11 @@ while building this comparison, is in `NOTES.md`, Days 19-21.
   (ZIV, GCD, strong SIV, Banerjee with symbolic bounds) over affine subscripts,
   including 2-D/3-D nests and linearized `a[i*n + j]` indexing. Subscripts they
   can't express (indirect `a[idx[i]]`, triangular rows) make a loop `UNKNOWN`, not
-  `SAFE`. Reductions are not yet recognized (they verify `UNSAFE`).
+  `SAFE`. Scalars a loop writes are classified by liveness over Clang's CFG:
+  `private`, `lastprivate`, or `reduction` (`+ * & | ^ min max`), so PolyBench-style
+  code with counters and temporaries declared at the top of a function parallelizes.
+  Floating-point reductions need `-fp-reductions` (off by default: they change the
+  last bits of the result).
 - **GPU offload is only chosen when every access is exactly `base[i]`**, the one
   shape today's `map(...[0:bound])` clauses size correctly. Other `SAFE` loops get a
   CPU `parallel for` until map regions are computed from the subscript ranges.
@@ -213,6 +217,9 @@ The fixtures:
   recursion.
 - `tests/safety_cases.c` — twelve loops covering every `SAFE`/`UNSAFE`/`UNKNOWN`
   category, matched pairs in both directions.
+- `tests/scalars.c` / `tests/fp_reductions.c` — scalar privatization and
+  reductions in both directions (also run, at `-O2` and `-O0`, by
+  `scripts/check_parallel.sh tests/scalars.c eval/runtime/scalars_main.c`).
 - `tests/dependence.c` — the dependence tests in both directions (independent by
   ZIV/GCD/SIV/Banerjee, proven dependent, undecidable). It is also *run*:
   `scripts/check_parallel.sh` rewrites it with every `SAFE` loop forced parallel

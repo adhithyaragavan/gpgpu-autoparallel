@@ -68,7 +68,7 @@ void matvec(double *y, const double *m, const double *x, int n) {
     // CHECK-NEXT: R m[i * n + j] : [i][j] delinearized, dims [?][n]{{$}}
     // CHECK-NEXT: R x[j] : [j]{{$}}
     // CHECK-NEXT: safety     : UNSAFE{{$}}
-    // CHECK: - loop-carried dependence: writes to 'acc', which is not declared inside the loop body{{$}}
+    // CHECK: - floating-point reduction on 'acc' (changes the last bits of the result; enable with -fp-reductions){{$}}
     // CHECK: deps       : 0 pair(s), 0 independent{{$}}
     // CHECK: profitability : SEQUENTIAL{{$}}
     for (int j = 0; j < n; j++)
@@ -473,7 +473,7 @@ void d1_sibling_fact(double *a, const double *c, int n, int m) {
     // CHECK: accesses   : 1 (1 affine){{$}}
     // CHECK-NEXT: R c[j] : [j]{{$}}
     // CHECK-NEXT: safety     : UNSAFE{{$}}
-    // CHECK: - loop-carried dependence: writes to 's', which is not declared inside the loop body{{$}}
+    // CHECK: - floating-point reduction on 's' (changes the last bits of the result; enable with -fp-reductions){{$}}
     // CHECK: deps       : 0 pair(s), 0 independent{{$}}
     // CHECK: profitability : SEQUENTIAL{{$}}
     for (int j = 0; j < m; j++)
@@ -570,7 +570,7 @@ void d3_static_scratch(const double *a, double *b, int n) {
     // CHECK: accesses   : 1 (1 affine){{$}}
     // CHECK-NEXT: R t[63 - k] : [-k + 63]{{$}}
     // CHECK-NEXT: safety     : UNSAFE{{$}}
-    // CHECK: - loop-carried dependence: writes to 's', which is not declared inside the loop body{{$}}
+    // CHECK: - loop-carried dependence: 's' carries a value from one iteration to the next{{$}}
     // CHECK: deps       : 0 pair(s), 0 independent{{$}}
     // CHECK: profitability : SEQUENTIAL{{$}}
     for (int k = 0; k < 64; k++)

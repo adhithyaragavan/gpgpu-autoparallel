@@ -1909,3 +1909,118 @@ missed. Phase 1.4 fixes the bug and teaches the generator this shape.
 `h_add(A, i, …)`. Those are UNSAFE through the call-site-independent "writes through pointer
 parameter" rule, an overclaim Phase 1.5 removes. A few need `m ≥ 5`, which is outside the
 brute-forced range.
+
+### 2026-10-12 — Phase 1.4: scalar privatization and reductions
+
+**Decision:** New `src/analysis/ScalarAnalysis.{h,cpp}` classifies every scalar a loop writes by name,
+using **liveness computed over Clang's CFG of the enclosing function**:
+- **private:** dead at the start of the body (written before read in every iteration) and dead
+  after the loop.
+- **lastprivate:** private, but read after the loop, and written unconditionally at the body's top
+  level with no `continue` that could skip it.
+- **reduction:** every mention in the loop is one associative update with a single operator: `+`
+  (`-=` combines with `+`), `* & | ^`, or min/max, either `x = x < e ? e : x` or
+  `if (e > x) x = e;`.
+- **otherwise UNSAFE**, a genuine loop-carried scalar.
+
+Never privatized: globals and statics, address-taken variables, variables the loop's own
+condition/increment uses, and non-arithmetic variables. `-fp-reductions` (off by default, the user's
+decision on 2026-10-12) gates floating-point reductions.
+
+The loop's own counter, declared outside and read after the loop, gets `lastprivate(i)` only when a
+constant trip count ≥ 1 proves the loop runs. On a zero-trip loop `lastprivate` leaves `i` untouched,
+where the sequential code ran `i = start`, so otherwise the loop is UNKNOWN. **This fixes the open
+bug** from the fuzzer entry: `ivout` and two existing fixtures (`r1a`, `r1c`) got a plain `parallel
+for` and an undefined counter afterwards.
+
+**Reasoning:**
+- **Why Clang's CFG, not `LiveVariables`:** `LiveVariables` answers "live at the end of a block".
+  What's needed is liveness at the start of the loop body and right after the loop, which are two
+  different successors of the same condition block. A small backward dataflow, over only the
+  function's automatic, non-address-taken scalar variables, answers exactly those two points.
+  Building the CFG with `setAllAlwaysAdd()` makes every read (`LValueToRValue` of a `DeclRefExpr`)
+  and every plain assignment visible.
+- **Why this shape matters:** PolyBench-style C declares `int i, j; double t;` at the top. Under the
+  hackathon rule, every loop using an inner counter or temporary was UNSAFE. Now the outer loop of
+  such a nest gets `private(j, t)`.
+- **GPU:** loops with lastprivate or reduction clauses stay CPU-only (`GpuMappable` false). On a
+  device, a reduction variable needs its own `map(tofrom:)`, which is Phase 2.1. `private` is fine on
+  `target`.
+- **Codegen:** the clauses are appended to both the CPU and GPU pragmas. The report gains
+  `scalars : private(j, t) reduction(+: s)` for SAFE loops.
+- **Existing fixtures:** six pinned verdicts changed, each read against its code:
+  - three `for (k…) s += k;` loops inside statement expressions are now SAFE (`reduction`);
+  - `r1a` and `r1c` inner loops went SAFE → UNKNOWN (the counter-after-loop bug, live in old
+    fixtures);
+  - the `r1a` outer loop went UNSAFE → UNKNOWN (its `j` is now correctly private; what remains is
+    the uncomparable `a[j]` vs `a[j+1]`).
+
+**Evidence:**
+- **New fixtures:**
+  - `tests/scalars.c`: 26 loops covering every clause and each refusal, among them a conditional
+    write read after the loop, `continue`, mixed operators, a running value read elsewhere,
+    `e - s`, an FP sum, a global, an address-taken variable, a written bound, and a zero-trip
+    counter;
+  - `tests/fp_reductions.c`, run with `-fp-reductions`.
+- **Runtime:**
+  - `scripts/check_parallel.sh tests/scalars.c eval/runtime/scalars_main.c` forces 12 pragmas, all
+    with clauses, and their outputs and every return value match;
+  - it discriminates: dropping all `reduction` or all `lastprivate` clauses fails on run 1;
+  - **dropping `private` was invisible at `-O2`**, because the compiler keeps the shared scalar in a
+    register. `check_parallel.sh` now builds and runs at **both `-O2` and `-O0`**, and at `-O0` the
+    missing `private` fails on run 1;
+  - both runtime checks are in CI.
+- **Fuzzer:**
+  - Generator: a third of the loops now use a counter declared at the top of the function
+    (`int i, j, l;`), half of those read it after the loop. A new statement shape writes `s0`/`s1`
+    and then uses them in the same iteration. Reductions are more frequent.
+  - Oracle (`fuzzrt.h`): it reads each loop's clauses from the report (`clauses.h`). A private or
+    lastprivate `s0`/`s1` is **checked**: the first touch in every iteration must be a write.
+    Reductions are verified by the exact differential run (u64).
+  - CI's 15 seeds: 24 SAFE loops with clauses (20 on `s0`/`s1`), 0 false SAFE.
+  - **Four tool mutants are all caught within CI's 15 seeds:**
+    1. privatize even when read first: caught by the per-iteration check ("iteration 0 reads
+       private s1 before writing it");
+    2. lastprivate emitted as private;
+    3. every reduction as `+`;
+    4. no zero-trip check on the counter.
+
+    Mutants 2–4 are caught by the differential run.
+
+### 2026-10-12 — Phase 1.4 adversarial review: five wrong-clause bugs, fixed
+
+**Decision:** The fresh-context review confirmed five ways to get a SAFE loop with a wrong clause,
+each by running sequential vs parallel. All are fixed, with fixtures [S1]–[S4] in
+`tests/scalars.c` (also in the runtime driver):
+1. **CRITICAL, a reduction whose running value is used:** `a[i] = (s += b[i])`, or
+   `if ((s += x) > 100)`. That is a prefix sum, not a reduction. An update now counts as a
+   reduction step only in a **discarded-value position**: a statement, an if/else branch, a for
+   init/increment, a loop body, or the left side of a comma.
+2. **min/max with mismatched types:** compared in `unsigned`, stored in `int`, or narrowed. Now the
+   comparison's operands and the stored value must all have V's own type.
+3. **An integer accumulator with a floating-point operand** (`s += b[i] * 0.5`): it truncates every
+   step, and it also slipped past the `-fp-reductions` gate. Now rejected.
+4. **`_Bool`:** every step normalizes to 0/1, so `-=`/`^=` aren't the reductions they look like.
+   Now excluded.
+5. **`_Complex` floating point** slipped past the FP gate. Complex types are now excluded, and the
+   gate uses `isFloatingType()`.
+
+Also fixed: a variable with a `cleanup` attribute is read invisibly at scope exit, so it is never
+privatized.
+
+**Test gap closed:** no lit test pinned the emitted clauses. The generator now pins the
+`scalars :` line.
+
+**Evidence:**
+- The reviewer's repo-fuzzer campaign (`--seed 5000 --files 150`): 3,357 loops, 238 with clauses,
+  0 false SAFE.
+- Their scalar-focused fuzzer (290 files, mixed types, `_Bool`, value-used updates) found bugs 1, 2
+  and 4 independently.
+- After the fixes: 11 lit tests pass, both runtime checks pass at -O2 and -O0, and the CI-size fuzz
+  run is clean.
+
+**Caveat recorded:** in 2 of the reviewer's seeds, the *unmodified sequential* program gave
+different output under Homebrew clang 22.1.8 at -O2 than at -O0. No undefined behaviour was found,
+though it wasn't ruled out either, so this is a possible miscompile. `check_parallel.sh`'s -O2
+comparison could therefore raise a false alarm under this compiler. The -O0 comparison is
+unaffected.

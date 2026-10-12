@@ -274,16 +274,17 @@ private:
       return;
     }
 
+    // A write to a variable by name (`x = `, `x += `) is classified by
+    // ScalarAnalysis (Phase 1.4): private, lastprivate, reduction, or a
+    // genuine loop-carried scalar. What remains here is writing *part* of a
+    // variable declared outside the body (`s.x = ` on an outer struct), which
+    // no clause makes safe.
+    if (isa<DeclRefExpr>(Target->IgnoreParenCasts()))
+      return;
     if (const auto *VD = dyn_cast<VarDecl>(Root)) {
       if (!LocalVars.count(VD)) {
-        // Not the induction variable, not declared fresh inside this loop's
-        // body: a scalar that survives across iterations, whether it is a
-        // global, a variable declared outside the loop, or a parameter
-        // reassigned directly (all three carry state loop-to-loop the same
-        // way). Covers the classic reduction shape (`sum += a[i]`), which
-        // this coarse check flags UNSAFE rather than recognizing as a
-        // parallelizable pattern — see the header comment.
-        flag("loop-carried dependence: writes to '" + VD->getNameAsString() +
+        flag("loop-carried dependence: writes to part of '" +
+             VD->getNameAsString() +
              "', which is not declared inside the loop body");
       }
     }
@@ -486,7 +487,8 @@ const FunctionEffects &SafetyAnalyzer::getEffects(const FunctionDecl *FD) {
 }
 
 LoopSafety SafetyAnalyzer::analyzeLoop(const LoopInfo &LI,
-                                       const LoopAccesses &Accesses) {
+                                       const LoopAccesses &Accesses,
+                                       const LoopScalars &Scalars) {
   LoopSafety Safety;
 
   // An unrecognized loop shape means nothing downstream (LI.InductionVar
@@ -651,10 +653,23 @@ LoopSafety SafetyAnalyzer::analyzeLoop(const LoopInfo &LI,
   for (std::string &R : Dep.Reasons)
     Safety.Reasons.push_back(std::move(R));
   Safety.DependenceSummary = dependenceSummary(Dep);
+
+  // Scalars the loop writes by name (ScalarAnalysis.h).
+  for (const std::string &R : Scalars.UnsafeReasons) {
+    escalate(Safety.Verdict, SafetyVerdict::Unsafe);
+    Safety.Reasons.push_back(R);
+  }
+  for (const std::string &R : Scalars.UnknownReasons) {
+    escalate(Safety.Verdict, SafetyVerdict::Unknown);
+    Safety.Reasons.push_back(R);
+  }
+  Safety.ScalarClauses = Scalars.clauseText();
   // Memory a callee reaches through a pointer argument or a global is not in
   // any map() clause this pass can size.
+  // A lastprivate or reduction scalar needs its own map() on a device.
   Safety.GpuMappable = Dep.GpuMappable && !PassesPointer &&
-                       !CalleeUsesGlobals && !CalleeThroughPointer;
+                       !CalleeUsesGlobals && !CalleeThroughPointer &&
+                       !Scalars.needsHost();
 
   return Safety;
 }
@@ -665,6 +680,8 @@ void printSafetyReport(llvm::raw_ostream &OS, const LoopSafety &Safety) {
     OS << "    - " << Reason << "\n";
   if (!Safety.DependenceSummary.empty())
     OS << "  deps       : " << Safety.DependenceSummary << "\n";
+  if (Safety.Verdict == SafetyVerdict::Safe && !Safety.ScalarClauses.empty())
+    OS << "  scalars    :" << Safety.ScalarClauses << "\n";
   OS << "\n";
 }
 

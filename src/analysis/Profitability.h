@@ -259,6 +259,10 @@ struct CostEstimate {
 struct ProfitabilityVerdict {
   OffloadTarget Target = OffloadTarget::Sequential;
 
+  /// Scalar data-sharing clauses to append to the pragma (from the safety
+  /// verdict), e.g. " private(j) reduction(+: sum)".
+  std::string ScalarClauses;
+
   /// False when the loop never reached the cost model — an unsafe or
   /// unverifiable loop is not "modelled and found unprofitable", it is not
   /// modelled at all, and the report must not imply otherwise.

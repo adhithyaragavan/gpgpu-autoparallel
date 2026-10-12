@@ -50,6 +50,12 @@ COMBOS = list(itertools.product(NS, MS, KS))
 SIG = ("u64 *A, u64 *B, u64 *C, u64 (*M)[8], int n, int m, int k")
 IVS = ["i", "j", "l"]
 
+
+def sreg(name):
+    """Scalar code for fuzzrt.h: s0/s1 are tracked per loop clause (SC_S0,
+    SC_S1); body temporaries are -1."""
+    return {"s0": "SC_S0", "s1": "SC_S1"}.get(name, "-1")
+
 # Pointer arrays: name -> region id in fuzzrt.h. `q` is a local alias set at
 # the top of some functions (q = A + c or q = B).
 REGION = {"A": "RA", "B": "RB", "C": "RC", "M": "RM", "G": "RG", "H": "RH"}
@@ -263,7 +269,7 @@ class Gen:
             elif kind == "scalar" and sc.scalars:
                 name, lvl = r.choice(sc.scalars)
                 plain.append(name)
-                log.append(f"RD(&{name}, {lvl}, -1)")
+                log.append(f"RD(&{name}, {lvl}, {sreg(name)})")
             elif kind == "iv" and sc.ivs:
                 iv = r.choice(sc.ivs)
                 plain.append(f"(u64){iv}")
@@ -295,10 +301,12 @@ class Gen:
         r = self.r
         if self.clean:
             kind = self.pick([("store", 8), ("compound", 3), ("incr", 1), ("temp", 3),
-                              ("outer_scalar", 0.4), ("reduce", 1), ("call", 1.5), ("if", 1.5)])
+                              ("outer_scalar", 0.4), ("reduce", 2.5), ("priv", 2.5),
+                              ("call", 1.5), ("if", 1.5)])
         else:
             kind = self.pick([("store", 8), ("compound", 3), ("incr", 1), ("temp", 2),
-                              ("outer_scalar", 0.7), ("reduce", 0.7), ("call", 1), ("if", 2)])
+                              ("outer_scalar", 0.7), ("reduce", 1), ("priv", 1),
+                              ("call", 1), ("if", 2)])
         pad = "  " * ind
         if kind in ("store", "compound", "incr"):
             p, l, reg = self.ref(sc, 0, role="w")
@@ -316,21 +324,34 @@ class Gen:
             sc.scalars.append((name, level + 1))
             return [(f"{pad}u64 {name} = {ep};",
                      f"{pad}u64 {name}; {{ u64 v_ = {el}; WR(&{name}, {level + 1}, -1) = v_; }}")]
+        if kind == "priv":
+            # Write a function-level scalar, then use it in the same
+            # iteration: the tool may privatize it (private, or lastprivate
+            # because s0/s1 are returned) when nothing reads it first.
+            name = r.choice(["s0", "s1"])
+            ep, el = self.expr(sc)
+            p, l, reg = self.ref(sc, 0, role="w")
+            ep2, el2 = self.expr(sc)
+            return [(f"{pad}{name} = {ep};",
+                     f"{pad}{{ u64 v_ = {el}; WR(&{name}, 0, {sreg(name)}) = v_; }}"),
+                    (f"{pad}{p} = {name} + {ep2};",
+                     f"{pad}{{ u64 v_ = RD(&{name}, 0, {sreg(name)}) + {el2}; WR({l}, 0, {reg}) = v_; }}")]
         if kind == "outer_scalar":
             name = r.choice(["s0", "s1"])
             ep, el = self.expr(sc)
             return [(f"{pad}{name} = {ep};",
-                     f"{pad}{{ u64 v_ = {el}; WR(&{name}, 0, -1) = v_; }}")]
+                     f"{pad}{{ u64 v_ = {el}; WR(&{name}, 0, {sreg(name)}) = v_; }}")]
         if kind == "reduce":
             name = r.choice(["s0", "s1"])
             ep, el = self.expr(sc)
             form = r.choice(["add", "mul", "max", "xor"])
             if form == "max":
                 return [(f"{pad}if ({ep} > {name}) {name} = {ep};",
-                         f"{pad}if ({el} > RD(&{name}, 0, -1)) {{ u64 v_ = {el}; WR(&{name}, 0, -1) = v_; }}")]
+                         f"{pad}if ({el} > RD(&{name}, 0, {sreg(name)})) {{ u64 v_ = {el}; "
+                         f"WR(&{name}, 0, {sreg(name)}) = v_; }}")]
             op = {"add": "+=", "mul": "*=", "xor": "^="}[form]
             return [(f"{pad}{name} {op} {ep};",
-                     f"{pad}{{ u64 v_ = {el}; RW(&{name}, 0, -1) {op} v_; }}")]
+                     f"{pad}{{ u64 v_ = {el}; RW(&{name}, 0, {sreg(name)}) {op} v_; }}")]
         if kind == "call":
             form = self.pick([("set", 2), ("add", 2), ("gset", 0.3 if self.clean else 2)])
             ep, el = self.expr(sc)
@@ -377,6 +398,9 @@ class Gen:
         # distances (shifts up to 4).
         bound = self.pick([("n", 5), ("m", 3), ("n + 1", 1), ("m - 1", 1), ("5", 1), ("3", 1),
                            ("4", 1), ("n + k", 1)])
+        # A third of loops use a counter declared at the top of the function
+        # (`int i, j, l;`), which the tool must privatize (or lastprivate).
+        decl = "" if r.random() < 0.33 else "int "
         if shape == "up":
             head = f"int {iv} = {start}; {iv} < {bound}; {iv}++"
         elif shape == "le":
@@ -389,6 +413,8 @@ class Gen:
             head = r.choice([f"int {iv} = 0; {iv} < {outer}; {iv}++",
                              f"int {iv} = {outer}; {iv} < {bound}; {iv}++",
                              f"int {iv} = {outer} + 1; {iv} < {bound}; {iv}++"])
+        if not decl:
+            head = head.replace("int ", "", 1)
         lid = len(loops)
         pad = "  " * ind
         lines = [(f"{pad}for ({head}) {{", f"{pad}LB({lid}); for ({head}) {{ IT();")]
@@ -402,6 +428,11 @@ class Gen:
             if s < nstmts:
                 lines += self.stmt(body_sc, level, ind + 1)
         lines.append((f"{pad}}}", f"{pad}}} LE();"))
+        # Read the counter after the loop: needs lastprivate (or, if the
+        # loop may run zero times, must not be parallelized at all).
+        if not decl and r.random() < 0.5:
+            lines.append((f"{pad}s1 += (u64){iv};",
+                          f"{pad}RW(&s1, 0, SC_S1) += (u64){iv};"))
         return lines
 
     def function(self, idx, loops):
@@ -419,7 +450,8 @@ class Gen:
         self.row = r.choice(["n", "n", "8", "m"])
         self.tmp = 0
         lines = [(f"u64 f{idx}({SIG}) {{", f"u64 f{idx}({SIG}) {{"),
-                 ("  u64 s0 = (u64)n, s1 = 1;", "  u64 s0 = (u64)n, s1 = 1;")]
+                 ("  u64 s0 = (u64)n, s1 = 1;", "  u64 s0 = (u64)n, s1 = 1;"),
+                 ("  int i = 0, j = 0, l = 0;", "  int i = 0, j = 0, l = 0;")]
         if has_q:
             lines.append((f"  u64 *q = {q_init};", f"  u64 *q = {q_init};"))
         nloops = self.pick([(1, 3), (2, 1)])
@@ -437,7 +469,7 @@ def generate(seed, nfuncs):
     {loop id: function index})."""
     g = Gen(random.Random(seed))
     plain = ["typedef unsigned long u64;", HELPERS]
-    log = ['#include "fuzzrt.h"', HELPERS_LOG]
+    log = ['#include "clauses.h"', '#include "fuzzrt.h"', HELPERS_LOG]
     line_of, func_of = {}, {}
     loops = []
     for f in range(nfuncs):
@@ -528,7 +560,9 @@ def run(cmd, **kw):
 
 
 def parse_report(text, fname):
-    verdicts = {}
+    """{line: verdict}, {line: {scalar: mode}} with mode 1 = private or
+    lastprivate, 2 = reduction (see fuzzrt.h's clause_mode)."""
+    verdicts, clauses = {}, {}
     cur = None
     for line in text.splitlines():
         m = re.match(r"^\S*%s:(\d+):\d+$" % re.escape(fname), line)
@@ -538,8 +572,15 @@ def parse_report(text, fname):
         m = re.match(r"^\s+safety\s+: (\S+)", line)
         if m and cur is not None:
             verdicts[cur] = m.group(1)
-            cur = None
-    return verdicts
+        m = re.match(r"^\s+scalars\s+:(.*)$", line)
+        if m and cur is not None:
+            modes = {}
+            for kind, names in re.findall(r"(lastprivate|private|reduction)\(([^)]*)\)", m.group(1)):
+                names = names.split(":", 1)[-1] if kind == "reduction" else names
+                for nm in names.split(","):
+                    modes[nm.strip()] = 2 if kind == "reduction" else 1
+            clauses[cur] = modes
+    return verdicts, clauses
 
 
 def fuzz_file(seed, nfuncs, work, tool, cc, sysroot, omp, runs, stats, failures):
@@ -568,7 +609,7 @@ def fuzz_file(seed, nfuncs, work, tool, cc, sysroot, omp, runs, stats, failures)
         fail("tool", f"p05tool exited {res.returncode}:\n{res.stderr[-2000:]}")
         return
     res_tool = res
-    verdicts = parse_report(res.stdout, "prog.c")
+    verdicts, clauses = parse_report(res.stdout, "prog.c")
     m = re.search(r"Analyzed (\d+) loop", res.stdout)
     if not m or int(m.group(1)) != len(line_of):
         fail("tool", f"tool analyzed {m and m.group(1)} loops, generator wrote {len(line_of)}")
@@ -580,8 +621,24 @@ def fuzz_file(seed, nfuncs, work, tool, cc, sysroot, omp, runs, stats, failures)
             continue
         by_id[lid] = v
         stats[v] = stats.get(v, 0) + 1
+        if v == "SAFE" and clauses.get(line):
+            stats["clause_loops"] = stats.get("clause_loops", 0) + 1
+            if {"s0", "s1"} & set(clauses[line]):
+                stats["checked_clause_loops"] = stats.get("checked_clause_loops", 0) + 1
 
-    # 2. Address oracle.
+    # 2. Address oracle. It learns the scalar clauses first, so a privatized
+    # s0/s1 is checked (written before read in every iteration) rather than
+    # counted as a conflict, and a reduction is left to the differential run.
+    entries = []
+    for lid, line in line_of.items():
+        modes = clauses.get(line, {})
+        m0, m1 = modes.get("s0", 0), modes.get("s1", 0)
+        if m0 or m1:
+            entries.append(f"[{lid}] = {{{m0}, {m1}}}")
+    with open(os.path.join(work, "clauses.h"), "w") as fh:
+        fh.write("#define FUZZ_CLAUSES 1\n"
+                 "static const unsigned char clause_mode[4096][2] = {%s};\n"
+                 % ", ".join(entries))
     exe = os.path.join(work, "log")
     res = run([cc, "-O1", "-w"] + sysroot + [os.path.join(work, "prog_log.c"), "-o", exe])
     if res.returncode != 0:
@@ -699,6 +756,8 @@ def main():
           f"({stats.get('safe_exercised', 0)} ran >= 2 iterations), "
           f"UNKNOWN {stats.get('UNKNOWN', 0)}, UNSAFE {stats.get('UNSAFE', 0)}")
     print(f"  {stats.get('pragmas', 0)} pragma(s) forced on in the differential runs")
+    print(f"  {stats.get('clause_loops', 0)} SAFE loop(s) with private/lastprivate/reduction "
+          f"clauses ({stats.get('checked_clause_loops', 0)} on s0/s1, checked per iteration)")
     print(f"  UNSAFE loops that ran >= 2 iterations but never conflicted (information only): "
           f"{stats.get('unsafe_no_witness', 0)}")
     # A pass must have checked something: a harness that silently discards

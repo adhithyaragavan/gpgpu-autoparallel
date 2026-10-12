@@ -498,7 +498,7 @@ void changing_offset(double *a, int n) {
   // CHECK: accesses   : 1 (0 affine){{$}}
   // CHECK-NEXT: W a[i + off] : non-affine: uses 'off', which is modified inside the loop{{$}}
   // CHECK-NEXT: safety     : UNSAFE{{$}}
-  // CHECK: - loop-carried dependence: writes to 'off', which is not declared inside the loop body{{$}}
+  // CHECK: - cannot test W a[i + off]: W a[i + off] is non-affine (uses 'off', which is modified inside the loop){{$}}
   // CHECK: deps       : 1 pair(s), 0 independent{{$}}
   // CHECK: profitability : SEQUENTIAL{{$}}
   for (int i = 0; i < n; i++) {
@@ -578,7 +578,7 @@ void moving_base(double *p, int n) {
   // CHECK: accesses   : 1 (0 affine){{$}}
   // CHECK-NEXT: W p[i] : non-affine: base pointer 'p' is modified inside the loop{{$}}
   // CHECK-NEXT: safety     : UNSAFE{{$}}
-  // CHECK: - loop-carried dependence: writes to 'p', which is not declared inside the loop body{{$}}
+  // CHECK: - cannot tell what W p[i] writes (base pointer 'p' is modified inside the loop){{$}}
   // CHECK: deps       : 0 pair(s), 0 independent{{$}}
   // CHECK: profitability : SEQUENTIAL{{$}}
   for (int i = 0; i < n; i++) {
@@ -648,18 +648,19 @@ void r1a_inner_iv_after_loop(int *a, int n) {
   // CHECK: accesses   : 2 (0 affine){{$}}
   // CHECK-NEXT: W a[j] : non-affine: uses 'j', which is modified inside the loop{{$}}
   // CHECK-NEXT: R a[j + 1] : non-affine: uses 'j', which is modified inside the loop{{$}}
-  // CHECK-NEXT: safety     : UNSAFE{{$}}
-  // CHECK: - loop-carried dependence: writes to 'j', which is not declared inside the loop body{{$}}
+  // CHECK-NEXT: safety     : UNKNOWN{{$}}
+  // CHECK: - cannot test W a[j]: W a[j] is non-affine (uses 'j', which is modified inside the loop){{$}}
   // CHECK: deps       : 2 pair(s), 0 independent{{$}}
   // CHECK: profitability : SEQUENTIAL{{$}}
   for (i = 0; i < n; i++) {
-    // CHECK: affine.c:[[#LOOP37:@LINE+9]]:5{{$}}
+    // CHECK: affine.c:[[#LOOP37:@LINE+10]]:5{{$}}
     // CHECK: kind       : VARIABLE_BOUND{{$}}
     // CHECK: trip count : <not statically known>{{$}}
     // CHECK: nest       : depth 1, parent [[#LOOP36]]:3, 0 child loop(s), triangular{{$}}
     // CHECK: nest ivs   : i, j{{$}}
     // CHECK: accesses   : 0 (0 affine){{$}}
-    // CHECK-NEXT: safety     : SAFE{{$}}
+    // CHECK-NEXT: safety     : UNKNOWN{{$}}
+    // CHECK: - induction variable 'j' is used after the loop, which may run zero times{{$}}
     // CHECK: deps       : 0 pair(s), 0 independent{{$}}
     // CHECK: profitability : SEQUENTIAL{{$}}
     for (j = 0; j < i; j++)
@@ -718,7 +719,7 @@ void r1b_reused_iv_after(int *a, int n) {
   // CHECK: deps       : 1 pair(s), 0 independent{{$}}
   // CHECK: profitability : SEQUENTIAL{{$}}
   for (i = 0; i < n; i++) {
-    // CHECK: affine.c:[[#LOOP41:@LINE+9]]:5{{$}}
+    // CHECK: affine.c:[[#LOOP41:@LINE+10]]:5{{$}}
     // CHECK: kind       : CONSTANT_BOUND{{$}}
     // CHECK: trip count : 3{{$}}
     // CHECK: nest       : depth 1, parent [[#LOOP40]]:3, 0 child loop(s){{$}}
@@ -726,6 +727,7 @@ void r1b_reused_iv_after(int *a, int n) {
     // CHECK: accesses   : 0 (0 affine){{$}}
     // CHECK-NEXT: safety     : SAFE{{$}}
     // CHECK: deps       : 0 pair(s), 0 independent{{$}}
+    // CHECK: scalars    : lastprivate(i){{$}}
     // CHECK: profitability : SEQUENTIAL{{$}}
     for (i = 0; i < 3; i++)
       ;
@@ -744,18 +746,19 @@ void r1c_param_as_inner_iv(int *a, int n, int k) {
   // CHECK: accesses   : 1 (0 affine){{$}}
   // CHECK-NEXT: W a[i + k] : non-affine: uses 'k', which is modified inside the loop{{$}}
   // CHECK-NEXT: safety     : UNSAFE{{$}}
-  // CHECK: - loop-carried dependence: writes to 'k', which is not declared inside the loop body{{$}}
+  // CHECK: - cannot test W a[i + k]: W a[i + k] is non-affine (uses 'k', which is modified inside the loop){{$}}
   // CHECK: deps       : 1 pair(s), 0 independent{{$}}
   // CHECK: profitability : SEQUENTIAL{{$}}
   for (int i = 0; i < n; i++) {
     a[i + k] = 1;
-    // CHECK: affine.c:[[#LOOP43:@LINE+9]]:5{{$}}
+    // CHECK: affine.c:[[#LOOP43:@LINE+10]]:5{{$}}
     // CHECK: kind       : VARIABLE_BOUND{{$}}
     // CHECK: trip count : <not statically known>{{$}}
     // CHECK: nest       : depth 1, parent [[#LOOP42]]:3, 0 child loop(s), triangular{{$}}
     // CHECK: nest ivs   : i, k{{$}}
     // CHECK: accesses   : 0 (0 affine){{$}}
-    // CHECK-NEXT: safety     : SAFE{{$}}
+    // CHECK-NEXT: safety     : UNKNOWN{{$}}
+    // CHECK: - induction variable 'k' is used after the loop, which may run zero times{{$}}
     // CHECK: deps       : 0 pair(s), 0 independent{{$}}
     // CHECK: profitability : SEQUENTIAL{{$}}
     for (k = 0; k < i; k++)
@@ -775,7 +778,7 @@ void r1d_substitution_of_inner_iv(int *a, int n) {
   // CHECK: accesses   : 1 (0 affine){{$}}
   // CHECK-NEXT: W a[k] : non-affine: uses 'k' (= j): uses 'j', which is modified inside the loop{{$}}
   // CHECK-NEXT: safety     : UNSAFE{{$}}
-  // CHECK: - loop-carried dependence: writes to 'j', which is not declared inside the loop body{{$}}
+  // CHECK: - cannot test W a[k]: W a[k] is non-affine (uses 'k' (= j): uses 'j', which is modified inside the loop){{$}}
   // CHECK: deps       : 1 pair(s), 0 independent{{$}}
   // CHECK: profitability : SEQUENTIAL{{$}}
   for (int i = 0; i < n; i++) {
@@ -808,7 +811,7 @@ void r1d_row_length_changed(int *a, int n) {
   // CHECK: accesses   : 1 (0 affine){{$}}
   // CHECK-NEXT: W a[i * n + j] : non-affine: uses 'n', which is modified inside the loop{{$}}
   // CHECK-NEXT: safety     : UNSAFE{{$}}
-  // CHECK: - loop-carried dependence: writes to 'n', which is not declared inside the loop body{{$}}
+  // CHECK: - cannot test W a[i * n + j]: W a[i * n + j] is non-affine (uses 'n', which is modified inside the loop){{$}}
   // CHECK: deps       : 1 pair(s), 0 independent{{$}}
   // CHECK: profitability : SEQUENTIAL{{$}}
   for (int i = 0; i < n; i++) {
@@ -824,7 +827,7 @@ void r1d_row_length_changed(int *a, int n) {
     // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
     for (int j = 0; j < n; j++)
       a[i * n + j] = 0;
-    // CHECK: affine.c:[[#LOOP48:@LINE+9]]:5{{$}}
+    // CHECK: affine.c:[[#LOOP48:@LINE+10]]:5{{$}}
     // CHECK: kind       : CONSTANT_BOUND{{$}}
     // CHECK: trip count : 4{{$}}
     // CHECK: nest       : depth 1, parent [[#LOOP46]]:3, 0 child loop(s){{$}}
@@ -832,6 +835,7 @@ void r1d_row_length_changed(int *a, int n) {
     // CHECK: accesses   : 0 (0 affine){{$}}
     // CHECK-NEXT: safety     : SAFE{{$}}
     // CHECK: deps       : 0 pair(s), 0 independent{{$}}
+    // CHECK: scalars    : lastprivate(n){{$}}
     // CHECK: profitability : SEQUENTIAL{{$}}
     for (n = 0; n < 4; n++)
       ;
@@ -882,7 +886,7 @@ void r2_row_length_changed_outside(int *a, int n) {
   // CHECK: accesses   : 1 (0 affine){{$}}
   // CHECK-NEXT: W a[i * n + j] : non-affine: uses 'n', which is modified inside the loop{{$}}
   // CHECK-NEXT: safety     : UNSAFE{{$}}
-  // CHECK: - loop-carried dependence: writes to 'n', which is not declared inside the loop body{{$}}
+  // CHECK: - cannot test W a[i * n + j]: W a[i * n + j] is non-affine (uses 'n', which is modified inside the loop){{$}}
   // CHECK: deps       : 1 pair(s), 0 independent{{$}}
   // CHECK: profitability : SEQUENTIAL{{$}}
   for (int j = 0; j < n; j++) {

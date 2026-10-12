@@ -661,6 +661,7 @@ ProfitabilityVerdict
 ProfitabilityAnalyzer::analyzeLoop(const LoopInfo &LI, const LoopSafety &Safety) {
   ProfitabilityVerdict V = priceLoop(LI, Safety);
   applyPolicy(V);
+  V.ScalarClauses = Safety.ScalarClauses;
 
   // Interlock (Phase 1.3): every map() clause is `base[0:bound]`, which is
   // only the right region when each access is exactly `base[i]`. The

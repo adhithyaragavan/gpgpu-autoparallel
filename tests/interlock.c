@@ -17,7 +17,7 @@ static double total(const double *p, int n) {
   // CHECK: accesses   : 1 (1 affine){{$}}
   // CHECK-NEXT: R p[k] : [k]{{$}}
   // CHECK-NEXT: safety     : UNSAFE{{$}}
-  // CHECK: - loop-carried dependence: writes to 's', which is not declared inside the loop body{{$}}
+  // CHECK: - floating-point reduction on 's' (changes the last bits of the result; enable with -fp-reductions){{$}}
   // CHECK: deps       : 0 pair(s), 0 independent{{$}}
   // CHECK: profitability : SEQUENTIAL{{$}}
   for (int k = 0; k < n; k++)

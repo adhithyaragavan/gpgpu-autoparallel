@@ -254,7 +254,7 @@ double unsafe_reduction(const double *data, int n) {
   // CHECK: accesses   : 1 (1 affine){{$}}
   // CHECK-NEXT: R data[i] : [i]{{$}}
   // CHECK-NEXT: safety     : UNSAFE{{$}}
-  // CHECK: - loop-carried dependence: writes to 'total', which is not declared inside the loop body{{$}}
+  // CHECK: - floating-point reduction on 'total' (changes the last bits of the result; enable with -fp-reductions){{$}}
   // CHECK: deps       : 0 pair(s), 0 independent{{$}}
   // CHECK: profitability : SEQUENTIAL{{$}}
   for (int i = 0; i < n; i++) {

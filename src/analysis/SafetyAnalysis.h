@@ -10,8 +10,10 @@
 //      write through a pointer parameter or touch a global? (FunctionEffects,
 //      SafetyAnalyzer::getEffects)
 //   2. Intraprocedural, scalars: does the loop body reassign its own
-//      induction variable, or write a scalar declared outside the body?
-//      (SafetyAnalyzer::analyzeLoop's body walk)
+//      induction variable? A scalar written by name is classified by
+//      ScalarAnalysis.h (Phase 1.4) as private, lastprivate, a reduction, or
+//      a genuine loop-carried value (UNSAFE); writing *part* of an outer
+//      variable (`s.x = ...`) stays UNSAFE here.
 //   3. Intraprocedural, arrays (Phase 1.3): can two different iterations
 //      touch the same array element, at least one writing it? Decided by the
 //      dependence tests in DependenceTest.h over AffineAccess.h's affine
@@ -44,8 +46,9 @@
 // see NOTES.md):
 //   - `helper(&a[i])` where helper writes through its pointer parameter is
 //     UNSAFE — the call-site-independence trade above (Phase 1.5).
-//   - Reductions (`sum += a[i]`) and scalars written before being read in
-//     each iteration are UNSAFE rather than reduction/private (Phase 1.4).
+//   - Floating-point reductions are UNSAFE unless -fp-reductions is given
+//     (they change the last bits of the result); globals, statics and
+//     address-taken scalars are never privatized.
 //   - Subscripts AffineAccess cannot express (indirect `a[idx[i]]`, products
 //     of variables, triangular rows `a[i * n + j]` with `j < i`) and symbolic
 //     distances that can't be decided make a loop UNKNOWN.
@@ -56,6 +59,7 @@
 #include "analysis/AffineAccess.h"
 #include "analysis/CallResolver.h"
 #include "analysis/LoopInfo.h"
+#include "analysis/ScalarAnalysis.h"
 
 #include "clang/AST/Decl.h"
 #include "llvm/ADT/DenseMap.h"
@@ -118,6 +122,10 @@ struct LoopSafety {
   /// Populated whenever Verdict != Safe; empty when Verdict == Safe.
   std::vector<std::string> Reasons;
 
+  /// OpenMP data-sharing clauses for the scalars the loop writes, e.g.
+  /// " private(j) reduction(+: sum)" (Phase 1.4); empty if none.
+  std::string ScalarClauses;
+
   /// Phase 1.3's dependence-test tally (empty when the test did not run, e.g.
   /// for an unrecognized loop).
   std::string DependenceSummary;
@@ -140,8 +148,10 @@ public:
   /// functions' reachable sets, can ask about the same function.
   const FunctionEffects &getEffects(const clang::FunctionDecl *FD);
 
-  /// Full verdict for one loop, given its accesses (AffineAnalyzer).
-  LoopSafety analyzeLoop(const LoopInfo &LI, const LoopAccesses &Accesses);
+  /// Full verdict for one loop, given its accesses (AffineAnalyzer) and the
+  /// classification of the scalars it writes (ScalarAnalyzer).
+  LoopSafety analyzeLoop(const LoopInfo &LI, const LoopAccesses &Accesses,
+                         const LoopScalars &Scalars);
 
 private:
   CallResolver &Resolver;

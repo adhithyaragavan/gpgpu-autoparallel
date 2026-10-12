@@ -393,9 +393,9 @@ void loop_in_init_clause(double *a, int n) {
            // CHECK: nest       : depth 1, parent [[#LOOP22]]:3, 0 child loop(s){{$}}
            // CHECK: nest ivs   : o, k{{$}}
            // CHECK: accesses   : 0 (0 affine){{$}}
-           // CHECK-NEXT: safety     : UNSAFE{{$}}
-           // CHECK: - loop-carried dependence: writes to 's', which is not declared inside the loop body{{$}}
+           // CHECK-NEXT: safety     : SAFE{{$}}
            // CHECK: deps       : 0 pair(s), 0 independent{{$}}
+           // CHECK: scalars    : reduction(+: s){{$}}
            // CHECK: profitability : SEQUENTIAL{{$}}
            for (int k = 0; k < 4; k++)
              s += k;
@@ -467,9 +467,9 @@ void loop_in_cond_clause(double *a, int n) {
                     // CHECK: nest       : depth 0, 0 child loop(s), inside while/do or a loop header{{$}}
                     // CHECK: nest ivs   : k{{$}}
                     // CHECK: accesses   : 0 (0 affine){{$}}
-                    // CHECK-NEXT: safety     : UNSAFE{{$}}
-                    // CHECK: - loop-carried dependence: writes to 's', which is not declared inside the loop body{{$}}
+                    // CHECK-NEXT: safety     : SAFE{{$}}
                     // CHECK: deps       : 0 pair(s), 0 independent{{$}}
+                    // CHECK: scalars    : reduction(+: s){{$}}
                     // CHECK: profitability : SEQUENTIAL{{$}}
                     for (int k = 0; k < 2; k++)
                       s += k;
@@ -491,9 +491,9 @@ void loop_in_while_cond(double *a, int n) {
     // CHECK: nest       : depth 0, 0 child loop(s), inside while/do or a loop header{{$}}
     // CHECK: nest ivs   : k{{$}}
     // CHECK: accesses   : 0 (0 affine){{$}}
-    // CHECK-NEXT: safety     : UNSAFE{{$}}
-    // CHECK: - loop-carried dependence: writes to 's', which is not declared inside the loop body{{$}}
+    // CHECK-NEXT: safety     : SAFE{{$}}
     // CHECK: deps       : 0 pair(s), 0 independent{{$}}
+    // CHECK: scalars    : reduction(+: s){{$}}
     // CHECK: profitability : SEQUENTIAL{{$}}
     for (int k = 0; k < 2; k++)
       s += k;

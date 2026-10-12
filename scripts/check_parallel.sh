@@ -29,18 +29,22 @@ grep -v -E '^\s*// (CHECK|CHECK-NEXT|RUN):' "$FIXTURE" > "$WORK/$base.c"
 pragmas=$(grep -c '#pragma omp' "$WORK/$base.omp.c" || true)
 echo "rewrote $FIXTURE: $pragmas pragma(s) forced on (every SAFE, non-nested loop)"
 
-"$CC" -O2 -w "${SYSROOT[@]}" -DSRC="\"$WORK/$base.c\"" "$DRIVER" -o "$WORK/seq"
-"$CC" -O2 -w "${SYSROOT[@]}" "${OMPFLAGS[@]}" -DSRC="\"$WORK/$base.omp.c\"" "$DRIVER" -o "$WORK/par"
-
-"$WORK/seq" "$WORK/seq.bin"
+# Both optimization levels: at -O2 a race on a scalar the compiler keeps in a
+# register is invisible (a missing private() goes unseen); at -O0 every
+# variable lives in memory and the race shows.
 fail=0
-for ((r = 1; r <= RUNS; r++)); do
-  OMP_NUM_THREADS=${OMP_NUM_THREADS:-8} "$WORK/par" "$WORK/par.bin"
-  if ! cmp -s "$WORK/seq.bin" "$WORK/par.bin"; then
-    echo "MISMATCH on run $r: a loop verdicted SAFE produced different results in parallel"
-    fail=1
-    break
-  fi
+for OPT in -O2 -O0; do
+  "$CC" $OPT -w "${SYSROOT[@]}" -DSRC="\"$WORK/$base.c\"" "$DRIVER" -o "$WORK/seq"
+  "$CC" $OPT -w "${SYSROOT[@]}" "${OMPFLAGS[@]}" -DSRC="\"$WORK/$base.omp.c\"" "$DRIVER" -o "$WORK/par"
+  "$WORK/seq" "$WORK/seq.bin"
+  for ((r = 1; r <= RUNS; r++)); do
+    OMP_NUM_THREADS=${OMP_NUM_THREADS:-8} "$WORK/par" "$WORK/par.bin"
+    if ! cmp -s "$WORK/seq.bin" "$WORK/par.bin"; then
+      echo "MISMATCH at $OPT on run $r: a loop verdicted SAFE produced different results in parallel"
+      fail=1
+      break 2
+    fi
+  done
 done
-[[ $fail == 0 ]] && echo "OK: parallel output bit-identical to sequential over $RUNS run(s)"
+[[ $fail == 0 ]] && echo "OK: parallel output bit-identical to sequential over $RUNS run(s) at -O2 and -O0"
 exit $fail

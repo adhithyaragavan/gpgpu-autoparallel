@@ -83,7 +83,23 @@ static u64 rt_hash(u64 h, const void *p, size_t bytes) {
 struct frame {
   int id; long inst; long iter; int bad, conf;
   long wa, wb; int wreg; long woff;  // first conflict's witness
+  // Function-level scalars s0/s1 the tool privatized for this loop: the
+  // iteration each was last first-touched in, and the first violation of
+  // "every iteration writes it before reading it".
+  long pv_iter[2]; int pviol, pv_sc; long pv_at;
 };
+
+// Scalar accesses pass a negative reg: -1 a body temporary, SC_S0/SC_S1 the
+// function-level scalars s0/s1. Per loop id, what the tool said about them:
+// 0 nothing (an ordinary shared variable), 1 private/lastprivate (checked
+// here: each iteration must write it before reading it), 2 reduction (its
+// result is checked by the differential run, exactly: u64 arithmetic).
+// eval/fuzz/fuzz.py writes the table as clauses.h after reading the report.
+#define SC_S0 (-2)
+#define SC_S1 (-3)
+#ifndef FUZZ_CLAUSES
+static const unsigned char clause_mode[MAX_LOOPS][2];
+#endif
 static struct frame stack[MAX_DEPTH];
 static int depth;
 static long next_inst;
@@ -112,7 +128,8 @@ static void rt_begin(int fn, int n, int m, int k) {
 
 static void LB(int id) {
   if (depth == MAX_DEPTH) { fprintf(stderr, "fuzzrt: nest too deep\n"); exit(2); }
-  stack[depth] = (struct frame){id, ++next_inst, -1, 0, 0, 0, 0, 0, 0};
+  stack[depth] = (struct frame){.id = id, .inst = ++next_inst, .iter = -1,
+                                .pv_iter = {-1, -1}};
   depth++;
 }
 static void IT(void) { stack[depth - 1].iter++; }
@@ -125,12 +142,33 @@ static void LE(void) {
     printf("C %d %d %d %d iterations %ld and %ld both touch %s%+ld\n", f->id, cur_n, cur_m,
            cur_k, f->wa, f->wb, f->wreg < 0 ? "a scalar" : region_name[f->wreg],
            f->wreg < 0 ? 0L : f->woff);
+  } else if (f->pviol && !reported[f->id]) {
+    reported[f->id] = 1;
+    printf("C %d %d %d %d iteration %ld reads private s%d before writing it\n", f->id, cur_n,
+           cur_m, cur_k, f->pv_at, f->pv_sc);
   }
 }
 
-static void note(int level, u64 *p, int write) {
+static void note(int level, u64 *p, int kind, int reg) {
   struct frame *f = &stack[level];
   if (f->iter < 0) return;  // in the loop header, not in an iteration
+  int write = kind != 0;
+  if (reg <= SC_S0) {
+    int sc = SC_S0 - reg;
+    int mode = clause_mode[f->id][sc];
+    if (mode == 2) return;  // reduction: the differential run checks it
+    if (mode == 1) {        // private: first touch per iteration must write
+      if (f->pv_iter[sc] != f->iter) {
+        f->pv_iter[sc] = f->iter;
+        if (kind != 1 && !f->pviol) {
+          f->pviol = 1;
+          f->pv_at = f->iter;
+          f->pv_sc = sc;
+        }
+      }
+      return;
+    }
+  }
   size_t h = ((size_t)f->inst * 0x9E3779B97F4A7C15ULL ^ (size_t)p * 0xC2B2AE3D27D4EB4FULL);
   h >>= 64 - TABLE_BITS;
   for (;; h = (h + 1) & ((1u << TABLE_BITS) - 1)) {
@@ -170,7 +208,7 @@ static u64 *rt_acc(u64 *p, int lvl, int reg, int kind) {
     mark_bad();
     return &sink;
   }
-  for (int level = lvl; level < depth; level++) note(level, p, kind != 0);
+  for (int level = lvl; level < depth; level++) note(level, p, kind, reg);
   return p;
 }
 static long CK(long e, long n) {

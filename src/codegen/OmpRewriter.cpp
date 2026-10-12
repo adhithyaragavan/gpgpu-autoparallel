@@ -65,12 +65,12 @@ std::string buildGpuPragma(const ProfitabilityVerdict &V) {
     Pragma += " map(" + R.mapKind().str() + ": " +
               R.Base->getNameAsString() + "[0:" + R.ExtentText + "])";
   }
-  return Pragma;
+  return Pragma + V.ScalarClauses;
 }
 
-/// #pragma omp parallel for [if(parallel: ...)] — no map() clauses (shared
-/// memory) and no private()/reduction() clauses; see the header comment for
-/// why neither is needed. `parallel:` on the if() is required for the same
+/// #pragma omp parallel for [if(parallel: ...)] [private/lastprivate/
+/// reduction(...)] — no map() clauses (shared memory). The scalar clauses
+/// come from ScalarAnalysis (Phase 1.4). `parallel:` on the if() is required for the same
 /// ambiguity reason as the GPU path's `target:`: `parallel for` is a combined
 /// construct whose constituent `parallel` directive is the one that accepts
 /// `if`, and an unqualified `if()` doesn't say so explicitly.
@@ -78,7 +78,7 @@ std::string buildCpuPragma(const ProfitabilityVerdict &V) {
   std::string Pragma = "#pragma omp parallel for";
   if (V.CpuGuardExpr)
     Pragma += " if(parallel: " + *V.CpuGuardExpr + ")";
-  return Pragma;
+  return Pragma + V.ScalarClauses;
 }
 
 } // namespace

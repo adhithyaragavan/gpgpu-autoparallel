@@ -151,6 +151,9 @@ def main(paths):
             deps = field("deps")
             if deps:
                 c.append("deps       : " + lit(deps) + A)
+            scal = field("scalars")
+            if scal:
+                c.append("scalars    : " + lit(scal) + A)
             prof = field("profitability")
             c.append("profitability : " + re.sub(r">= \d+\)", ">= {{[0-9]+}})", prof) + A)
             # For a GPU target the map() clauses are part of the verdict.

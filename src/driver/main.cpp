@@ -15,6 +15,7 @@
 #include "analysis/LoopAnalysis.h"
 #include "analysis/Profitability.h"
 #include "analysis/SafetyAnalysis.h"
+#include "analysis/ScalarAnalysis.h"
 #include "codegen/OmpRewriter.h"
 
 #include "clang/Frontend/CompilerInstance.h"
@@ -70,6 +71,7 @@ public:
     p05::CallResolver Resolver(Context);
     p05::SafetyAnalyzer Safety(Resolver);
     p05::AffineAnalyzer Affine(Context, Collector.getLoops());
+    p05::ScalarAnalyzer Scalars(Context, p05::fpReductionsFromFlags());
     p05::ProfitabilityAnalyzer Profitability(Resolver, Context, Machine,
                                              PolicyMode);
 
@@ -91,7 +93,8 @@ public:
       p05::printCallChains(llvm::outs(), LI, Resolver);
       const p05::LoopAccesses Accesses = Affine.analyzeLoop(&LI - Loops.data());
       p05::printAccessReport(llvm::outs(), Accesses);
-      p05::LoopSafety SafetyVerdict = Safety.analyzeLoop(LI, Accesses);
+      p05::LoopSafety SafetyVerdict =
+          Safety.analyzeLoop(LI, Accesses, Scalars.analyzeLoop(LI));
       p05::printSafetyReport(llvm::outs(), SafetyVerdict);
       p05::ProfitabilityVerdict ProfitVerdict =
           Profitability.analyzeLoop(LI, SafetyVerdict);
