@@ -147,28 +147,29 @@ void unsafe_transitive_global_write(double *data, int n, double factor) {
   }
 }
 
-// UNSAFE — callee writes through a pointer parameter. (This is actually the
-// classic reduction shape — accumulating into `*out` — which a real compiler
-// would recognize as parallelizable with a reduction clause. This coarse,
-// call-site-independent check cannot tell that apart from a genuine
-// cross-iteration write and conservatively rejects both; see
-// SafetyAnalysis.h's documented over-approximations.)
+// UNSAFE — the callee accumulates into `*out`, and this call passes the same
+// `total` on every iteration: total[0] is read and written by every
+// iteration (Phase 1.5's summary says so; before it, any write through a
+// pointer parameter was rejected). It is the classic reduction shape, which
+// a reduction clause could parallelize; reductions through a call are not
+// recognized (ScalarAnalysis.h only sees scalars written by name).
 static void accumulate(double *out, double v) {
   *out += v;
 }
 
 void unsafe_pointer_param_write(double *data, int n, double *total) {
-  // CHECK: safety_cases.c:[[#LOOP5:@LINE+12]]:3{{$}}
+  // CHECK: safety_cases.c:[[#LOOP5:@LINE+13]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
   // CHECK: nest ivs   : i{{$}}
   // CHECK: accumulate reaches 0 function(s), max depth 0: <nothing> (leaf){{$}}
-  // CHECK: accesses   : 1 (1 affine){{$}}
+  // CHECK: accesses   : 2 (2 affine){{$}}
   // CHECK-NEXT: R data[i] : [i]{{$}}
+  // CHECK-NEXT: RW accumulate(): *out : [0] of 'total'{{$}}
   // CHECK-NEXT: safety     : UNSAFE{{$}}
-  // CHECK: - 'accumulate' writes through pointer parameter 'out'{{$}}
-  // CHECK: deps       : 0 pair(s), 0 independent{{$}}
+  // CHECK: - RW accumulate(): *out: every iteration touches the same element{{$}}
+  // CHECK: deps       : 1 pair(s), 0 independent{{$}}
   // CHECK: profitability : SEQUENTIAL{{$}}
   for (int i = 0; i < n; i++) {
     accumulate(total, data[i]);

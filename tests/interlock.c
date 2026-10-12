@@ -112,14 +112,15 @@ void negative_start(double *a, int n) {
 // The callee reads all of a through a pointer argument; no map for a.
 // Declined.
 void pointer_argument(double *b, const double *a, int n) {
-  // CHECK: interlock.c:[[#LOOP6:@LINE+12]]:3{{$}}
+  // CHECK: interlock.c:[[#LOOP6:@LINE+13]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
   // CHECK: nest ivs   : i{{$}}
   // CHECK: total reaches 0 function(s), max depth 0: <nothing> (leaf){{$}}
-  // CHECK: accesses   : 1 (1 affine){{$}}
+  // CHECK: accesses   : 2 (2 affine){{$}}
   // CHECK-NEXT: W b[i] : [i]{{$}}
+  // CHECK-NEXT: R total(): p[k] : [k] of 'a'{{$}}
   // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
   // CHECK: profitability : CPU_PARALLEL{{$}}

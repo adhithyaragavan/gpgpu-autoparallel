@@ -2024,3 +2024,128 @@ different output under Homebrew clang 22.1.8 at -O2 than at -O0. No undefined be
 though it wasn't ruled out either, so this is a possible miscompile. `check_parallel.sh`'s -O2
 comparison could therefore raise a false alarm under this compiler. The -O0 comparison is
 unaffected.
+
+### 2026-10-12 — Phase 1.5: call-site-aware interprocedural summaries
+
+**Decision:** New `src/analysis/Summaries.{h,cpp}` replaces the call-site-independent callee rule
+("a callee that writes through *some* pointer parameter rejects every loop that calls it"). Each
+function gets a summary: the list of accesses its body makes, including those of everything it calls,
+in AffineAccess's form but in the function's own terms:
+- the base is a pointer parameter, a global/static object (globals are implicit parameters), or unknown;
+- subscripts and loop ranges are affine in the function's integer parameters and its own loop
+  variables.
+
+At each call the arguments are substituted for the parameters. The resulting accesses are appended
+to the loop's own, and **the unchanged Phase 1.3 dependence tests decide**. `helper(&a[i])` writing
+`p[0]` becomes `W a[i]`. `row_fill(&a[i*m], m)` looping `row[j]`, `0 <= j < m`, becomes `W a[i][j]`
+of rows of length m.
+
+- **AffineAccess changes:**
+  - It gained `analyzeFunction()`: a whole body with no root loop, where every loop is an inner loop
+    and loop-variable cleanliness is checked per loop.
+  - It records every call's arguments (`CallSite`/`CallArg`) in the same affine terms. A pointer
+    argument may be a named pointer or 1-D array plus an offset, a row start `&a[X*N]`, or `&v` for a
+    whole non-array, non-pointer `v`.
+- **Construction:** summaries are built bottom-up on demand and memoized. A call back into a summary
+  in progress (recursion), or a reachable function with no visible body, makes a summary
+  *incomplete*. The existing call-chain walk then reports it, and the loop is UNKNOWN.
+- **What is dropped:** only a callee's own automatic objects, which are fresh on every call. `&a[..]`
+  accesses that are passed directly as an argument are also dropped, because the composed accesses
+  replace them. Static locals stay, as shared objects.
+- **What stays name-level:** writes to globals by name (UNSAFE, as before), atomics and asm
+  (UNKNOWN), and calls through a function pointer (UNKNOWN).
+- **Ablation:** `-ipa=coarse` keeps the old rule. On all 15 fixtures and benchmarks its output is
+  byte-identical to the pre-1.5 binary, which was checked by building HEAD in a worktree.
+
+**Limits, all in the conservative direction:**
+- A callee subscript or loop range that mentions a global is non-affine at the loop, because the
+  loop could change the global between calls.
+- A pointer parameter the callee reassigns or lets escape, a global pointer, or an unresolved local
+  pointer is an unknown base.
+- A row-start argument composes only with a 1-D callee subscript `j + c`, where j is a callee loop
+  variable or one of the caller's inner loop variables whose range provably stays inside the row.
+- An *integer* argument like `h_add(C, i*n + j)` is not delinearized. That is a possible follow-up.
+- A reduction through a call (`accumulate(total, x)`) stays UNSAFE.
+- Distinct pointer parameters are still assumed not to alias; that is Phase 1.6.
+
+**Fixture changes**, under the 2026-10-12 extension of the CHECK-change rule: false-UNSAFE → SAFE,
+proven UNKNOWN → UNSAFE, and new reason text on loops that stay rejected.
+- `nests.c` `caller`: UNSAFE → **SAFE**. This was the false UNSAFE pinned in Phase 1.1
+  (`callee_with_loop(&a[i*n], n)`); it is now `W a[i][j]`.
+- `dependence.c` D5, D6, D7 and E1: UNKNOWN → **UNSAFE**. Each callee reads `x[i+1]` (D5 also writes
+  it) while the loop writes `x[i]`. The distance-1 dependence is real, and the summary now proves it.
+- `safety_cases.c` `accumulate`: still UNSAFE. The reason is now "RW `total[0]`: every iteration
+  touches the same element" instead of "writes through pointer parameter".
+- `dependence.c` e_rds, e_rdl, e_wr_struct: still UNKNOWN, with the reason now naming the unnamable
+  access.
+- `interlock.c`: one composed read line was added. The verdict is unchanged.
+
+**New fixture `tests/summaries.c`:** 23 labelled loops in matched pairs:
+- `p[0]` vs `p[1]` through a pointer to one element;
+- `p[k]` vs `p[k+1]` through an index argument;
+- two calls, disjoint vs colliding;
+- rows vs a row overrun (UNKNOWN, since the row model can't express the overrun);
+- a transitive chain without and with a back-read;
+- a global element vs `g_tab[0]` vs a global scalar;
+- `&t` with t private vs shared;
+- a callee-local scratch array;
+- UNKNOWN for recursion, an indirect subscript, a reassigned parameter, a global offset and an opaque
+  argument.
+
+All 23 match their labels. The fixture runs under `check_parallel.sh` with
+`eval/runtime/summaries_main.c`, in CI too.
+
+**Evidence:**
+- 12 lit tests pass.
+- `check_parallel.sh` reports bit-identical output at -O2 and -O0 for summaries.c (30 runs),
+  dependence.c (30) and scalars.c (20).
+- Oracle mutation: dropping the composed accesses forces 24 pragmas instead of 13, and the runtime
+  check fails on run 1.
+- Fuzzer, seeds 1–15, before → after: SAFE 76 → 87; UNSAFE loops that never conflicted 12 → 3; still
+  no false SAFE.
+  - Ten loops went UNSAFE → UNKNOWN. In each, the coarse rule was the only evidence for UNSAFE, and
+    the real subscripts (`i*n + j`, `j <= n`) are non-affine. Both verdicts block parallelization.
+- A fresh fuzz run (seeds 100–159, 1,356 loops, 319 SAFE) has no false SAFE.
+
+### 2026-10-12 — Phase 1.5 adversarial review: two false SAFE through K&R calls, fixed
+
+**Decision:** A fresh-context review found two false SAFE verdicts, each confirmed at runtime with
+`check_parallel.sh`. Both are calls to unprototyped (K&R) functions. With no prototype, nothing is
+converted at the call site, so the argument's value is not the parameter's value:
+- `kr(p, k) long *p; signed char k;` called as `kr(a, i)`. Here `k` is really `(signed char)i`, which
+  repeats every 256 iterations, but the summary composed `a[i + 128]`.
+- `kr3(p) char *p; { p[8] = 1; }` called as `kr3(&a[2*i])`. The callee steps over bytes, but the
+  offset was composed in `long` elements as `a[2i + 8]`.
+
+Both loops were UNSAFE under `-ipa=coarse`, so Phase 1.5 introduced them.
+
+**Fix:** `usableArg()` in Summaries.cpp is now the only place a parameter's argument is looked up.
+An argument is substituted only when both hold:
+- the callee is prototyped, both at the definition and at the call;
+- the argument's type equals the parameter's type, up to qualifiers.
+
+Otherwise every access through that parameter, and every subscript or row length using it, is
+non-affine (UNKNOWN). Both reproducers are pinned in `tests/summaries.c` (`k_kr_narrow`, `k_kr_bytes`)
+and run in its runtime driver.
+
+**Also from the review:**
+- Precision losses, recorded for later:
+  - One callee reached at two sites with different loop lengths loses its loop variable's range
+    (`mergeRange`). Renaming callee variables per site would fix it.
+  - A callee range bounded by the caller's inner loop variable is UNKNOWN.
+  - `&s[i].x` arguments are rejected.
+  - Some overlapping `<=`, `!=` and descending callee loops are UNKNOWN rather than UNSAFE, which
+    still blocks.
+- Code quality: the "indexes with global" reason now says "not one of its parameters", because the
+  symbol may also be a callee's static. The recursion stub is set once, in the constructor.
+- Checked correct by the reviewer: static locals are never privatized; global arrays; a reassigned
+  pointer parameter; `&scalar` and `&struct` arguments; returned or loaded pointers; `_Bool`, enum and
+  unsigned row lengths; mixed 1-D/2-D shapes; transitive remapping; overlapping same-callee sites;
+  triangular ranges; mutual recursion.
+
+**Evidence after the fix:**
+- 12 lit tests pass.
+- `check_parallel.sh` passes for summaries.c (30 runs), dependence.c (30) and scalars.c, at -O2
+  and -O0.
+- Both reproducers are UNKNOWN.
+- Fuzz seeds 1–15 and 300–339: no false SAFE.

@@ -25,12 +25,13 @@
 // the induction variable", which rejected every 2-D nest, every shifted read
 // (`a[i] = b[i + 1]`) and `*(p + i)`.
 //
-// Deliberately call-site independent for (1): a function that writes through
-// *some* pointer parameter is flagged regardless of which argument any given
-// call site passed for it. That is what lets this stay coarse without alias
-// analysis between call sites — precision traded for soundness, in the
-// conservative direction only (more false UNSAFE, never false SAFE). Phase
-// 1.5 (call-site-aware summaries) replaces it.
+// (1) is call-site aware since Phase 1.5 (Summaries.h): each call's callee
+// accesses are substituted with that call's arguments and join the loop's own
+// accesses in (3). What stays here is what has no element to test: a callee
+// with no visible body, recursion, writes to globals by name, atomics and
+// asm. The pre-1.5 rule (a function that writes through *some* pointer
+// parameter is flagged regardless of which argument any call passed) is kept
+// behind -ipa=coarse as the ablation baseline.
 //
 // IMPORTANT — (3) does NOT cover aliasing *between distinct* pointer
 // parameters. `void f(double *a, double *b, int n) { for (i) a[i] = b[i]
@@ -44,8 +45,9 @@
 //
 // Known, documented over-approximations (real safe patterns not marked SAFE;
 // see NOTES.md):
-//   - `helper(&a[i])` where helper writes through its pointer parameter is
-//     UNSAFE — the call-site-independence trade above (Phase 1.5).
+//   - Calls are only as precise as Summaries.h's limits (globals in a
+//     callee's subscripts, reassigned pointer parameters, arguments that
+//     are not a named pointer plus an affine offset).
 //   - Floating-point reductions are UNSAFE unless -fp-reductions is given
 //     (they change the last bits of the result); globals, statics and
 //     address-taken scalars are never privatized.
@@ -60,6 +62,7 @@
 #include "analysis/CallResolver.h"
 #include "analysis/LoopInfo.h"
 #include "analysis/ScalarAnalysis.h"
+#include "analysis/Summaries.h"
 
 #include "clang/AST/Decl.h"
 #include "llvm/ADT/DenseMap.h"
@@ -150,8 +153,13 @@ public:
 
   /// Full verdict for one loop, given its accesses (AffineAnalyzer) and the
   /// classification of the scalars it writes (ScalarAnalyzer).
+  ///
+  /// Calls: what SummaryAnalyzer::composeCalls found (Phase 1.5), whose
+  /// accesses are then already in Accesses. Null selects the pre-1.5
+  /// call-site-independent rule (-ipa=coarse), kept for the ablation.
   LoopSafety analyzeLoop(const LoopInfo &LI, const LoopAccesses &Accesses,
-                         const LoopScalars &Scalars);
+                         const LoopScalars &Scalars,
+                         const CallEffects *Calls = nullptr);
 
 private:
   CallResolver &Resolver;

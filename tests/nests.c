@@ -423,20 +423,21 @@ static void callee_with_loop(double *row, int n) {
     row[j] = 11.0;
 }
 
+// SAFE since Phase 1.5: each call writes its own row a[i*n .. i*n + n - 1].
+// (Pinned as a false UNSAFE in Phase 1.1; see NOTES.md.)
 void caller(double *a, int n) {
   // depth 0, 0 children: the callee's loop is not lexically nested here
-  // CHECK: nests.c:[[#LOOP26:@LINE+12]]:3{{$}}
+  // CHECK: nests.c:[[#LOOP26:@LINE+11]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
   // CHECK: nest ivs   : i{{$}}
   // CHECK: callee_with_loop reaches 0 function(s), max depth 0: <nothing> (leaf){{$}}
-  // CHECK: accesses   : 1 (0 affine){{$}}
-  // CHECK-NEXT: & a[i * n] : non-affine: subscript multiplies two non-constant terms ('i * n'){{$}}
-  // CHECK-NEXT: safety     : UNSAFE{{$}}
-  // CHECK: - 'callee_with_loop' writes through pointer parameter 'row'{{$}}
-  // CHECK: deps       : 0 pair(s), 0 independent{{$}}
-  // CHECK: profitability : SEQUENTIAL{{$}}
+  // CHECK: accesses   : 1 (1 affine){{$}}
+  // CHECK-NEXT: W callee_with_loop(): row[j] : [i][j] of 'a' delinearized, dims [?][n]{{$}}
+  // CHECK-NEXT: safety     : SAFE{{$}}
+  // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
+  // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
   for (int i = 0; i < n; i++)
     callee_with_loop(&a[i * n], n);
 }

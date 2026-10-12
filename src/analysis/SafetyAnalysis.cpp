@@ -488,8 +488,12 @@ const FunctionEffects &SafetyAnalyzer::getEffects(const FunctionDecl *FD) {
 
 LoopSafety SafetyAnalyzer::analyzeLoop(const LoopInfo &LI,
                                        const LoopAccesses &Accesses,
-                                       const LoopScalars &Scalars) {
+                                       const LoopScalars &Scalars,
+                                       const CallEffects *Calls) {
   LoopSafety Safety;
+  // Phase 1.5: callee effects come composed into Accesses (plus Calls'
+  // reasons) instead of from the coarse per-function flags.
+  const bool Precise = Calls != nullptr;
 
   // An unrecognized loop shape means nothing downstream (LI.InductionVar
   // included) is trustworthy enough to run the body-dependence walk against.
@@ -517,14 +521,16 @@ LoopSafety SafetyAnalyzer::analyzeLoop(const LoopInfo &LI,
       continue;
     }
 
-    const FunctionEffects &Effects = getEffects(Callee);
-    if (Effects.WritesGlobal || Effects.WritesThroughPointerParam)
-      escalate(Safety.Verdict, SafetyVerdict::Unsafe);
-    if (Effects.HasUnknownWrite)
-      escalate(Safety.Verdict, SafetyVerdict::Unknown);
-    for (const std::string &Reason : Effects.Reasons)
-      Safety.Reasons.push_back("'" + Callee->getNameAsString() + "' " +
-                                Reason);
+    if (!Precise) {
+      const FunctionEffects &Effects = getEffects(Callee);
+      if (Effects.WritesGlobal || Effects.WritesThroughPointerParam)
+        escalate(Safety.Verdict, SafetyVerdict::Unsafe);
+      if (Effects.HasUnknownWrite)
+        escalate(Safety.Verdict, SafetyVerdict::Unknown);
+      for (const std::string &Reason : Effects.Reasons)
+        Safety.Reasons.push_back("'" + Callee->getNameAsString() + "' " +
+                                  Reason);
+    }
 
     CallChainSummary Summary = Resolver.getReachable(Callee);
     if (Summary.HasRecursion) {
@@ -540,6 +546,8 @@ LoopSafety SafetyAnalyzer::analyzeLoop(const LoopInfo &LI,
             RC.Callee->getNameAsString() + "', which has no visible body");
         continue;
       }
+      if (Precise)
+        continue;
       const FunctionEffects &ReachEffects = getEffects(RC.Callee);
       if (ReachEffects.WritesGlobal || ReachEffects.WritesThroughPointerParam)
         escalate(Safety.Verdict, SafetyVerdict::Unsafe);
@@ -550,6 +558,26 @@ LoopSafety SafetyAnalyzer::analyzeLoop(const LoopInfo &LI,
                                   "' transitively reaches '" +
                                   RC.Callee->getNameAsString() + "', which " +
                                   Reason);
+    }
+  }
+
+  if (Precise) {
+    for (const std::string &R : Calls->UnsafeReasons) {
+      escalate(Safety.Verdict, SafetyVerdict::Unsafe);
+      Safety.Reasons.push_back(R);
+    }
+    for (const std::string &R : Calls->UnknownReasons) {
+      escalate(Safety.Verdict, SafetyVerdict::Unknown);
+      Safety.Reasons.push_back(R);
+    }
+    // An incomplete summary is a callee reaching an invisible body or
+    // recursing, which the walk above reports; say so if it somehow didn't.
+    for (const FunctionDecl *F : Calls->Incomplete) {
+      escalate(Safety.Verdict, SafetyVerdict::Unknown);
+      const CallChainSummary CS = Resolver.getReachable(F);
+      if (!CS.HasOpaqueCallee && !CS.HasRecursion)
+        Safety.Reasons.push_back("'" + F->getNameAsString() +
+                                 "' could not be fully summarized");
     }
   }
 
@@ -584,6 +612,10 @@ LoopSafety SafetyAnalyzer::analyzeLoop(const LoopInfo &LI,
                                  const FunctionEffects &E) {
       for (const VarDecl *G : E.GlobalsUsed) {
         CalleeUsesGlobals = true;
+        // Elements of a global array a callee touches are composed into
+        // the loop's accesses (Precise), and tested there.
+        if (Precise && G->getType()->isArrayType())
+          continue;
         // A global pointer can point anywhere; a global array is itself.
         const bool Hazard = G->getType()->isPointerType()
                                 ? !WrittenBases.empty() || WritesMayAlias
@@ -617,7 +649,9 @@ LoopSafety SafetyAnalyzer::analyzeLoop(const LoopInfo &LI,
       if (carriesNoPointer(Arg))
         continue;
       PassesPointer = true;
-      if (!F || !Through)
+      // Precise: the callee's accesses through Arg are composed into the
+      // loop's own and tested there.
+      if (!F || !Through || Precise)
         continue;
       const VarDecl *Root = pointerRoot(Arg);
       const bool Named = isNamedObject(Root);

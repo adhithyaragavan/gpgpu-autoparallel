@@ -60,7 +60,8 @@
 //     marked BaseMayAlias. Parameters and globals keep the no-alias
 //     assumption (DependenceTest.h).
 //   - A pointer passed to a call (`f(a)`, `f(a + i)`) is not an access here;
-//     what the callee does with it is Phase 1.5's call-site summaries.
+//     each call's arguments are recorded in the same terms (CallSite), and
+//     what the callee does with them is Phase 1.5's summaries (Summaries.h).
 //   - Operands of sizeof/alignof are not accesses (they are not evaluated).
 
 #ifndef P05_ANALYSIS_AFFINEACCESS_H
@@ -166,8 +167,45 @@ struct IVRange {
   std::optional<AffineExpr> Lo, Hi;
 };
 
+/// One argument of a call, in the same affine terms as the accesses around
+/// it (Phase 1.5): what Summaries.h substitutes for the callee's parameter.
+struct CallArg {
+  enum class Kind {
+    Value,   ///< integer-typed: Offset is its value when Affine
+    Pointer, ///< pointer-typed: Base plus Offset (elements) when Affine
+    Other,   ///< anything else (floating point, struct by value, ...)
+  };
+  Kind K = Kind::Other;
+  std::string Text;
+  bool Affine = false;
+  /// Why not, when Affine is false.
+  std::string Why;
+  /// Pointer: the object it points into (null when it can't be named), and
+  /// whether that is a pointer that may point anywhere (as for accesses).
+  const clang::VarDecl *Base = nullptr;
+  bool BaseMayAlias = false;
+  AffineExpr Offset;
+  /// Pointer to the start of a row, `&P[X * N]` / `P + X * N`: RowIndex is X
+  /// and RowLength N (a variable fixed in the loop); Offset holds any other
+  /// (affine) part of the offset.
+  std::optional<AffineExpr> RowIndex;
+  const clang::VarDecl *RowLength = nullptr;
+};
+
+/// A direct call inside the analyzed code, with its arguments.
+struct CallSite {
+  const clang::CallExpr *Call = nullptr;
+  /// Null for a call through a function pointer.
+  const clang::FunctionDecl *Callee = nullptr;
+  std::vector<CallArg> Args;
+  /// Inner induction variables enclosing the call (as ArrayAccess::InnerIVs).
+  std::vector<const clang::VarDecl *> InnerIVs;
+};
+
 struct LoopAccesses {
   std::vector<ArrayAccess> Accesses;
+  /// Every call in the analyzed code, in source order.
+  std::vector<CallSite> Calls;
 
   /// The analyzed loop's induction variable (canonical); null when the loop
   /// is unrecognized.
@@ -196,6 +234,13 @@ public:
 
   /// Every access in Loops[Index]'s body, including inside nested loops.
   LoopAccesses analyzeLoop(size_t Index);
+
+  /// Every access in a whole function body (Phase 1.5's callee summaries).
+  /// There is no analyzed loop: RootIV is null and every recognized loop in
+  /// the body is an inner loop with a range. A symbol is a variable fixed for
+  /// the whole call (in practice an unmodified parameter); an induction
+  /// variable only has to be clean within its own loop.
+  LoopAccesses analyzeFunction(const clang::FunctionDecl *FD);
 
 private:
   friend class AccessCollector;

@@ -263,7 +263,28 @@ struct Context {
   /// Facts over the whole enclosing function: used to tell whether a local
   /// pointer set outside the loop is ever reassigned.
   BodyFacts FunctionFacts;
+  /// Analyzing a whole function body (AffineAnalyzer::analyzeFunction): Root
+  /// is null and Facts covers the function. An induction variable then only
+  /// has to be clean within its own loop (ivFacts).
+  bool FunctionMode = false;
+  using LoopFactsMap = llvm::DenseMap<const ForStmt *, BodyFacts>;
+  mutable LoopFactsMap LoopFacts = LoopFactsMap();
+
+  /// "loop" or "function": what Facts covers, for reasons.
+  const char *scope() const { return FunctionMode ? "function" : "loop"; }
 };
+
+/// The facts an induction variable bound by loop L must be clean in: the
+/// analyzed loop's (which cover every loop inside it), or in function mode
+/// L's own.
+const BodyFacts &ivFacts(const LoopInfo &L, const Context &C) {
+  if (!C.FunctionMode)
+    return C.Facts;
+  auto It = C.LoopFacts.find(L.Loop);
+  if (It == C.LoopFacts.end())
+    It = C.LoopFacts.try_emplace(L.Loop, factsOf(L.Loop)).first;
+  return It->second;
+}
 
 /// Could something other than the listed Allowed statements write VD while
 /// the code described by F runs? Direct writes (anywhere in F) other than
@@ -278,11 +299,11 @@ bool otherWrites(const VarDecl *VD, const BodyFacts &F,
   if (It != F.WriteSites.end())
     for (const Stmt *S : It->second)
       if (!llvm::is_contained(Allowed, S)) {
-        Why = "is modified inside the loop";
+        Why = std::string("is modified inside the ") + C.scope();
         return true;
       }
   if (F.AddressTaken.count(VD)) {
-    Why = "has its address taken inside the loop";
+    Why = std::string("has its address taken inside the ") + C.scope();
     return true;
   }
   if (VD->getType().isVolatileQualified()) {
@@ -291,13 +312,15 @@ bool otherWrites(const VarDecl *VD, const BodyFacts &F,
   }
   if (VD->hasGlobalStorage() || C.FunctionAddressTaken.count(VD)) {
     if (F.HasCall) {
-      Why = "could be modified by a call inside the loop (global or "
-            "address-taken)";
+      Why = std::string("could be modified by a call inside the ") +
+            C.scope() + " (global or address-taken)";
       return true;
     }
     for (QualType T : F.IndirectWriteTypes)
       if (mayAlias(T, VD->getType(), C.Ctx)) {
-        Why = "could be modified by a write through a pointer inside the loop";
+        Why = std::string("could be modified by a write through a pointer "
+                          "inside the ") +
+              C.scope();
         return true;
       }
   }
@@ -316,7 +339,7 @@ bool isCleanIV(const IVBinding &B, const BodyFacts &F, const Context &C,
 bool isInvariant(const VarDecl *VD, const BodyFacts &F, const Context &C,
                  std::string &Why) {
   if (F.DeclaredHere.count(VD)) {
-    Why = "is assigned inside the loop";
+    Why = std::string("is assigned inside the ") + C.scope();
     return false;
   }
   return !otherWrites(VD, F, {}, C, Why);
@@ -398,7 +421,7 @@ public:
         return false;
       }
       if (const IVBinding *B = binding(VD)) {
-        if (!isCleanIV(*B, C.Facts, C, Why)) {
+        if (!isCleanIV(*B, ivFacts(*B->Loop, C), C, Why)) {
           Why = "induction variable " + quoted(VD) + " " + Why;
           return false;
         }
@@ -661,9 +684,14 @@ bool splitPointer(const Expr *E, const VarDecl *&Base,
 /// access.
 class AccessCollector : public RecursiveASTVisitor<AccessCollector> {
 public:
+  /// RootIndex for a whole function body: there is no analyzed loop.
+  static constexpr size_t NoRoot = static_cast<size_t>(-1);
+
   AccessCollector(AffineAnalyzer &A, const Context &C, size_t RootIndex,
                   LoopAccesses &Out)
       : A(A), C(C), RootIndex(RootIndex), Out(Out) {
+    if (RootIndex == NoRoot)
+      return;
     // Bindings of the analyzed loop and its enclosing recognized loops,
     // outermost first.
     llvm::SmallVector<IVBinding, 8> Chain;
@@ -785,7 +813,133 @@ public:
     return true;
   }
 
+  /// Phase 1.5: record each call with its arguments in affine terms, for
+  /// Summaries.h to substitute into the callee's summary.
+  bool VisitCallExpr(CallExpr *CE) {
+    if (!RecordedCalls.insert(CE).second)
+      return true;
+    CallSite CS;
+    CS.Call = CE;
+    CS.Callee = CE->getDirectCallee();
+    for (size_t K = ChainLen; K < IVs.size(); ++K)
+      CS.InnerIVs.push_back(IVs[K].Var);
+    for (const Expr *Arg : CE->arguments())
+      CS.Args.push_back(callArg(Arg));
+    Out.Calls.push_back(std::move(CS));
+    return true;
+  }
+
 private:
+  CallArg callArg(const Expr *Arg) {
+    CallArg A;
+    A.Text = exprText(Arg, C.Ctx);
+    AffineBuilder B(C, IVs, IVsAtDecl);
+    const QualType T = Arg->getType();
+    if (T->isIntegerType()) {
+      A.K = CallArg::Kind::Value;
+      A.Affine = B.build(Arg, A.Offset, A.Why);
+    } else if (T->isPointerType()) {
+      A.K = CallArg::Kind::Pointer;
+      pointerArg(Arg, B, A);
+    } else {
+      A.Why = "argument is neither an integer nor a pointer";
+    }
+    // Same rule as push(): in a loop whose iteration space is unknown no
+    // affine form can be trusted (the base still can).
+    if (A.Affine && !Poison.empty()) {
+      A.Affine = false;
+      A.Why = Poison;
+      A.RowIndex.reset();
+      A.RowLength = nullptr;
+    }
+    return A;
+  }
+
+  /// `P`, `P + e`, `&P[e]` (as splitPointer), `&P[X * N]` (a row start), or
+  /// `&v` for a whole variable v that is neither an array nor a pointer (a
+  /// pointer to its only element). Base is left null when the argument
+  /// can't be named; Affine false (with Base kept) when only the offset
+  /// can't be expressed.
+  void pointerArg(const Expr *Arg, const AffineBuilder &B, CallArg &A) {
+    const Expr *P = peelPointerCasts(Arg);
+    if (const auto *UO = dyn_cast<UnaryOperator>(P);
+        UO && UO->getOpcode() == UO_AddrOf)
+      if (const auto *DRE =
+              dyn_cast<DeclRefExpr>(UO->getSubExpr()->IgnoreParens())) {
+        const VarDecl *VD = canon(dyn_cast<VarDecl>(DRE->getDecl()));
+        // `&q` of a pointer q would make "element 0 of q" (the pointer
+        // itself) indistinguishable from what q points to.
+        if (VD && !VD->getType()->isArrayType() &&
+            !VD->getType()->isPointerType()) {
+          A.Base = VD;
+          A.Affine = true;
+          return;
+        }
+        A.Why = "argument is the address of " + exprText(DRE, C.Ctx) +
+                ", an array or pointer variable";
+        return;
+      }
+    const VarDecl *VD = nullptr;
+    llvm::SmallVector<std::pair<const Expr *, int>, 4> Parts;
+    if (!splitPointer(P, VD, Parts)) {
+      A.Why = "argument is not a named pointer or array plus an offset";
+      return;
+    }
+    if (!resolveBase(VD, A.Offset, A.Base, A.Why, A.BaseMayAlias)) {
+      A.Base = nullptr;
+      return;
+    }
+    const Expr *RowPart = nullptr;
+    std::string FirstWhy;
+    for (const auto &[E, Sign] : Parts) {
+      AffineExpr Part;
+      std::string Why;
+      if (!B.build(E, Part, Why)) {
+        // At most one part may be a row start `X * N`, and only added.
+        if (RowPart || Sign < 0) {
+          A.Why = FirstWhy.empty() ? Why : FirstWhy;
+          return;
+        }
+        RowPart = E;
+        FirstWhy = Why;
+        continue;
+      }
+      if ((Sign < 0 && !AffineBuilder::scale(Part, -1, A.Why)) ||
+          !AffineBuilder::add(A.Offset, Part, A.Why))
+        return;
+    }
+    if (RowPart && !rowStart(RowPart, B, A)) {
+      A.Why = FirstWhy;
+      return;
+    }
+    A.Affine = true;
+  }
+
+  /// `X * N` or `N * X` with X affine and N an integer variable that is fixed
+  /// here (built as a symbol, so the usual invariance checks apply).
+  bool rowStart(const Expr *E, const AffineBuilder &B, CallArg &A) {
+    const auto *Mul = dyn_cast<BinaryOperator>(E->IgnoreParenImpCasts());
+    if (!Mul || Mul->getOpcode() != BO_Mul)
+      return false;
+    for (int Order = 0; Order < 2; ++Order) {
+      const Expr *NE = Order ? Mul->getLHS() : Mul->getRHS();
+      const Expr *XE = Order ? Mul->getRHS() : Mul->getLHS();
+      const VarDecl *N = asVar(NE);
+      if (!N || B.binding(N) || !N->getType()->isIntegerType())
+        continue;
+      std::string Why;
+      AffineExpr NA, X;
+      if (!B.build(NE, NA, Why) || !NA.IVTerms.empty() || NA.Const != 0 ||
+          NA.SymTerms.size() != 1 || NA.SymTerms.begin()->first != N ||
+          NA.SymTerms.begin()->second != 1 || !B.build(XE, X, Why))
+        continue;
+      A.RowIndex = std::move(X);
+      A.RowLength = N;
+      return true;
+    }
+    return false;
+  }
+
   /// Range of loop L's induction variable, from its start and bound, built
   /// with the induction variables in scope at L's header.
   void recordRange(const LoopInfo &L, llvm::ArrayRef<IVBinding> InScope) {
@@ -973,12 +1127,12 @@ private:
     std::string W;
     if (!Def->hasLocalStorage() || !Def->getInit() ||
         otherWrites(VD, C.Facts, {}, C, W)) {
-      Why = "base pointer " + quoted(VD) + " is set inside the loop";
+      Why = "base pointer " + quoted(VD) + " is set inside the " + C.scope();
       return false;
     }
     // Pointer to rows (`double (*r)[4] = ...`) is not substituted.
     if (VD->getType()->getPointeeType()->isArrayType()) {
-      Why = "base pointer " + quoted(VD) + " is set inside the loop";
+      Why = "base pointer " + quoted(VD) + " is set inside the " + C.scope();
       return false;
     }
     const VarDecl *P = nullptr;
@@ -986,14 +1140,14 @@ private:
     // q[k] means P[e + k] only if q and P step over the same element type.
     if (!splitPointer(Def->getInit(), P, Parts) ||
         elementType(VD->getType()) != elementType(P->getType())) {
-      Why = "base pointer " + quoted(VD) + " is set inside the loop";
+      Why = "base pointer " + quoted(VD) + " is set inside the " + C.scope();
       return false;
     }
     AffineExpr Off;
     if (!Parts.empty()) {
       auto At = IVsAtDecl.find(VD);
       if (At == IVsAtDecl.end()) {
-        Why = "base pointer " + quoted(VD) + " is set inside the loop";
+        Why = "base pointer " + quoted(VD) + " is set inside the " + C.scope();
         return false;
       }
       AffineBuilder B(C, At->second, IVsAtDecl);
@@ -1088,7 +1242,7 @@ private:
       // Multi-dimensional through a pointer to rows: no substitution.
       nonAffine(Acc,
                 C.Facts.DeclaredHere.count(BaseVD)
-                    ? "base pointer " + quoted(BaseVD) + " is set inside the loop"
+                    ? "base pointer " + quoted(BaseVD) + " is set inside the " + C.scope()
                     : "base pointer " + quoted(BaseVD) + " " + Why,
                 /*KeepBase=*/false);
       return;
@@ -1330,6 +1484,8 @@ private:
   /// loop or inside it (they cover everything L's body can do), else facts
   /// of L itself (an enclosing loop), computed on demand.
   const BodyFacts &factsFor(const LoopInfo &L) {
+    if (RootIndex == NoRoot)
+      return ivFacts(L, C);
     for (int P = A.IndexOf.lookup(L.Loop); P >= 0; P = A.Loops[P].Parent)
       if (static_cast<size_t>(P) == RootIndex)
         return C.Facts;
@@ -1350,6 +1506,7 @@ private:
   llvm::DenseMap<const Expr *, AccessKind> KindOf;
   llvm::DenseSet<const ArraySubscriptExpr *> Consumed;
   llvm::DenseSet<const Expr *> Recorded;
+  llvm::DenseSet<const CallExpr *> RecordedCalls;
   llvm::DenseMap<const ForStmt *, BodyFacts> OuterFacts;
   /// Non-empty when the analyzed loop's iteration space can't be trusted.
   std::string Poison;
@@ -1385,6 +1542,23 @@ LoopAccesses AffineAnalyzer::analyzeLoop(size_t Index) {
   Coll.TraverseStmt(const_cast<Expr *>(FS->getCond()));
   Coll.TraverseStmt(const_cast<Expr *>(FS->getInc()));
   Coll.TraverseStmt(const_cast<Stmt *>(FS->getBody()));
+  return Out;
+}
+
+LoopAccesses AffineAnalyzer::analyzeFunction(const FunctionDecl *FD) {
+  LoopAccesses Out;
+  if (!FD || !FD->getBody())
+    return Out;
+  BodyFacts FnFacts;
+  BodyFactsVisitor FV(FnFacts);
+  FV.TraverseStmt(FD->getBody());
+  Context C{Ctx, nullptr, FnFacts, addressTakenIn(FD), FnFacts};
+  C.FunctionMode = true;
+  for (const auto &[VD, Def] : C.Facts.DeclaredHere)
+    if (Def->hasLocalStorage())
+      Out.DeclaredInLoop.insert(VD);
+  AccessCollector Coll(*this, C, AccessCollector::NoRoot, Out);
+  Coll.TraverseStmt(FD->getBody());
   return Out;
 }
 

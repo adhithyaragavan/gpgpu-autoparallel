@@ -621,64 +621,69 @@ void d4_unresolved_alias(double *a, double *b, int n, int pick) {
 }
 
 // [D5] The callee writes through a pointer derived from its parameter
-// (p[1] via q): iteration i writes a[i + 1]. UNKNOWN.
+// (p[1] via q): iteration i writes a[i + 1] and reads a[i]. UNKNOWN before
+// Phase 1.5; the call-site summary proves the distance-1 dependence: UNSAFE.
 static void d5_bump(double *p) {
   double *q = p + 1;
   *q = *p + 1.0;
 }
 void d5_callee_derived_write(double *a, int n) {
-  // CHECK: dependence.c:[[#LOOP36:@LINE+12]]:3{{$}}
+  // CHECK: dependence.c:[[#LOOP36:@LINE+13]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
   // CHECK: nest ivs   : i{{$}}
   // CHECK: d5_bump reaches 0 function(s), max depth 0: <nothing> (leaf){{$}}
-  // CHECK: accesses   : 1 (1 affine){{$}}
-  // CHECK-NEXT: & a[i] : [i]{{$}}
-  // CHECK-NEXT: safety     : UNKNOWN{{$}}
-  // CHECK: - 'd5_bump' writes through local 'q', which may point to the caller's memory{{$}}
-  // CHECK: deps       : 0 pair(s), 0 independent{{$}}
+  // CHECK: accesses   : 2 (2 affine){{$}}
+  // CHECK-NEXT: W d5_bump(): *q : [i + 1] of 'a'{{$}}
+  // CHECK-NEXT: R d5_bump(): *p : [i] of 'a'{{$}}
+  // CHECK-NEXT: safety     : UNSAFE{{$}}
+  // CHECK: - W d5_bump(): *q and R d5_bump(): *p: the same element is touched 1 iteration(s) apart{{$}}
+  // CHECK: deps       : 2 pair(s), 1 independent (1 SIV){{$}}
   // CHECK: profitability : SEQUENTIAL{{$}}
   for (int i = 0; i < n - 1; i++)
     d5_bump(&a[i]);
 }
 
 // [D6] The callee reads the global the loop writes: g[i] = g[i + 1].
-// UNKNOWN.
+// UNKNOWN before Phase 1.5; now proven: UNSAFE.
 double d6_g[1024];
 static double d6_peek(int i) { return d6_g[i + 1]; }
 void d6_callee_reads_global(int n) {
-  // CHECK: dependence.c:[[#LOOP37:@LINE+12]]:3{{$}}
+  // CHECK: dependence.c:[[#LOOP37:@LINE+13]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
   // CHECK: nest ivs   : i{{$}}
   // CHECK: d6_peek reaches 0 function(s), max depth 0: <nothing> (leaf){{$}}
-  // CHECK: accesses   : 1 (1 affine){{$}}
+  // CHECK: accesses   : 2 (2 affine){{$}}
   // CHECK-NEXT: W d6_g[i] : [i]{{$}}
-  // CHECK-NEXT: safety     : UNKNOWN{{$}}
-  // CHECK: - 'd6_peek' uses global 'd6_g', which the loop writes{{$}}
-  // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
+  // CHECK-NEXT: R d6_peek(): d6_g[i + 1] : [i + 1] of 'd6_g'{{$}}
+  // CHECK-NEXT: safety     : UNSAFE{{$}}
+  // CHECK: - W d6_g[i] and R d6_peek(): d6_g[i + 1]: the same element is touched 1 iteration(s) apart{{$}}
+  // CHECK: deps       : 2 pair(s), 1 independent (1 SIV){{$}}
   // CHECK: profitability : SEQUENTIAL{{$}}
   for (int i = 0; i < n; i++)
     d6_g[i] = d6_peek(i) + 1.0;
 }
 
 // [D7] The callee reads through a pointer argument into the array the loop
-// writes: b[i] = a[i + 1] in disguise while a[i] is written. UNKNOWN.
+// writes: b[i] = a[i + 1] in disguise while a[i] is written. UNKNOWN before
+// Phase 1.5; now proven: UNSAFE.
 static double d7_next(const double *p, int i) { return p[i + 1]; }
 void d7_callee_reads_arg(double *a, int n) {
-  // CHECK: dependence.c:[[#LOOP38:@LINE+12]]:3{{$}}
+  // CHECK: dependence.c:[[#LOOP38:@LINE+13]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
   // CHECK: nest ivs   : i{{$}}
   // CHECK: d7_next reaches 0 function(s), max depth 0: <nothing> (leaf){{$}}
-  // CHECK: accesses   : 1 (1 affine){{$}}
+  // CHECK: accesses   : 2 (2 affine){{$}}
   // CHECK-NEXT: W a[i] : [i]{{$}}
-  // CHECK-NEXT: safety     : UNKNOWN{{$}}
-  // CHECK: - 'd7_next' accesses memory through an argument into 'a', and the loop writes it{{$}}
-  // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
+  // CHECK-NEXT: R d7_next(): p[i + 1] : [i + 1] of 'a'{{$}}
+  // CHECK-NEXT: safety     : UNSAFE{{$}}
+  // CHECK: - W a[i] and R d7_next(): p[i + 1]: the same element is touched 1 iteration(s) apart{{$}}
+  // CHECK: deps       : 2 pair(s), 1 independent (1 SIV){{$}}
   // CHECK: profitability : SEQUENTIAL{{$}}
   for (int i = 0; i < n - 1; i++)
     a[i] = d7_next(a, i) * 0.5;
@@ -705,21 +710,23 @@ void l1_single_iteration(double *a) {
 // Each was SAFE and produced different results in parallel. Now UNKNOWN.
 
 // [E1] A local alias handed to a callee that reads through it: rd reads
-// a[i + 1] while the loop writes a[i]. UNKNOWN.
+// a[i + 1] while the loop writes a[i]. UNKNOWN before Phase 1.5; with q
+// resolved to a, now proven: UNSAFE.
 static double e_rd(const double *p, int i) { return p[i + 1]; }
 void e1_alias_into_callee(double *a, int n) {
   double *q = a;
-  // CHECK: dependence.c:[[#LOOP40:@LINE+12]]:3{{$}}
+  // CHECK: dependence.c:[[#LOOP40:@LINE+13]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
   // CHECK: nest ivs   : i{{$}}
   // CHECK: e_rd reaches 0 function(s), max depth 0: <nothing> (leaf){{$}}
-  // CHECK: accesses   : 1 (1 affine){{$}}
+  // CHECK: accesses   : 2 (2 affine){{$}}
   // CHECK-NEXT: W a[i] : [i]{{$}}
-  // CHECK-NEXT: safety     : UNKNOWN{{$}}
-  // CHECK: - 'e_rd' accesses memory through an argument that may point anywhere, and the loop writes memory{{$}}
-  // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
+  // CHECK-NEXT: R e_rd(): p[i + 1] : [i + 1] of 'a'{{$}}
+  // CHECK-NEXT: safety     : UNSAFE{{$}}
+  // CHECK: - W a[i] and R e_rd(): p[i + 1]: the same element is touched 1 iteration(s) apart{{$}}
+  // CHECK: deps       : 2 pair(s), 1 independent (1 SIV){{$}}
   // CHECK: profitability : SEQUENTIAL{{$}}
   for (int i = 0; i < n - 1; i++)
     a[i] = e_rd(q, i) * 0.5;
@@ -730,16 +737,17 @@ struct e_sp { double *p; };
 static double e_rds(struct e_sp s, int i) { return s.p[i + 1]; }
 void e2_pointer_in_struct(double *a, int n) {
   struct e_sp s = {a};
-  // CHECK: dependence.c:[[#LOOP41:@LINE+12]]:3{{$}}
+  // CHECK: dependence.c:[[#LOOP41:@LINE+13]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
   // CHECK: nest ivs   : i{{$}}
   // CHECK: e_rds reaches 0 function(s), max depth 0: <nothing> (leaf){{$}}
-  // CHECK: accesses   : 1 (1 affine){{$}}
+  // CHECK: accesses   : 2 (1 affine){{$}}
   // CHECK-NEXT: W a[i] : [i]{{$}}
+  // CHECK-NEXT: R e_rds(): s.p[i + 1] : non-affine: base is a pointer loaded from memory ('s.p'){{$}}
   // CHECK-NEXT: safety     : UNKNOWN{{$}}
-  // CHECK: - 'e_rds' accesses memory through an argument that may point anywhere, and the loop writes memory{{$}}
+  // CHECK: - R e_rds(): s.p[i + 1] reads memory this analysis cannot name (base is a pointer loaded from memory ('s.p')), which a write in the loop could alias{{$}}
   // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
   // CHECK: profitability : SEQUENTIAL{{$}}
   for (int i = 0; i < n - 1; i++)
@@ -749,16 +757,17 @@ void e2_pointer_in_struct(double *a, int n) {
 // [E2'] The pointer travels as an integer. UNKNOWN.
 static double e_rdl(long x, int i) { return ((double *)x)[i + 1]; }
 void e2_pointer_as_long(double *a, int n) {
-  // CHECK: dependence.c:[[#LOOP42:@LINE+12]]:3{{$}}
+  // CHECK: dependence.c:[[#LOOP42:@LINE+13]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
   // CHECK: nest ivs   : i{{$}}
   // CHECK: e_rdl reaches 0 function(s), max depth 0: <nothing> (leaf){{$}}
-  // CHECK: accesses   : 1 (1 affine){{$}}
+  // CHECK: accesses   : 2 (1 affine){{$}}
   // CHECK-NEXT: W a[i] : [i]{{$}}
+  // CHECK-NEXT: R e_rdl(): ((double *)x)[i + 1] : non-affine: base is not a named array or pointer ('(double *)x'){{$}}
   // CHECK-NEXT: safety     : UNKNOWN{{$}}
-  // CHECK: - 'e_rdl' accesses memory through an argument that may point anywhere, and the loop writes memory{{$}}
+  // CHECK: - R e_rdl(): ((double *)x)[i + 1] reads memory this analysis cannot name (base is not a named array or pointer ('(double *)x')), which a write in the loop could alias{{$}}
   // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
   // CHECK: profitability : SEQUENTIAL{{$}}
   for (int i = 0; i < n - 1; i++)
@@ -774,15 +783,17 @@ static void e_wr_struct(int i) {
   s.p[i + 1] = s.p[i] + 1.0;
 }
 void e3_callee_writes_via_struct(int n) {
-  // CHECK: dependence.c:[[#LOOP43:@LINE+11]]:3{{$}}
+  // CHECK: dependence.c:[[#LOOP43:@LINE+13]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
   // CHECK: nest ivs   : i{{$}}
   // CHECK: e_wr_struct reaches 0 function(s), max depth 0: <nothing> (leaf){{$}}
-  // CHECK: accesses   : 0 (0 affine){{$}}
+  // CHECK: accesses   : 2 (0 affine){{$}}
+  // CHECK-NEXT: W e_wr_struct(): s.p[i + 1] : non-affine: base is a pointer loaded from memory ('s.p'){{$}}
+  // CHECK-NEXT: R e_wr_struct(): s.p[i] : non-affine: base is a pointer loaded from memory ('s.p'){{$}}
   // CHECK-NEXT: safety     : UNKNOWN{{$}}
-  // CHECK: - 'e_wr_struct' writes through local 's', which may point to the caller's memory{{$}}
+  // CHECK: - cannot tell what W e_wr_struct(): s.p[i + 1] writes (base is a pointer loaded from memory ('s.p')){{$}}
   // CHECK: deps       : 0 pair(s), 0 independent{{$}}
   // CHECK: profitability : SEQUENTIAL{{$}}
   for (int i = 0; i < n - 1; i++)
