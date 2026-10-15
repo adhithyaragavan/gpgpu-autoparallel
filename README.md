@@ -1,10 +1,30 @@
 # P05 — Automatic Parallelizing Compiler for GPGPU with Interprocedural Analysis
 
-SegFault 2026 hackathon project (solo build). A Clang LibTooling source-to-source
-tool. Point it at unmodified, ordinary sequential C and it finds loops that are safe
-to parallelize, including ones whose bodies call helper functions, decides which of
-those are worth offloading to a GPU versus threading on the CPU versus leaving alone,
-and rewrites the source with the corresponding OpenMP pragmas.
+A Clang LibTooling source-to-source tool. Point it at unmodified, ordinary
+sequential C and it finds loops that are safe to parallelize, including ones whose
+bodies call helper functions, decides which of those are worth offloading to a GPU
+versus threading on the CPU versus leaving alone, and rewrites the source with the
+corresponding OpenMP pragmas.
+
+It started as a SegFault 2026 hackathon project (solo build). Since October 2026 it
+has been developed as a research project, and the analysis has been rebuilt:
+
+- **Dependence tests** (ZIV, GCD, strong SIV, Banerjee) on affine subscripts over
+  whole loop nests, replacing the hackathon rule "every subscript must be exactly
+  `i`".
+- **Call-site-aware interprocedural summaries.** A called function's array accesses
+  are rewritten in terms of each call's arguments and tested like the loop's own.
+  For example, `scale_row(&a[i*n], n)` is recognised as touching only row `i`.
+- **Scalar privatization and reductions**, emitted as `private`, `lastprivate` and
+  `reduction` clauses.
+- **Aliasing made explicit.** Two pointers the loop uses are either proven not to
+  overlap (distinct objects, incompatible element types, `restrict`, or every caller
+  passing separate arrays), or the pragma gets a run-time overlap check in its
+  `if()`. Failing both, the loop stays sequential. GPU offload requires a proof.
+
+Each of these has a flag that restores the previous, simpler rule (`-ipa=coarse`,
+`-alias=assume`), so its effect can be measured. A five-minute walkthrough is
+`demo/run.sh`.
 
 The brief's suggested base was ROSE. ROSE's main advantage is built-in parsing
 support for programs that already contain CUDA/OpenMP/UPC constructs, but this
@@ -27,12 +47,17 @@ Five passes, in this order, for every candidate loop:
    Clang's `CallGraph` utility, keyed by `FunctionDecl*`, and walks each loop's
    callees transitively (breadth-first, with a cycle guard) to find every function
    reachable from the loop body, not just the direct callees.
-3. **Safety analysis** (`src/analysis/SafetyAnalysis.{h,cpp}`). A tri-state verdict —
-   `SAFE` / `UNKNOWN` / `UNSAFE`, not a bool, since "cannot see this far" and "found a
-   real hazard" are different findings. Two coarse, conservative checks feed it: does
-   anything reachable from the loop's callees write through a pointer parameter or
-   touch a global, and does the loop body carry a dependence across iterations (every
-   array/pointer access must be indexed by exactly the induction variable).
+3. **Safety analysis** (`src/analysis/SafetyAnalysis.{h,cpp}`, using
+   `AffineAccess`, `DependenceTest`, `Summaries`, `ScalarAnalysis` and
+   `AliasAnalysis`). A tri-state verdict — `SAFE` / `UNKNOWN` / `UNSAFE`, not a
+   bool, since "cannot see this far" and "found a real hazard" are different
+   findings. Every array access in the loop, and in the functions it calls
+   (substituted per call site), becomes an affine subscript, and every pair that
+   could conflict goes through the dependence tests. Scalars the loop writes are
+   classified as private, lastprivate, reduction or shared. Pairs of pointers are
+   proven disjoint or given a run-time check. The report names the access pair and
+   test behind every verdict. A recursive or opaque callee, or a subscript that
+   isn't affine, makes the loop `UNKNOWN`, never `SAFE`.
 4. **Profitability** (`src/analysis/Profitability.{h,cpp}`). A roofline-style cost
    model (`t_seq`/`t_cpu`/`t_gpu`, argmin), driven by a `MachineModel` struct whose
    parameters are all overridable from the command line. Turns a `SAFE` loop's trip
@@ -48,7 +73,9 @@ Five passes, in this order, for every candidate loop:
    `GPU_OFFLOAD` loops (wrapping their transitive callees in `declare target`), or
    `#pragma omp parallel for` for `CPU_PARALLEL` loops, into a sibling `<name>.omp.c`.
    Never in place. `map()` direction and extent come straight from the profitability
-   pass's own array-region analysis rather than being recomputed.
+   pass's own array-region analysis rather than being recomputed. Scalar clauses
+   (`private`, `reduction`, ...) come from the safety pass, and a run-time alias
+   check is joined into the pragma's `if(parallel: ...)`.
 
 `src/driver/main.cpp` is wiring only; it holds no analysis logic.
 
@@ -67,7 +94,14 @@ at the `lib/cmake` directory of your LLVM/Clang installation (wherever
 because the benchmarks `#include <stdio.h>`/`<time.h>` to print a checksum and
 measure timing.
 
-To see the whole pipeline narrated end to end, one stage at a time:
+For a short walkthrough of the current analysis (safety through function calls,
+pointer overlap, the generated pragmas and a GPU verdict):
+
+```bash
+./demo/run.sh
+```
+
+The original hackathon walkthrough, all five stages narrated:
 
 ```bash
 ./scripts/demo.sh                # paced, waits for Enter between stages
@@ -85,6 +119,14 @@ To emit a rewritten `.omp.c` yourself: `./p05tool -rewrite <file.c> -- <clang ar
 (add `-policy naive` for the unconditional-offload comparison policy).
 
 ## Results
+
+**GPU offload on real hardware.** A spike on a Colab T4 (`eval/colab/`) confirmed
+that the generated OpenMP `target` code runs on the device with NVIDIA HPC SDK
+`nvc`, with output matching the host to 6.6e-16 relative error. That run was
+dominated by CUDA context start-up. A performance evaluation on real applications
+is the next stage of the project and has not been done yet.
+
+The results below are from the hackathon phase, measured on the host only.
 
 **Correctness.** Every rewritten benchmark's output is compared element by element
 against the sequential baseline, bit for bit — not just by a summed checksum, which
@@ -139,15 +181,15 @@ while building this comparison, is in `NOTES.md`, Days 19-21.
 
 ## What it doesn't do
 
-- **Aliasing between distinct pointer parameters is assumed away, not verified.**
-  `void f(double *a, double *b, int n) { for (i) a[i] = b[i] + 1.0; }` verifies
-  `SAFE`, but if a caller passes `b == a + 1`, the loop is really `a[i] = a[i+1] +
-  1.0` in disguise — a genuine cross-iteration hazard this check can't see, since it
-  never reasons about whether two different array parameters might alias. Same
-  promise C's `restrict` keyword makes explicit, made here implicitly and
-  unverified. Full points-to analysis is a research-grade problem, out of scope for
-  a hackathon build. Documented in `SafetyAnalysis.h`, found by this project's own
-  adversarial review.
+- **No points-to analysis.** Pointer overlap is decided per pair of names, from
+  declarations, types, `restrict` and the visible call sites (see `AliasAnalysis.h`).
+  A pair it can't prove separate gets a run-time check, and that loop is never
+  offloaded to the GPU. A loop whose accesses can't be bounded (for example
+  `b[i % 3]` read while writing through a pointer that might be `b`) is `UNKNOWN`.
+  The caller-based proof applies only to `static` functions, unless
+  `-whole-program` declares that no other file calls this one's functions.
+- **Irregular code is mostly out of reach.** Indirect subscripts (`a[idx[i]]`),
+  pointer chasing and data-dependent control flow make a loop `UNKNOWN`.
 - **Loop-carried dependences are decided by classic dependence tests**
   (ZIV, GCD, strong SIV, Banerjee with symbolic bounds) over affine subscripts,
   including 2-D/3-D nests and linearized `a[i*n + j]` indexing. Subscripts they
@@ -193,6 +235,18 @@ device run, for every benchmark, under every policy:
 No tier proves a device actually ran correctly — see `NOTES.md` for what each tier
 does and doesn't prove.
 
+**Safety verdicts against ground truth.** `eval/fuzz/fuzz.py` generates random C
+loop nests, runs the tool on them, and checks every `SAFE` verdict two ways. First,
+an instrumented build logs the memory address and iteration of every access, and a
+`SAFE` loop fails if two iterations touch the same address and one of them writes.
+Second, the parallel rewrite must produce the same output as the sequential build,
+including when the pointer arguments overlap. It runs in CI.
+
+**Parallel vs sequential.** `scripts/check_parallel.sh` rewrites a fixture with every
+`SAFE` loop forced parallel, runs it against a driver in `eval/runtime/`, and requires
+bit-identical output to the sequential build over repeated runs, at `-O2` and `-O0`.
+The alias driver also calls every guarded loop with overlapping arguments.
+
 **Both directions.** `scripts/build_and_run.sh` exercises the four demo benchmarks
 (`example`, `saxpy`, `small_update`, `compute_heavy`) end to end, but the core claim —
 that the safety and profitability checks actually discriminate, rather than always
@@ -236,6 +290,13 @@ The fixtures:
 - `tests/profitability_cases.c` — unconditional and conditional `GPU_OFFLOAD`,
   `CPU_PARALLEL`, `SEQUENTIAL`, and a known-`UNSAFE` loop confirming profitability
   never runs on a loop the safety pass didn't clear.
+- `tests/summaries.c` — interprocedural summaries: the same callee or call shape on
+  the safe and the unsafe side of a call boundary, row-start arguments, recursion and
+  opaque callees.
+- `tests/alias.c` — every way a pointer pair is proven disjoint, every run-time
+  check, and the cases that must stay `UNKNOWN`.
+- `tests/interlock.c` — loops kept off the GPU until map extents are computed from
+  subscript ranges.
 
 `scripts/demo.sh`'s Act 2 runs `tests/safety_cases.c` live, since it's the evidence
 most likely to go unseen otherwise.
@@ -252,8 +313,13 @@ most likely to go unseen otherwise.
 - `tests/` — matched safe/unsafe and profitable/not-profitable fixture pairs, see
   "How it's verified" above.
 - `scripts/` — `build_and_run.sh` (the evidence ladder), `demo.sh` (the narrated
-  walkthrough), `check_maps.py` / `compare_outputs.py` (Tier 3 and correctness
-  verification).
+  walkthrough), `check_parallel.sh` (parallel vs sequential), `gen_filecheck.py`
+  (CHECK-line snapshots), `check_maps.py` / `compare_outputs.py` (Tier 3 and
+  correctness verification).
+- `eval/` — `fuzz/` (the safety fuzzer), `runtime/` (drivers for
+  `check_parallel.sh`), `colab/` (the GPU spike notebook and its results).
+- `demo/` — a short walkthrough of the current analysis.
+- `docs/related_work.md` — comparison with prior work.
 - `NOTES.md` — the full, chronological design-decision log this README is
   consolidated from: every real decision, every bug an adversarial review caught,
   and the exact reasoning and numbers behind everything summarized above.

@@ -25,3 +25,4 @@ PANEL_SCRIPT.md
 P05-slides.pdf
 .venv/
 __pycache__/
+demo/*.omp.c
