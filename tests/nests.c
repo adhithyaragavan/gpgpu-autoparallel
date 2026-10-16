@@ -531,7 +531,7 @@ void shadowing(double *a, int n) {
   // CHECK: profitability : SEQUENTIAL{{$}}
   for (int i = 0; i < n; i++)
     // depth 1, NOT triangular. ivs: i, i (two different variables both named i)
-    // CHECK: nests.c:[[#LOOP31:@LINE+11]]:5{{$}}
+    // CHECK: nests.c:[[#LOOP31:@LINE+13]]:5{{$}}
     // CHECK: kind       : VARIABLE_BOUND{{$}}
     // CHECK: trip count : <not statically known>{{$}}
     // CHECK: nest       : depth 1, parent [[#LOOP30]]:3, 0 child loop(s){{$}}
@@ -540,8 +540,10 @@ void shadowing(double *a, int n) {
     // CHECK-NEXT: W a[i] : [i]{{$}}
     // CHECK-NEXT: safety     : SAFE{{$}}
     // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
-    // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
-    // CHECK: - data region (line {{[0-9]+}}): not hoisted: with the transfer shared across its kernel runs, no loop in it is cheapest on the GPU{{$}}
+    // CHECK: profitability : GPU_OFFLOAD{{$}}
+    // CHECK: - data/iteration: 8 B across 1 region(s): a (map(from: a[0:n]), 8 B/elem){{$}}
+    // CHECK: - map guard: n >= 1{{$}}
+    // CHECK: - data region (line {{[0-9]+}}): resident in target data if(n >= 1 && n >= 131072 && (int)(0) < (n) && (__INTPTR_TYPE__)(n) - (__INTPTR_TYPE__)(0) >= 4); transfer 0.5x of its own maps per run (2 section copies over t kernel runs per entry, t >= 4); GPU_OFFLOAD there: its share of the region's transfer makes it the cheapest{{$}}
     for (int i = 0; i < n; i++)
       a[i] = 14.0;
 }

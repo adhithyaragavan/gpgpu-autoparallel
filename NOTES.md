@@ -2815,3 +2815,54 @@ its own cases matched the sequential build.
 - Amortize mutants (a deleted update, a loop forced to the host) both caught.
 - Fuzz clean.
 - NVPTX device compile of the new fixtures' rewrites.
+
+### 2026-10-16 — Phase 2.3 follow-up: a step-count test lets time loops over a parameter hoist
+
+**Decision:** the user asked to make a time loop over a `steps` parameter hoistable under the
+gated policy.
+
+**How it works:**
+- When a region fails to pay at one step, every loop of unknown trip count around its kernels is
+  a for loop stepping by one, with no `break` and with bounds writable before the region, then
+  the region is priced again at t >= T for T = 2, 4, …, 2^20.
+- The ratios are sampled over t = T·2^k and the limit.
+- At the first T that pays, each such loop's `trip >= T` joins the region's condition C, for
+  example `(__INTPTR_TYPE__)(steps) - (__INTPTR_TYPE__)(0) >= 2`.
+- Below T, C is false and everything runs on the host, as for any false C.
+- The names in the test go through the same invariance check as the rest of C.
+- `while` loops, and loops with a `break`, still can't be tested, so they stay at one step.
+
+**Choosing T:** the smallest T that pays is taken. A larger T would lower the size guard on `n`
+(at T=2, the jacobi regions need n >= 65536). This is a choice, recorded here.
+
+**Fixtures:**
+- `amortize.c` `param_steps`: hoisted with `steps - 0 >= 2`.
+- New `while_steps`: not hoisted.
+- `converge` (a `break`): still not hoisted.
+- `nests.c` `shadowing`'s inner loop: CPU_PARALLEL → GPU_OFFLOAD inside a region over the
+  `n`-trip outer loop, with `n - 0 >= 4`. This is a target change on a SAFE loop caused by
+  amortization pricing, allowed under the Phase 2 rule.
+- Under gated, `hoist.c` now has 8 target regions (0 before), and its gated runtime check is in CI.
+
+**Runtime coverage:**
+- `amortize_main.c` gained n = 70000, so `param_steps`'s region, which needs n > 65536, actually
+  activates. It also gained a `steps = 1` call.
+- A mutant that drops the step test from the region's `if` only fails the gated runtime check:
+  the region maps and copies back while the loops run on the host.
+
+**Adversarial review of the step test (2026-10-16), one wrong output and one gap, both fixed:**
+- **The step count read memory.** A count like `*s`, `p->steps` or `s[0]` passed the invariance
+  check, which sees only the base name, so a write inside the region (`*s = 1`) flipped C midway.
+  Later kernels then ran on the host over stale data, and the region's end copied the device's
+  copy back. The runtime check showed the mismatch.
+  - **Fix:** `exprText`, which builds every loop text in C (the first-test and the step test),
+    now refuses member access, subscripts, `*`, assignments and `++`/`--`. Names only.
+  - The first-test path had the same hole before; it was unreachable until now.
+  - Case: `amortize.c` `deref_steps`, not hoisted.
+- **The gap:** only ascending `<` step tests were pinned, so an off-by-one in the inclusive or
+  descending text passed lit. The runtime check can't see it either, because C stays consistent
+  and only the cost changes.
+  - New cases: `incl_steps` (`steps - 1 >= 1`) and `down_steps` (`steps - 0 >= 2`). The driver
+    calls each at 1–3 steps.
+- **Not fixed:** one t still stands for every loop of unknown trip count (a pricing
+  approximation; no failing shape found).

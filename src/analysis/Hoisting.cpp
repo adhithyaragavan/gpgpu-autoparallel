@@ -216,29 +216,9 @@ struct HoistPlanner::Impl {
             "runs can't be tested before the region";
       return false;
     }
-    auto Text = [&](const Expr *E, std::string &Out) {
-      SourceRange SR = E->getSourceRange();
-      if (SR.getBegin().isMacroID() || SR.getEnd().isMacroID())
-        return false;
-      Out = Lexer::getSourceText(CharSourceRange::getTokenRange(SR), SM,
-                                 P.Ctx.getLangOpts())
-                .str();
-      struct N : RecursiveASTVisitor<N> {
-        llvm::SetVector<const VarDecl *> *Names;
-        bool Ok = true;
-        bool VisitDeclRefExpr(DeclRefExpr *D) {
-          if (const VarDecl *V = canon(D->getDecl()))
-            Names->insert(V);
-          return true;
-        }
-        bool VisitCallExpr(CallExpr *) { return Ok = false; }
-      } Vis;
-      Vis.Names = &Names;
-      Vis.TraverseStmt(const_cast<Expr *>(E));
-      return Vis.Ok && !Out.empty();
-    };
     std::string St, Bd;
-    if (!Text(LI.StartExpr, St) || !Text(LI.BoundExpr, Bd)) {
+    if (!exprText(LI.StartExpr, St, Names) ||
+        !exprText(LI.BoundExpr, Bd, Names)) {
       Why = "the bounds of a loop around a GPU loop can't be written before "
             "the region";
       return false;
@@ -276,15 +256,15 @@ struct HoistPlanner::Impl {
         V += C * std::pow(T, static_cast<double>(P));
       return V;
     }
-    /// This over O, the most it is at t = 1, 2, 4, ..., 2^30 and as t ->
-    /// infinity (a ratio of two such sums can peak in between, so it is
-    /// sampled rather than taken at the ends).
-    double ratioTo(const Runs &O) const {
+    /// This over O, the most it is at t = Min, 2 Min, 4 Min, ... (31 of
+    /// them) and as t -> infinity (a ratio of two such sums can peak in
+    /// between, so it is sampled rather than taken at the ends).
+    double ratioTo(const Runs &O, double Min = 1.0) const {
       if (O.Terms.empty())
         return 0.0;
       double Max = 0.0;
       for (int E = 0; E <= 30; ++E) {
-        const double T = std::ldexp(1.0, E);
+        const double T = Min * std::ldexp(1.0, E);
         const double B = O.at(T);
         if (B > 0.0)
           Max = std::max(Max, at(T) / B);
@@ -332,7 +312,8 @@ struct HoistPlanner::Impl {
 
   /// Runs of S per entry of the region whose top statements are Top: the
   /// trip counts of the loops between them (not S itself).
-  Mono runsIn(const Stmt *S, const llvm::DenseSet<const Stmt *> &Top) {
+  Mono runsIn(const Stmt *S, const llvm::DenseSet<const Stmt *> &Top,
+              llvm::SetVector<const Stmt *> *Sym = nullptr) {
     Mono M;
     const Stmt *Cur = S;
     while (!Top.count(Cur)) {
@@ -351,8 +332,11 @@ struct HoistPlanner::Impl {
           continue;
         }
       }
-      if (isa<ForStmt>(Cur) || isa<WhileStmt>(Cur) || isa<DoStmt>(Cur))
+      if (isa<ForStmt>(Cur) || isa<WhileStmt>(Cur) || isa<DoStmt>(Cur)) {
         ++M.Pow;
+        if (Sym)
+          Sym->insert(Cur);
+      }
     }
     return M;
   }
@@ -370,6 +354,73 @@ struct HoistPlanner::Impl {
       if (breaksOut(C))
         return true;
     return false;
+  }
+
+  /// "trips >= T" for a loop of unknown trip count that steps by one and
+  /// can't break out, its names into Names; empty when it can't be written.
+  std::string tripAtLeast(const Stmt *L, int64_t T,
+                          llvm::SetVector<const VarDecl *> &Names) {
+    const auto *FS = dyn_cast<ForStmt>(L);
+    auto It = FS ? IndexOf.find(FS) : IndexOf.end();
+    if (It == IndexOf.end() || breaksOut(FS->getBody()))
+      return "";
+    const LoopInfo &LI = P.Loops[It->second];
+    if (LI.Kind == LoopKind::Unrecognized || !LI.Step || !LI.StartExpr ||
+        !LI.BoundExpr)
+      return "";
+    const bool Up = *LI.Step == 1 && (LI.CmpOp == BO_LT || LI.CmpOp == BO_LE);
+    const bool Down =
+        *LI.Step == -1 && (LI.CmpOp == BO_GT || LI.CmpOp == BO_GE);
+    if (!Up && !Down)
+      return "";
+    std::string St, Bd;
+    if (!exprText(LI.StartExpr, St, Names) || !exprText(LI.BoundExpr, Bd, Names))
+      return "";
+    const std::string I = "(" + std::string(IntPtrType) + ")";
+    const std::string Diff = Up ? I + "(" + Bd + ") - " + I + "(" + St + ")"
+                                : I + "(" + St + ") - " + I + "(" + Bd + ")";
+    const bool Inclusive = LI.CmpOp == BO_LE || LI.CmpOp == BO_GE;
+    return Diff + " >= " + std::to_string(Inclusive ? T - 1 : T);
+  }
+
+  /// E's source text and the variables it names; false for a macro, a
+  /// call, a side effect, or a read of memory (*p, p->f, a[i]): only names
+  /// can be checked unchanged in a region, and C is evaluated again at
+  /// every pragma in it.
+  bool exprText(const Expr *E, std::string &Out,
+                llvm::SetVector<const VarDecl *> &Names) {
+    SourceRange SR = E->getSourceRange();
+    if (SR.getBegin().isMacroID() || SR.getEnd().isMacroID())
+      return false;
+    Out = Lexer::getSourceText(CharSourceRange::getTokenRange(SR), SM,
+                               P.Ctx.getLangOpts())
+              .str();
+    struct N : RecursiveASTVisitor<N> {
+      llvm::SetVector<const VarDecl *> *Names;
+      bool Ok = true;
+      bool VisitDeclRefExpr(DeclRefExpr *D) {
+        if (const VarDecl *V = canon(D->getDecl()))
+          Names->insert(V);
+        return true;
+      }
+      bool VisitCallExpr(CallExpr *) { return Ok = false; }
+      bool VisitMemberExpr(MemberExpr *) { return Ok = false; }
+      bool VisitArraySubscriptExpr(ArraySubscriptExpr *) { return Ok = false; }
+      bool VisitStmtExpr(StmtExpr *) { return Ok = false; }
+      bool VisitUnaryOperator(UnaryOperator *U) {
+        if (U->getOpcode() == UO_Deref || U->isIncrementDecrementOp())
+          Ok = false;
+        return Ok;
+      }
+      bool VisitBinaryOperator(BinaryOperator *B) {
+        if (B->isAssignmentOp())
+          Ok = false;
+        return Ok;
+      }
+    } Vis;
+    Vis.Names = &Names;
+    Vis.TraverseStmt(const_cast<Expr *>(E));
+    return Vis.Ok && !Out.empty();
   }
 
   /// Stands in C's parts for loop K's cost guard until it is priced.
@@ -1215,55 +1266,90 @@ struct HoistPlanner::Impl {
       // Copies per entry, in sections (one base one way): the hull in and
       // out once, and each update each time it runs; kernel runs per entry.
       Runs Copies, Kernels;
+      llvm::SetVector<const Stmt *> Sym; // loops of unknown trip count
       for (const VarDecl *B : M)
         Copies.add(Mono{}, RegionWritten.count(B) ? 2.0 : 1.0);
       for (const Pending &U : Updates)
-        Copies.add(runsIn(U.S, RSet), U.Both.size() + U.Writes.size());
+        Copies.add(runsIn(U.S, RSet, &Sym), U.Both.size() + U.Writes.size());
       for (int K : Sites)
-        Kernels.add(runsIn(P.Loops[K].Loop, RSet), 1.0);
-      // Sections assumed alike in size: a run of loop K costs its own
-      // transfer times (copies per kernel run) / (its own sections).
-      const double PerRun = Copies.ratioTo(Kernels);
+        Kernels.add(runsIn(P.Loops[K].Loop, RSet, &Sym), 1.0);
       auto OwnOf = [&](int K) {
         double Own = 0.0;
         for (const ArrayRegion &Reg : Plans[K]->Regions)
           Own += Reg.mapKind() == "tofrom" ? 2.0 : 1.0;
         return Own;
       };
-      bool Any = false;
-      for (int K : Sites) {
-        const double Own = OwnOf(K);
-        const double Scale = Own > 0.0 ? PerRun / Own : 0.0;
-        ProfitabilityVerdict A =
-            P.Profit.priceResident(P.Loops[K], Safety[K], *Plans[K], Scale);
-        const bool Gpu = A.Target == OffloadTarget::GpuOffload;
-        if (V[K].Target == OffloadTarget::GpuOffload && !Gpu)
-          return Fail("a loop that picks the GPU with its own maps no longer "
-                      "does with its share of the region's transfer (" +
-                      fmtRatio(Scale) + " of its own maps per run)");
-        Any |= Gpu;
-        SharedGpu[K] = Gpu;
-        ShareNote[K] = "; transfer " + fmtRatio(Scale) +
-                       " of its own maps per run (" + Copies.text() +
-                       " section copies over " + Kernels.text() +
-                       " kernel runs per entry)";
-        if (Gpu && A.GuardExpr)
-          GuardOf[K] = *A.GuardExpr;
+      // Priced with every loop of unknown trip count running at least Min
+      // times; the reason it doesn't pay, if it doesn't.
+      auto Price = [&](double Min) -> std::optional<std::string> {
+        GuardOf.clear();
+        ShareNote.clear();
+        SharedGpu.clear();
+        // Sections assumed alike in size: a run of loop K costs its own
+        // transfer times (copies per kernel run) / (its own sections).
+        const double PerRun = Copies.ratioTo(Kernels, Min);
+        const std::string AtLeast =
+            Min > 1.0 ? ", t >= " + fmtCount(Min) : "";
+        bool Any = false;
+        for (int K : Sites) {
+          const double Own = OwnOf(K);
+          const double Scale = Own > 0.0 ? PerRun / Own : 0.0;
+          ProfitabilityVerdict A =
+              P.Profit.priceResident(P.Loops[K], Safety[K], *Plans[K], Scale);
+          const bool Gpu = A.Target == OffloadTarget::GpuOffload;
+          if (V[K].Target == OffloadTarget::GpuOffload && !Gpu)
+            return "a loop that picks the GPU with its own maps no longer "
+                   "does with its share of the region's transfer (" +
+                   fmtRatio(Scale) + " of its own maps per run)";
+          Any |= Gpu;
+          SharedGpu[K] = Gpu;
+          ShareNote[K] = "; transfer " + fmtRatio(Scale) +
+                         " of its own maps per run (" + Copies.text() +
+                         " section copies over " + Kernels.text() +
+                         " kernel runs per entry" + AtLeast + ")";
+          if (Gpu && A.GuardExpr)
+            GuardOf[K] = *A.GuardExpr;
+        }
+        if (!Any)
+          return std::string("with the transfer shared across its kernel "
+                             "runs, no loop in it is cheapest on the GPU");
+        // A region pays only when it copies no more than per-loop maps
+        // would for the loops it puts on the GPU by their price (the others
+        // would stay on the host and copy nothing).
+        Runs OwnCopies;
+        for (int K : Sites)
+          if (SharedGpu[K])
+            OwnCopies.add(runsIn(P.Loops[K].Loop, RSet), OwnOf(K));
+        if (Copies.ratioTo(OwnCopies, Min) > 1.0)
+          return "it would copy more than its loops' own maps (" +
+                 Copies.text() + " section copies per entry against " +
+                 OwnCopies.text() + ")";
+        return std::nullopt;
+      };
+      std::optional<std::string> Why = Price(1.0);
+      // Phase 2.3: when that is only for want of steps, find the fewest
+      // steps (a power of two) that make it pay, and test them in C.
+      if (Why && !Sym.empty()) {
+        llvm::SetVector<const VarDecl *> TripNames;
+        bool Writable = llvm::all_of(Sym, [&](const Stmt *L) {
+          return !tripAtLeast(L, 2, TripNames).empty();
+        });
+        for (const VarDecl *N : TripNames)
+          if (!Names.count(N) && NameBad(N))
+            Writable = false;
+        for (int64_t T = 2; Writable && T <= (int64_t(1) << 20); T *= 2) {
+          if (Price(static_cast<double>(T)))
+            continue;
+          Why.reset();
+          for (const Stmt *L : Sym)
+            Parts.push_back(tripAtLeast(L, T, TripNames));
+          break;
+        }
+        if (Why)
+          Price(1.0); // the report says why at the smallest count
       }
-      if (!Any)
-        return Fail("with the transfer shared across its kernel runs, no "
-                    "loop in it is cheapest on the GPU");
-      // A region pays only when it copies no more than per-loop maps would
-      // for the loops it puts on the GPU by their price (the others would
-      // stay on the host and copy nothing).
-      Runs OwnCopies;
-      for (int K : Sites)
-        if (SharedGpu[K])
-          OwnCopies.add(runsIn(P.Loops[K].Loop, RSet), OwnOf(K));
-      if (Copies.ratioTo(OwnCopies) > 1.0)
-        return Fail("it would copy more than its loops' own maps (" +
-                    Copies.text() + " section copies per entry against " +
-                    OwnCopies.text() + ")");
+      if (Why)
+        return Fail(*Why);
       // A guard is the loop's bound text: every variable in it.
       for (const auto &[K, G] : GuardOf) {
         struct B : RecursiveASTVisitor<B> {

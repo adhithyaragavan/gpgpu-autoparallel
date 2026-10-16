@@ -1,5 +1,5 @@
 // RUN: %p05 %s -- %cflags | FileCheck %s
-// CHECK: Analyzed 30 loop(s).
+// CHECK: Analyzed 41 loop(s).
 // Phase 2.3: a hoisted region's transfer shared across its kernel runs
 // (Hoisting.h). Each loop in a region pays (section copies per entry) /
 // (kernel runs per entry), relative to its own maps; a trip count not known
@@ -84,8 +84,10 @@ void const_steps(double *restrict u, double *restrict v, int n) {
   }
 }
 
-// The same with the step count a parameter: it may be 1, so the region
-// saves nothing and the loops stay on the host.
+// The same with the step count a parameter: at 1 step the region saves
+// nothing, so it is priced at the fewest steps that make it pay (2) and
+// the region's condition tests `steps - 0 >= 2`; below that, everything
+// runs on the host.
 void param_steps(double *restrict u, double *restrict v, int n, int steps) {
   // CHECK: amortize.c:[[#LOOP4:@LINE+17]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
@@ -105,7 +107,7 @@ void param_steps(double *restrict u, double *restrict v, int n, int steps) {
   // CHECK: alias      : 'v' and 'u' can't overlap (restrict){{$}}
   // CHECK: profitability : SEQUENTIAL{{$}}
   for (int t = 0; t < steps; t++) {
-    // CHECK: amortize.c:[[#LOOP5:@LINE+16]]:5{{$}}
+    // CHECK: amortize.c:[[#LOOP5:@LINE+17]]:5{{$}}
     // CHECK: kind       : VARIABLE_BOUND{{$}}
     // CHECK: trip count : <not statically known>{{$}}
     // CHECK: nest       : depth 1, parent [[#LOOP4]]:3, 0 child loop(s){{$}}
@@ -118,12 +120,13 @@ void param_steps(double *restrict u, double *restrict v, int n, int steps) {
     // CHECK-NEXT: safety     : SAFE{{$}}
     // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
     // CHECK: alias      : 'v' and 'u' can't overlap (restrict){{$}}
-    // CHECK: profitability : CPU_PARALLEL if (n - 1 >= {{[0-9]+}}){{$}}
-    // CHECK: - data region (line {{[0-9]+}}): not hoisted: with the transfer shared across its kernel runs, no loop in it is cheapest on the GPU{{$}}
-    // CHECK: - data region (line {{[0-9]+}}): not hoisted: with the transfer shared across its kernel runs, no loop in it is cheapest on the GPU{{$}}
+    // CHECK: profitability : GPU_OFFLOAD{{$}}
+    // CHECK: - data/iteration: 16 B across 2 region(s): v (map(from: v[1:((__INTPTR_TYPE__)n - 2)]), 8 B/elem), u (map(to: u[0:n]), 8 B/elem){{$}}
+    // CHECK: - map guard: n >= 3{{$}}
+    // CHECK: - data region (line {{[0-9]+}}): resident in target data if(n >= 3 && n - 1 >= 65536 && (int)(0) < (steps) && (__INTPTR_TYPE__)(steps) - (__INTPTR_TYPE__)(0) >= 2); transfer 0.5x of its own maps per run (4 section copies over 2*t kernel runs per entry, t >= 2); GPU_OFFLOAD there: its share of the region's transfer makes it the cheapest{{$}}
     for (int i = 1; i < n - 1; i++)
       v[i] = relax(u[i - 1] + u[i + 1]);
-    // CHECK: amortize.c:[[#LOOP6:@LINE+15]]:5{{$}}
+    // CHECK: amortize.c:[[#LOOP6:@LINE+16]]:5{{$}}
     // CHECK: kind       : VARIABLE_BOUND{{$}}
     // CHECK: trip count : <not statically known>{{$}}
     // CHECK: nest       : depth 1, parent [[#LOOP4]]:3, 0 child loop(s){{$}}
@@ -135,9 +138,10 @@ void param_steps(double *restrict u, double *restrict v, int n, int steps) {
     // CHECK-NEXT: safety     : SAFE{{$}}
     // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
     // CHECK: alias      : 'u' and 'v' can't overlap (restrict){{$}}
-    // CHECK: profitability : CPU_PARALLEL if (n - 1 >= {{[0-9]+}}){{$}}
-    // CHECK: - data region (line {{[0-9]+}}): not hoisted: with the transfer shared across its kernel runs, no loop in it is cheapest on the GPU{{$}}
-    // CHECK: - data region (line {{[0-9]+}}): not hoisted: with the transfer shared across its kernel runs, no loop in it is cheapest on the GPU{{$}}
+    // CHECK: profitability : GPU_OFFLOAD{{$}}
+    // CHECK: - data/iteration: 16 B across 2 region(s): u (map(from: u[1:((__INTPTR_TYPE__)n - 2)]), 8 B/elem), v (map(to: v[1:((__INTPTR_TYPE__)n - 2)]), 8 B/elem){{$}}
+    // CHECK: - map guard: n >= 3{{$}}
+    // CHECK: - data region (line {{[0-9]+}}): resident in target data if(n >= 3 && n - 1 >= 65536 && (int)(0) < (steps) && (__INTPTR_TYPE__)(steps) - (__INTPTR_TYPE__)(0) >= 2); transfer 0.5x of its own maps per run (4 section copies over 2*t kernel runs per entry, t >= 2); GPU_OFFLOAD there: its share of the region's transfer makes it the cheapest{{$}}
     for (int i = 1; i < n - 1; i++)
       u[i] = relax(v[i]);
   }
@@ -356,7 +360,8 @@ void nested_steps(void) {
 }
 
 // A convergence loop: 1000 steps at most, but it can stop after any, so
-// it counts as an unknown number (1 at worst): not hoisted.
+// it counts as an unknown number (1 at worst) that no condition before the
+// loop can test: not hoisted.
 void converge(double *restrict u, double *restrict v, int n, double tol) {
   // CHECK: amortize.c:[[#LOOP18:@LINE+17]]:3{{$}}
   // CHECK: kind       : CONSTANT_BOUND{{$}}
@@ -577,4 +582,233 @@ void own_gpu(double *restrict y, double *restrict z, int n) {
   // CHECK: - data region (line {{[0-9]+}}): not hoisted: a loop that picks the GPU with its own maps no longer does with its share of the region's transfer (2x of its own maps per run){{$}}
   for (int i = 0; i < n; i++)
     z[i] = relax(y[i]);
+}
+
+// A while loop as the time step: its trip count can't be tested before
+// it, so it counts as 1 step: not hoisted.
+void while_steps(double *restrict u, double *restrict v, int n, int steps) {
+  int t = 0;
+  while (t < steps) {
+    // CHECK: amortize.c:[[#LOOP30:@LINE+16]]:5{{$}}
+    // CHECK: kind       : VARIABLE_BOUND{{$}}
+    // CHECK: trip count : <not statically known>{{$}}
+    // CHECK: nest       : depth 0, 0 child loop(s), inside while/do or a loop header{{$}}
+    // CHECK: nest ivs   : i{{$}}
+    // CHECK: relax reaches 0 function(s), max depth 0: <nothing> (leaf){{$}}
+    // CHECK: accesses   : 3 (3 affine){{$}}
+    // CHECK-NEXT: W v[i] : [i]{{$}}
+    // CHECK-NEXT: R u[i - 1] : [i - 1]{{$}}
+    // CHECK-NEXT: R u[i + 1] : [i + 1]{{$}}
+    // CHECK-NEXT: safety     : SAFE{{$}}
+    // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
+    // CHECK: alias      : 'v' and 'u' can't overlap (restrict){{$}}
+    // CHECK: profitability : CPU_PARALLEL if (n - 1 >= {{[0-9]+}}){{$}}
+    // CHECK: - data region (line {{[0-9]+}}): not hoisted: a while loop around a GPU loop may not run, and a pointer's section is owned memory only when the loop touches it{{$}}
+    // CHECK: - data region (line {{[0-9]+}}): not hoisted: with the transfer shared across its kernel runs, no loop in it is cheapest on the GPU{{$}}
+    for (int i = 1; i < n - 1; i++)
+      v[i] = relax(u[i - 1] + u[i + 1]);
+    // CHECK: amortize.c:[[#LOOP31:@LINE+15]]:5{{$}}
+    // CHECK: kind       : VARIABLE_BOUND{{$}}
+    // CHECK: trip count : <not statically known>{{$}}
+    // CHECK: nest       : depth 0, 0 child loop(s), inside while/do or a loop header{{$}}
+    // CHECK: nest ivs   : i{{$}}
+    // CHECK: relax reaches 0 function(s), max depth 0: <nothing> (leaf){{$}}
+    // CHECK: accesses   : 2 (2 affine){{$}}
+    // CHECK-NEXT: W u[i] : [i]{{$}}
+    // CHECK-NEXT: R v[i] : [i]{{$}}
+    // CHECK-NEXT: safety     : SAFE{{$}}
+    // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
+    // CHECK: alias      : 'u' and 'v' can't overlap (restrict){{$}}
+    // CHECK: profitability : CPU_PARALLEL if (n - 1 >= {{[0-9]+}}){{$}}
+    // CHECK: - data region (line {{[0-9]+}}): not hoisted: a while loop around a GPU loop may not run, and a pointer's section is owned memory only when the loop touches it{{$}}
+    // CHECK: - data region (line {{[0-9]+}}): not hoisted: with the transfer shared across its kernel runs, no loop in it is cheapest on the GPU{{$}}
+    for (int i = 1; i < n - 1; i++)
+      u[i] = relax(v[i]);
+    t++;
+  }
+}
+
+// Steps 1..steps (inclusive bound): the test is `steps - 1 >= 1`.
+void incl_steps(double *restrict u, double *restrict v, int n, int steps) {
+  // CHECK: amortize.c:[[#LOOP32:@LINE+17]]:3{{$}}
+  // CHECK: kind       : VARIABLE_BOUND{{$}}
+  // CHECK: trip count : <not statically known>{{$}}
+  // CHECK: nest       : depth 0, 2 child loop(s){{$}}
+  // CHECK: nest ivs   : t{{$}}
+  // CHECK: relax reaches 0 function(s), max depth 0: <nothing> (leaf){{$}}
+  // CHECK: accesses   : 5 (5 affine){{$}}
+  // CHECK-NEXT: W v[i] : [i]{{$}}
+  // CHECK-NEXT: R u[i - 1] : [i - 1]{{$}}
+  // CHECK-NEXT: R u[i + 1] : [i + 1]{{$}}
+  // CHECK-NEXT: W u[i] : [i]{{$}}
+  // CHECK-NEXT: R v[i] : [i]{{$}}
+  // CHECK-NEXT: safety     : UNSAFE{{$}}
+  // CHECK: - W v[i]: every iteration touches the same element{{$}}
+  // CHECK: deps       : 5 pair(s), 0 independent{{$}}
+  // CHECK: alias      : 'v' and 'u' can't overlap (restrict){{$}}
+  // CHECK: profitability : SEQUENTIAL{{$}}
+  for (int t = 1; t <= steps; t++) {
+    // CHECK: amortize.c:[[#LOOP33:@LINE+17]]:5{{$}}
+    // CHECK: kind       : VARIABLE_BOUND{{$}}
+    // CHECK: trip count : <not statically known>{{$}}
+    // CHECK: nest       : depth 1, parent [[#LOOP32]]:3, 0 child loop(s){{$}}
+    // CHECK: nest ivs   : t, i{{$}}
+    // CHECK: relax reaches 0 function(s), max depth 0: <nothing> (leaf){{$}}
+    // CHECK: accesses   : 3 (3 affine){{$}}
+    // CHECK-NEXT: W v[i] : [i]{{$}}
+    // CHECK-NEXT: R u[i - 1] : [i - 1]{{$}}
+    // CHECK-NEXT: R u[i + 1] : [i + 1]{{$}}
+    // CHECK-NEXT: safety     : SAFE{{$}}
+    // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
+    // CHECK: alias      : 'v' and 'u' can't overlap (restrict){{$}}
+    // CHECK: profitability : GPU_OFFLOAD{{$}}
+    // CHECK: - data/iteration: 16 B across 2 region(s): v (map(from: v[1:((__INTPTR_TYPE__)n - 2)]), 8 B/elem), u (map(to: u[0:n]), 8 B/elem){{$}}
+    // CHECK: - map guard: n >= 3{{$}}
+    // CHECK: - data region (line {{[0-9]+}}): resident in target data if(n >= 3 && n - 1 >= 65536 && (int)(1) <= (steps) && (__INTPTR_TYPE__)(steps) - (__INTPTR_TYPE__)(1) >= 1); transfer 0.5x of its own maps per run (4 section copies over 2*t kernel runs per entry, t >= 2); GPU_OFFLOAD there: its share of the region's transfer makes it the cheapest{{$}}
+    for (int i = 1; i < n - 1; i++)
+      v[i] = relax(u[i - 1] + u[i + 1]);
+    // CHECK: amortize.c:[[#LOOP34:@LINE+16]]:5{{$}}
+    // CHECK: kind       : VARIABLE_BOUND{{$}}
+    // CHECK: trip count : <not statically known>{{$}}
+    // CHECK: nest       : depth 1, parent [[#LOOP32]]:3, 0 child loop(s){{$}}
+    // CHECK: nest ivs   : t, i{{$}}
+    // CHECK: relax reaches 0 function(s), max depth 0: <nothing> (leaf){{$}}
+    // CHECK: accesses   : 2 (2 affine){{$}}
+    // CHECK-NEXT: W u[i] : [i]{{$}}
+    // CHECK-NEXT: R v[i] : [i]{{$}}
+    // CHECK-NEXT: safety     : SAFE{{$}}
+    // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
+    // CHECK: alias      : 'u' and 'v' can't overlap (restrict){{$}}
+    // CHECK: profitability : GPU_OFFLOAD{{$}}
+    // CHECK: - data/iteration: 16 B across 2 region(s): u (map(from: u[1:((__INTPTR_TYPE__)n - 2)]), 8 B/elem), v (map(to: v[1:((__INTPTR_TYPE__)n - 2)]), 8 B/elem){{$}}
+    // CHECK: - map guard: n >= 3{{$}}
+    // CHECK: - data region (line {{[0-9]+}}): resident in target data if(n >= 3 && n - 1 >= 65536 && (int)(1) <= (steps) && (__INTPTR_TYPE__)(steps) - (__INTPTR_TYPE__)(1) >= 1); transfer 0.5x of its own maps per run (4 section copies over 2*t kernel runs per entry, t >= 2); GPU_OFFLOAD there: its share of the region's transfer makes it the cheapest{{$}}
+    for (int i = 1; i < n - 1; i++)
+      u[i] = relax(v[i]);
+  }
+}
+
+// Counting down: `steps - 0 >= 2`.
+void down_steps(double *restrict u, double *restrict v, int n, int steps) {
+  // CHECK: amortize.c:[[#LOOP35:@LINE+17]]:3{{$}}
+  // CHECK: kind       : CONSTANT_BOUND{{$}}
+  // CHECK: trip count : <not statically known>{{$}}
+  // CHECK: nest       : depth 0, 2 child loop(s){{$}}
+  // CHECK: nest ivs   : t{{$}}
+  // CHECK: relax reaches 0 function(s), max depth 0: <nothing> (leaf){{$}}
+  // CHECK: accesses   : 5 (5 affine){{$}}
+  // CHECK-NEXT: W v[i] : [i]{{$}}
+  // CHECK-NEXT: R u[i - 1] : [i - 1]{{$}}
+  // CHECK-NEXT: R u[i + 1] : [i + 1]{{$}}
+  // CHECK-NEXT: W u[i] : [i]{{$}}
+  // CHECK-NEXT: R v[i] : [i]{{$}}
+  // CHECK-NEXT: safety     : UNSAFE{{$}}
+  // CHECK: - W v[i]: every iteration touches the same element{{$}}
+  // CHECK: deps       : 5 pair(s), 0 independent{{$}}
+  // CHECK: alias      : 'v' and 'u' can't overlap (restrict){{$}}
+  // CHECK: profitability : SEQUENTIAL{{$}}
+  for (int t = steps; t > 0; t--) {
+    // CHECK: amortize.c:[[#LOOP36:@LINE+17]]:5{{$}}
+    // CHECK: kind       : VARIABLE_BOUND{{$}}
+    // CHECK: trip count : <not statically known>{{$}}
+    // CHECK: nest       : depth 1, parent [[#LOOP35]]:3, 0 child loop(s){{$}}
+    // CHECK: nest ivs   : t, i{{$}}
+    // CHECK: relax reaches 0 function(s), max depth 0: <nothing> (leaf){{$}}
+    // CHECK: accesses   : 3 (3 affine){{$}}
+    // CHECK-NEXT: W v[i] : [i]{{$}}
+    // CHECK-NEXT: R u[i - 1] : [i - 1]{{$}}
+    // CHECK-NEXT: R u[i + 1] : [i + 1]{{$}}
+    // CHECK-NEXT: safety     : SAFE{{$}}
+    // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
+    // CHECK: alias      : 'v' and 'u' can't overlap (restrict){{$}}
+    // CHECK: profitability : GPU_OFFLOAD{{$}}
+    // CHECK: - data/iteration: 16 B across 2 region(s): v (map(from: v[1:((__INTPTR_TYPE__)n - 2)]), 8 B/elem), u (map(to: u[0:n]), 8 B/elem){{$}}
+    // CHECK: - map guard: n >= 3{{$}}
+    // CHECK: - data region (line {{[0-9]+}}): resident in target data if(n >= 3 && n - 1 >= 65536 && (int)(steps) > (0) && (__INTPTR_TYPE__)(steps) - (__INTPTR_TYPE__)(0) >= 2); transfer 0.5x of its own maps per run (4 section copies over 2*t kernel runs per entry, t >= 2); GPU_OFFLOAD there: its share of the region's transfer makes it the cheapest{{$}}
+    for (int i = 1; i < n - 1; i++)
+      v[i] = relax(u[i - 1] + u[i + 1]);
+    // CHECK: amortize.c:[[#LOOP37:@LINE+16]]:5{{$}}
+    // CHECK: kind       : VARIABLE_BOUND{{$}}
+    // CHECK: trip count : <not statically known>{{$}}
+    // CHECK: nest       : depth 1, parent [[#LOOP35]]:3, 0 child loop(s){{$}}
+    // CHECK: nest ivs   : t, i{{$}}
+    // CHECK: relax reaches 0 function(s), max depth 0: <nothing> (leaf){{$}}
+    // CHECK: accesses   : 2 (2 affine){{$}}
+    // CHECK-NEXT: W u[i] : [i]{{$}}
+    // CHECK-NEXT: R v[i] : [i]{{$}}
+    // CHECK-NEXT: safety     : SAFE{{$}}
+    // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
+    // CHECK: alias      : 'u' and 'v' can't overlap (restrict){{$}}
+    // CHECK: profitability : GPU_OFFLOAD{{$}}
+    // CHECK: - data/iteration: 16 B across 2 region(s): u (map(from: u[1:((__INTPTR_TYPE__)n - 2)]), 8 B/elem), v (map(to: v[1:((__INTPTR_TYPE__)n - 2)]), 8 B/elem){{$}}
+    // CHECK: - map guard: n >= 3{{$}}
+    // CHECK: - data region (line {{[0-9]+}}): resident in target data if(n >= 3 && n - 1 >= 65536 && (int)(steps) > (0) && (__INTPTR_TYPE__)(steps) - (__INTPTR_TYPE__)(0) >= 2); transfer 0.5x of its own maps per run (4 section copies over 2*t kernel runs per entry, t >= 2); GPU_OFFLOAD there: its share of the region's transfer makes it the cheapest{{$}}
+    for (int i = 1; i < n - 1; i++)
+      u[i] = relax(v[i]);
+  }
+}
+
+// The step count is read through a pointer, which the region can't check
+// unchanged (it changes here, after the first step): not hoisted.
+void deref_steps(double *restrict u, double *restrict v, int n, int *s) {
+  // CHECK: amortize.c:[[#LOOP38:@LINE+21]]:3{{$}}
+  // CHECK: kind       : VARIABLE_BOUND{{$}}
+  // CHECK: trip count : <not statically known>{{$}}
+  // CHECK: nest       : depth 0, 2 child loop(s){{$}}
+  // CHECK: nest ivs   : t{{$}}
+  // CHECK: relax reaches 0 function(s), max depth 0: <nothing> (leaf){{$}}
+  // CHECK: accesses   : 7 (7 affine){{$}}
+  // CHECK-NEXT: R *s : [0]{{$}}
+  // CHECK-NEXT: W v[i] : [i]{{$}}
+  // CHECK-NEXT: R u[i - 1] : [i - 1]{{$}}
+  // CHECK-NEXT: R u[i + 1] : [i + 1]{{$}}
+  // CHECK-NEXT: W *s : [0]{{$}}
+  // CHECK-NEXT: W u[i] : [i]{{$}}
+  // CHECK-NEXT: R v[i] : [i]{{$}}
+  // CHECK-NEXT: safety     : UNSAFE{{$}}
+  // CHECK: - R *s and W *s: every iteration touches the same elements{{$}}
+  // CHECK: deps       : 7 pair(s), 0 independent{{$}}
+  // CHECK: alias      : 's' and 'v' can't overlap (incompatible element types){{$}}
+  // CHECK: alias      : 's' and 'u' can't overlap (incompatible element types){{$}}
+  // CHECK: alias      : 'v' and 'u' can't overlap (restrict){{$}}
+  // CHECK: profitability : SEQUENTIAL{{$}}
+  for (int t = 0; t < *s; t++) {
+    // CHECK: amortize.c:[[#LOOP39:@LINE+16]]:5{{$}}
+    // CHECK: kind       : VARIABLE_BOUND{{$}}
+    // CHECK: trip count : <not statically known>{{$}}
+    // CHECK: nest       : depth 1, parent [[#LOOP38]]:3, 0 child loop(s){{$}}
+    // CHECK: nest ivs   : t, i{{$}}
+    // CHECK: relax reaches 0 function(s), max depth 0: <nothing> (leaf){{$}}
+    // CHECK: accesses   : 3 (3 affine){{$}}
+    // CHECK-NEXT: W v[i] : [i]{{$}}
+    // CHECK-NEXT: R u[i - 1] : [i - 1]{{$}}
+    // CHECK-NEXT: R u[i + 1] : [i + 1]{{$}}
+    // CHECK-NEXT: safety     : SAFE{{$}}
+    // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
+    // CHECK: alias      : 'v' and 'u' can't overlap (restrict){{$}}
+    // CHECK: profitability : CPU_PARALLEL if (n - 1 >= {{[0-9]+}}){{$}}
+    // CHECK: - data region (line {{[0-9]+}}): not hoisted: the bounds of a loop around a GPU loop can't be written before the region{{$}}
+    // CHECK: - data region (line {{[0-9]+}}): not hoisted: with the transfer shared across its kernel runs, no loop in it is cheapest on the GPU{{$}}
+    for (int i = 1; i < n - 1; i++)
+      v[i] = relax(u[i - 1] + u[i + 1]);
+    if (t == 0)
+      *s = 1;
+    // CHECK: amortize.c:[[#LOOP40:@LINE+15]]:5{{$}}
+    // CHECK: kind       : VARIABLE_BOUND{{$}}
+    // CHECK: trip count : <not statically known>{{$}}
+    // CHECK: nest       : depth 1, parent [[#LOOP38]]:3, 0 child loop(s){{$}}
+    // CHECK: nest ivs   : t, i{{$}}
+    // CHECK: relax reaches 0 function(s), max depth 0: <nothing> (leaf){{$}}
+    // CHECK: accesses   : 2 (2 affine){{$}}
+    // CHECK-NEXT: W u[i] : [i]{{$}}
+    // CHECK-NEXT: R v[i] : [i]{{$}}
+    // CHECK-NEXT: safety     : SAFE{{$}}
+    // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
+    // CHECK: alias      : 'u' and 'v' can't overlap (restrict){{$}}
+    // CHECK: profitability : CPU_PARALLEL if (n - 1 >= {{[0-9]+}}){{$}}
+    // CHECK: - data region (line {{[0-9]+}}): not hoisted: the bounds of a loop around a GPU loop can't be written before the region{{$}}
+    // CHECK: - data region (line {{[0-9]+}}): not hoisted: with the transfer shared across its kernel runs, no loop in it is cheapest on the GPU{{$}}
+    for (int i = 1; i < n - 1; i++)
+      u[i] = relax(v[i]);
+  }
 }

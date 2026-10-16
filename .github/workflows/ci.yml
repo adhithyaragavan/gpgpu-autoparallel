@@ -53,6 +53,7 @@ jobs:
           POLICY=gated scripts/check_parallel.sh tests/amortize.c eval/runtime/amortize_main.c
           POLICY=gated scripts/check_parallel.sh tests/dependence.c eval/runtime/dependence_main.c
           POLICY=gated scripts/check_parallel.sh tests/maps.c eval/runtime/maps_main.c
+          POLICY=gated scripts/check_parallel.sh tests/hoist.c eval/runtime/hoist_main.c
           scripts/check_parallel.sh
           scripts/check_parallel.sh tests/scalars.c eval/runtime/scalars_main.c
           scripts/check_parallel.sh tests/summaries.c eval/runtime/summaries_main.c

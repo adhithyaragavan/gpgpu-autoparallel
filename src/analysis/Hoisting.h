@@ -59,6 +59,12 @@
 // the GPU at its share. Candidates are found with no transfer at all (the
 // optimistic bound), so no region is missed.
 //
+// When R fails that only for want of steps (some t), and every loop behind
+// a t is a for loop stepping by one with no break and bounds writable
+// before R, R is priced again with t >= T for T = 2, 4, ... 2^20; at the
+// first T that pays, `trip >= T` for each such loop joins C (so below T
+// everything runs on the host, as for any false C).
+//
 // The largest candidate is tried first: each function's top-level run of
 // statements, then each enclosing loop, recursing inward on failure.
 // -hoist=off keeps per-loop maps (ablation baseline).

@@ -25,12 +25,20 @@ static void dumpd(double v) { dump(&v, sizeof v); }
 
 int main(int argc, char **argv) {
   out = fopen(argv[1], "wb");
-  const int ns[] = {40000, 20000, 1000, 2, 0};
-  for (int k = 0; k < 5; k++) {
+  const int ns[] = {70000, 40000, 20000, 1000, 2, 0};
+  for (int k = 0; k < 6; k++) {
     const int n = ns[k];
     const size_t m = n ? n : 1;
     { double *u = arr(m), *v = arr(m); const_steps(u, v, n); dump(u, 8 * m); dump(v, 8 * m); }
-    { double *u = arr(m), *v = arr(m); param_steps(u, v, n, 3); dump(u, 8 * m); dump(v, 8 * m); }
+    { double *u = arr(m), *v = arr(m); param_steps(u, v, n, 3); dump(u, 8 * m); dump(v, 8 * m);
+      param_steps(u, v, n, 1); dump(u, 8 * m); dump(v, 8 * m); }
+    { double *u = arr(m), *v = arr(m); while_steps(u, v, n, 3); dump(u, 8 * m); dump(v, 8 * m); }
+    for (int st = 1; st <= 3; st++) {
+      double *u = arr(m), *v = arr(m); int s = st + 1;
+      incl_steps(u, v, n, st); dump(u, 8 * m); dump(v, 8 * m);
+      down_steps(u, v, n, st); dump(u, 8 * m); dump(v, 8 * m);
+      deref_steps(u, v, n, &s); dump(u, 8 * m); dump(v, 8 * m);
+    }
     { double *u = arr(m), *r = arr(m); dumpd(host_reads(u, r, n)); dump(u, 8 * m); dump(r, 8 * m); }
     if (n >= 2) { double *a = arr(m), *b = arr(m); host_rw(a, b, n); dump(a, 8 * m); dump(b, 8 * m); }
     { double *a = arr(m), *b = arr(m), *c = arr(m); pipeline(a, b, c, n); dump(b, 8 * m); dump(c, 8 * m); }
