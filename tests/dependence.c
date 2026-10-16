@@ -204,7 +204,7 @@ void column_prefix(double *a, int n) {
   // CHECK: deps       : 3 pair(s), 2 independent (2 SIV){{$}}
   // CHECK: profitability : SEQUENTIAL{{$}}
   for (int i = 1; i < n; i++)
-    // CHECK: dependence.c:[[#LOOP11:@LINE+12]]:5{{$}}
+    // CHECK: dependence.c:[[#LOOP11:@LINE+13]]:5{{$}}
     // CHECK: kind       : VARIABLE_BOUND{{$}}
     // CHECK: trip count : <not statically known>{{$}}
     // CHECK: nest       : depth 1, parent [[#LOOP10]]:3, 0 child loop(s){{$}}
@@ -216,6 +216,7 @@ void column_prefix(double *a, int n) {
     // CHECK-NEXT: safety     : SAFE{{$}}
     // CHECK: deps       : 3 pair(s), 3 independent (1 ZIV, 2 SIV){{$}}
     // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
+    // CHECK: - data region (line {{[0-9]+}}): not hoisted: 'i' changes inside it{{$}}
     for (int j = 0; j < n; j++)
       a[i * n + j] = a[(i - 1) * n + j] + a[i * n + j];
 }
@@ -358,7 +359,7 @@ void wavefront(double *a, int n) {
   // CHECK: deps       : 2 pair(s), 1 independent (1 SIV){{$}}
   // CHECK: profitability : SEQUENTIAL{{$}}
   for (int i = 1; i < n; i++)
-    // CHECK: dependence.c:[[#LOOP20:@LINE+11]]:5{{$}}
+    // CHECK: dependence.c:[[#LOOP20:@LINE+12]]:5{{$}}
     // CHECK: kind       : VARIABLE_BOUND{{$}}
     // CHECK: trip count : <not statically known>{{$}}
     // CHECK: nest       : depth 1, parent [[#LOOP19]]:3, 0 child loop(s){{$}}
@@ -369,6 +370,7 @@ void wavefront(double *a, int n) {
     // CHECK-NEXT: safety     : SAFE{{$}}
     // CHECK: deps       : 2 pair(s), 2 independent (1 ZIV, 1 SIV){{$}}
     // CHECK: profitability : CPU_PARALLEL if (n - 1 >= {{[0-9]+}}){{$}}
+    // CHECK: - data region (line {{[0-9]+}}): not hoisted: 'i' changes inside it{{$}}
     for (int j = 0; j < n - 1; j++)
       a[i * n + j] = a[(i - 1) * n + j + 1] + 1.0;
 }
@@ -525,7 +527,7 @@ void d2_two_row_lengths(double *a, int n, int m) {
   // CHECK: deps       : 7 pair(s), 4 independent (4 SIV){{$}}
   // CHECK: profitability : SEQUENTIAL{{$}}
   for (int i = 0; i < n; i++) {
-    // CHECK: dependence.c:[[#LOOP29:@LINE+11]]:5{{$}}
+    // CHECK: dependence.c:[[#LOOP29:@LINE+15]]:5{{$}}
     // CHECK: kind       : VARIABLE_BOUND{{$}}
     // CHECK: trip count : <not statically known>{{$}}
     // CHECK: nest       : depth 1, parent [[#LOOP28]]:3, 0 child loop(s){{$}}
@@ -535,10 +537,14 @@ void d2_two_row_lengths(double *a, int n, int m) {
     // CHECK-NEXT: R a[i * n + j] : [i][j] delinearized, dims [?][n]{{$}}
     // CHECK-NEXT: safety     : SAFE{{$}}
     // CHECK: deps       : 2 pair(s), 2 independent (2 SIV){{$}}
-    // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
+    // CHECK: profitability : GPU_OFFLOAD{{$}}
+    // CHECK: - data/iteration: 16 B across 1 region(s): a (map(tofrom: a[((__INTPTR_TYPE__)i) * (__INTPTR_TYPE__)n:(((__INTPTR_TYPE__)i) * (__INTPTR_TYPE__)n + ((__INTPTR_TYPE__)n - 1)) - (((__INTPTR_TYPE__)i) * (__INTPTR_TYPE__)n) + 1]), 8 B/elem){{$}}
+    // CHECK: - map guard: ((__INTPTR_TYPE__)i) * (__INTPTR_TYPE__)n >= 0 && n >= 1{{$}}
+    // CHECK: - data region (line {{[0-9]+}}): not hoisted: 'i' changes inside it{{$}}
+    // CHECK: - data region (line {{[0-9]+}}): resident in target data if(((__INTPTR_TYPE__)i) * (__INTPTR_TYPE__)n >= 0 && n >= 1 && n >= 8192 && ((__INTPTR_TYPE__)i) * (__INTPTR_TYPE__)m >= 0 && m >= 1 && m >= 8192); GPU_OFFLOAD there: resident pricing (no transfer) makes it the cheapest{{$}}
     for (int j = 0; j < n; j++)
       a[i * n + j] = a[i * n + j] + 1.0;
-    // CHECK: dependence.c:[[#LOOP30:@LINE+11]]:5{{$}}
+    // CHECK: dependence.c:[[#LOOP30:@LINE+15]]:5{{$}}
     // CHECK: kind       : VARIABLE_BOUND{{$}}
     // CHECK: trip count : <not statically known>{{$}}
     // CHECK: nest       : depth 1, parent [[#LOOP28]]:3, 0 child loop(s){{$}}
@@ -548,7 +554,11 @@ void d2_two_row_lengths(double *a, int n, int m) {
     // CHECK-NEXT: R a[i * m + k] : [i][k] delinearized, dims [?][m]{{$}}
     // CHECK-NEXT: safety     : SAFE{{$}}
     // CHECK: deps       : 2 pair(s), 2 independent (2 SIV){{$}}
-    // CHECK: profitability : CPU_PARALLEL if (m >= {{[0-9]+}}){{$}}
+    // CHECK: profitability : GPU_OFFLOAD{{$}}
+    // CHECK: - data/iteration: 16 B across 1 region(s): a (map(tofrom: a[((__INTPTR_TYPE__)i) * (__INTPTR_TYPE__)m:(((__INTPTR_TYPE__)i) * (__INTPTR_TYPE__)m + ((__INTPTR_TYPE__)m - 1)) - (((__INTPTR_TYPE__)i) * (__INTPTR_TYPE__)m) + 1]), 8 B/elem){{$}}
+    // CHECK: - map guard: ((__INTPTR_TYPE__)i) * (__INTPTR_TYPE__)m >= 0 && m >= 1{{$}}
+    // CHECK: - data region (line {{[0-9]+}}): not hoisted: 'i' changes inside it{{$}}
+    // CHECK: - data region (line {{[0-9]+}}): resident in target data if(((__INTPTR_TYPE__)i) * (__INTPTR_TYPE__)n >= 0 && n >= 1 && n >= 8192 && ((__INTPTR_TYPE__)i) * (__INTPTR_TYPE__)m >= 0 && m >= 1 && m >= 8192); GPU_OFFLOAD there: resident pricing (no transfer) makes it the cheapest{{$}}
     for (int k = 0; k < m; k++)
       a[i * m + k] = a[i * m + k] * 2.0 + 1.0;
   }

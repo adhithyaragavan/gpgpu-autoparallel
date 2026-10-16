@@ -13,6 +13,7 @@
 #include "analysis/AffineAccess.h"
 #include "analysis/CallResolver.h"
 #include "analysis/DataRegions.h"
+#include "analysis/Hoisting.h"
 #include "analysis/LoopAnalysis.h"
 #include "analysis/Profitability.h"
 #include "analysis/SafetyAnalysis.h"
@@ -90,7 +91,7 @@ public:
       Profitability.setLoops(Collector.getLoops());
 
     Rewriter Rewrite(Context.getSourceManager(), Context.getLangOpts());
-    p05::OmpRewriter OmpCodegen(Rewrite, Resolver);
+    p05::OmpRewriter OmpCodegen(Rewrite, Resolver, Context);
 
     const std::vector<p05::LoopInfo> &Loops = Collector.getLoops();
     llvm::outs() << "Analyzed " << Loops.size() << " loop(s).\n";
@@ -119,27 +120,46 @@ public:
     if (RangeMaps)
       p05::markCollapsible(Loops, AllAccesses, AllSafety);
 
+    // Then every loop's sections and verdict: hoisting (Phase 2.2) decides
+    // across loops, and may change the verdicts of the loops it keeps data
+    // on the device for.
+    std::vector<std::optional<p05::RegionPlan>> AllPlans;
+    std::vector<p05::ProfitabilityVerdict> AllVerdicts;
     for (const p05::LoopInfo &LI : Loops) {
       const size_t K = &LI - Loops.data();
-      const p05::LoopAccesses &Accesses = AllAccesses[K];
-      const p05::LoopSafety &SafetyVerdict = AllSafety[K];
-      p05::printLoopReport(llvm::outs(), LI, Loops);
-      p05::printCallChains(llvm::outs(), LI, Resolver);
-      p05::printAccessReport(llvm::outs(), Accesses);
-      p05::printSafetyReport(llvm::outs(), SafetyVerdict);
       std::optional<p05::RegionPlan> Plan;
       if (RangeMaps)
-        Plan = Regions.plan(LI, Accesses, Alias.enclosingFunction(LI.Loop));
-      p05::ProfitabilityVerdict ProfitVerdict = Profitability.analyzeLoop(
-          LI, SafetyVerdict, Plan ? &*Plan : nullptr);
-      p05::printProfitabilityReport(llvm::outs(), ProfitVerdict);
+        Plan = Regions.plan(LI, AllAccesses[K],
+                            Alias.enclosingFunction(LI.Loop));
+      AllVerdicts.push_back(Profitability.analyzeLoop(LI, AllSafety[K],
+                                                      Plan ? &*Plan : nullptr));
+      AllPlans.push_back(std::move(Plan));
+    }
+    std::vector<p05::DataRegion> Hoisted;
+    if (RangeMaps && p05::hoistModeFromFlags() == p05::HoistMode::On) {
+      p05::HoistPlanner Hoist(
+          Context, Loops, Resolver, Safety,
+          p05::aliasModeFromFlags() == p05::AliasMode::Check ? &Alias
+                                                             : nullptr,
+          Profitability, PolicyMode);
+      Hoisted = Hoist.plan(AllSafety, AllPlans, AllVerdicts);
+    }
+
+    for (const p05::LoopInfo &LI : Loops) {
+      const size_t K = &LI - Loops.data();
+      p05::printLoopReport(llvm::outs(), LI, Loops);
+      p05::printCallChains(llvm::outs(), LI, Resolver);
+      p05::printAccessReport(llvm::outs(), AllAccesses[K]);
+      p05::printSafetyReport(llvm::outs(), AllSafety[K]);
+      p05::printProfitabilityReport(llvm::outs(), AllVerdicts[K]);
 
       if (RewriteFlag)
-        OmpCodegen.rewriteLoop(LI, ProfitVerdict);
+        OmpCodegen.rewriteLoop(LI, AllVerdicts[K]);
     }
 
     if (!RewriteFlag)
       return;
+    OmpCodegen.emitRegions(Hoisted);
     OmpCodegen.finalize();
     p05::printRewriteReport(llvm::outs(), OmpCodegen.summary());
 

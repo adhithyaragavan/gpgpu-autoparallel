@@ -2420,3 +2420,167 @@ for the other pairs.
 **Evidence:** no existing fixture or benchmark verdict changed. `tests/maps.c` `read_pair` is called
 with `b == a + 1` by the driver, and the separate-memory check (`OFFLOAD=1`) passes on all five
 fixtures.
+
+### 2026-10-16 — Phase 2.2: data regions kept on the device (`target data` hoisting)
+
+**Decision:** New `src/analysis/Hoisting.{h,cpp}` (`HoistPlanner`). Without it, every GPU loop copied
+its sections in and out each time it ran. A loop inside a time-step loop paid the transfer every
+step, and two kernels in a row shipped the same array back and forth. A region R now gets one
+`#pragma omp target data` holding the hull of the sections its GPU loops map. R is either an
+enclosing loop the tool leaves sequential (for/while/do) or a run of statements in one block, which
+is wrapped in `{ }`. The loops keep their own `map()` clauses; with the data present they copy
+nothing, and the region stays correct even if it never activates.
+
+**User decisions (2026-10-16):**
+- Host code that touches mapped data gets `target update` (not refusal).
+- Both region shapes (enclosing loops and statement runs).
+
+**One condition for everything.** C is the conjunction of the loops' map guards and their cost
+guards repriced without transfer (`ProfitabilityAnalyzer::priceResident`). It is the region's
+`if(C)`, every GPU loop's `if(target: C)` (their own cost guards are dropped), and every update's
+`if(C)`. Every name in C is unchanged in R, so C has one value per region entry:
+- C true: every loop runs on the device with resident data.
+- C false: nothing is mapped and every loop runs on the host, on host data.
+
+So no loop can run on the host while the device holds the current copy.
+
+**When R is refused** (each refusal is reported on the loops, even if a smaller region inside then
+succeeds):
+- A name in a section or in C changes in R. That covers assignment, `++`, address taken anywhere in
+  the function, a global a call in R may write, and a local declared inside R or out of scope. Bases
+  count too, so a pointer swap is refused.
+- Two mapped bases may overlap (static proof needed; `restrict` only for a pair with a write).
+- Host code uses a mapped base other than to subscript it, reaches memory through a loaded pointer,
+  calls something that accesses memory through a pointer, or calls a function without a body while a
+  mapped base is global.
+- Host code touches another pointer not proven apart from the mapped ones.
+- A loop/branch condition around the GPU loops touches mapped data.
+- Host code touching mapped data sits outside a `{ }` block, or can jump out of itself.
+- R has a return/goto; a run has break/continue leaving it, or declares something used after it.
+- The function has any goto.
+- The GPU loops run only once per entry, or map no arrays.
+
+**Which loops join:**
+- Loops already GPU, and loops whose resident pricing picks the GPU (under `-policy naive`, any loop
+  that can be offloaded).
+- Then, to a fixpoint, every loop that can be offloaded and touches the mapped arrays. A host loop
+  on resident data would read stale values.
+- Under `-policy all-cpu` nothing is hoisted.
+
+**Region maps:**
+- `to` for read-only bases, `tofrom` for written ones.
+- Never `from`: a loop that would have written the whole section may not run on this entry (see
+  the review entry below).
+- Hulls (`hullSection` in DataRegions): an array object maps whole. A pointer maps from the lowest
+  first unit to the highest last one, merging ends that differ by a constant.
+
+**A Clang 22 bug worked around:** a `?:` inside an array section of `target data` produces invalid
+IR ("Instruction does not dominate all uses" / "Invalid instruction with no BB"). The same section
+on `target teams` and inside `target update` compiles. A hull with a `?:` now has its ends declared
+as `const __INTPTR_TYPE__ p05_loN, p05_lenN` in an extra `{ }` before the region, with names unused
+in the translation unit. Found when `dependence.c`'s `d2_two_row_lengths` hoisted two sibling
+loops with different row lengths.
+
+**Two bugs found while building it:**
+- Under `-policy all-cpu` the planner forced loops onto the GPU: hoisting now runs only for gated
+  and naive.
+- A region whose loops map no arrays emitted a `target data` with no `map()`, which is invalid.
+
+**Fixture changes:**
+- New `data region` lines, with wildcarded line numbers: the generator's line numbers are the
+  stripped copy's.
+- `nests.c`: `inside_while`, `inside_do` and `shadowing` loops go CPU_PARALLEL → GPU_OFFLOAD inside
+  a region, because their data now stays resident across the enclosing loop. The approved Phase 2
+  causes for a target change on a SAFE loop list map extents, the interlock, inner-trip costing and
+  calibration. Hoisting is a new cause, flagged to the user.
+- `dependence.c` `d2_two_row_lengths`: the sibling inner loops share a region per outer iteration.
+- No safety verdict changed.
+
+**New fixture `tests/hoist.c`** + `eval/runtime/hoist_main.c`:
+- **Hoisted:** jacobi time steps, a two-kernel pipeline, a host residual read (`update from`), a
+  host boundary write (`from` + `to`), globals under a while loop.
+- **Refused at the outer level:** `n` changing (`shrink`), an array passed to a host function
+  (`escape`), a while condition reading mapped data (`cond_reads`). In each the kernels inside still
+  share a smaller region.
+- **Refused outright:** maybe-aliased bases (`maybe_alias`); a pointer swap, already refused by
+  Phase 1.6.
+- **No region:** a single GPU loop run once.
+- The driver runs each at n = 20000, 9000, 3, 1 and 0.
+
+**Evidence:**
+- 15 lit tests pass; CPU `check_parallel.sh` passes on all six runtime fixtures (10 runs, -O2/-O0).
+- `OFFLOAD=1` (separate device memory) passes on all six.
+- Hand mutations on the host device all mismatch: dropping the `update from` before the residual
+  read, dropping the `update to` after the boundary write, and forcing one jacobi loop to the host
+  (`if(target: 0)`) inside an active region.
+- NVPTX device compile of every fixture and benchmark under gated and naive passes.
+- `-hoist=off` is byte-identical to `76ec4c7` on 23 files under four flag sets.
+- Fuzz seeds 1–15 clean; benchmark outputs unchanged.
+
+**Limits, not fixed:**
+- Restrict counts for a read-only pair only with a write in the same loop (`pipeline` originally
+  read `a` and `b` in its second loop and lost GPU offload). A loop elsewhere in the function
+  writing every overlapping element would also make restrict hold.
+- Host code that passes a mapped array to any function refuses the region. The callee's accesses
+  are known (Phase 1.5 summaries), so a precise update set is possible.
+- No amortization pricing yet: a region is hoisted when its loops run at least twice and one of
+  them prefers the GPU with resident data. The transfer saved is not compared with the update
+  traffic added (Phase 2.3).
+- A `while` time-step loop around loops over pointer parameters is refused: whether it runs can't
+  be tested before the region. Over arrays with constant extents it is fine.
+- A local or global pointer as a mapped base (`double *u = malloc(...)` in `main`) refuses the
+  region. AliasAnalyzer's proofs cover parameters and objects, not what such a pointer holds.
+
+### 2026-10-16 — Phase 2.2 adversarial review: ten bugs, seven of them stale data, fixed
+
+**Decision:** A fresh-context review ran about 25 probes on the host-offload device against
+sequential builds. Every runtime difference was checked with `-hoist=off` (correct there), so all
+were caused by 2.2. Fixes:
+1. **A host-called function that offloads loops of its own** found the mapped data present and used
+   the device's copy while the host changed its own. Host code calling a function (or anything it
+   reaches) with a GPU-capable loop now refuses the region.
+2. **Pointers loaded from memory** (`s.d[3]`, `ptrs[0][4]`) were taken for the storage of `s` or
+   `ptrs`. The walk stripped `LValueToRValue` casts. `rootOf` now follows only an array decaying
+   to a pointer or a pointer variable read by name; anything loaded or computed refuses.
+3. **Local and global pointer variables** (`double *p = a + 1`) were "distinct" from the mapped
+   parameters, because AliasAnalyzer classes every non-parameter as an object. Host code using
+   such a pointer refuses; so does a mapped base that is one.
+4. **A name in C changed through a pointer** (`*np = 4` with `np = &n` set in another function):
+   the address check looked only inside the function. A global whose address is taken anywhere in
+   the translation unit, or anything volatile, can't be in C.
+5. **`longjmp` / `exit`** inside the region skipped its end, so the host never got the device's
+   results. A call (or anything it reaches) that is `noreturn` or in the exit/longjmp family refuses.
+6. **Region-level `from`** copied device garbage back when the writing loop didn't run on that entry
+   (`steps = 0`, or the writer under an `if`). Dropped: written bases are `tofrom`.
+7. **A hull over memory the program doesn't own:**
+   - A GPU loop under an `if` that wasn't taken (`m = 1 << 28`) segfaulted.
+   - A zero-step time loop with NULL arrays mapped NULL.
+   - Fix: every GPU loop must run on each entry. On the way to the region there may be only blocks
+     and loop bodies.
+   - For pointer bases, each `for` loop around also adds its first test to C, e.g.
+     `(int)(0) < (steps)`; a `while` loop around refuses. Arrays with constant extents are always
+     owned, so they need neither.
+8. **`#pragma clang loop` / `#pragma unroll`:** a pragma inserted between the hint and its loop
+   doesn't compile. The rewriter now declines such loops, and the planner never makes a hinted loop
+   a region. The loop-pragma half predates 2.2 (Phase 0 rewriter).
+9. **A `typedef` (or tag) in a wrapped run** was hidden from code after the new `{ }`. Runs that
+   declare anything but variables refuse.
+10. **Functions without a visible body:** one in another file read the mapped array through a
+    pointer stashed in a global, so the host read stale data. Host code may call a function without
+    a body only if it is declared in a system header (a library function reaches memory only
+    through its arguments, which are checked like any host code) and gets no function pointer. As a
+    side effect, `printf` with global arrays no longer refuses a region.
+
+Also: the planner's model of which loops the rewriter annotates now mirrors `rewriteLoop` exactly
+(a CPU verdict with `!CpuBeatsSeq` is declined there).
+
+**Pinned in `tests/hoist.c`:** `calls_offloader`, `loaded_ptr`, `local_ptr`, `escaped_bound`,
+`zero_steps` (also called with NULL arrays and no steps), `under_if` (with the never-taken branch's
+`m = 1 << 28`), `typedef_run`, `hinted`. The driver runs them at every size. All review probes now
+match the sequential build. The earlier hand mutations (missing `from`, missing `to`, a loop forced
+to the host) still mismatch.
+
+**Noted, not fixed:** when a region can't be placed because a location is in a macro, its loops
+keep `if(target: C)` and their forced GPU target. They stay correct (their own maps), but the
+report then describes a region that wasn't emitted.
+

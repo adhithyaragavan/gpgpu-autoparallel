@@ -339,6 +339,13 @@ public:
   /// callee) by its trip count. Only used when a RegionPlan is given.
   void setLoops(const std::vector<LoopInfo> &All);
 
+  /// Phase 2.2: the gated verdict for a loop whose data already sits on the
+  /// device (inside a hoisted `target data` region): the transfer term is
+  /// dropped. No policy is applied.
+  ProfitabilityVerdict priceResident(const LoopInfo &LI,
+                                     const LoopSafety &Safety,
+                                     const RegionPlan &Plan);
+
   /// Intensity above which offload beats a fully threaded host, for this
   /// machine model, in the large-loop limit where launch cost vanishes.
   double breakEvenIntensity() const;
@@ -365,6 +372,8 @@ private:
   clang::ASTContext &Ctx;
   MachineModel Machine;
   Policy PolicyMode;
+  /// priceResident in progress: price no host<->device transfer.
+  bool Resident = false;
   llvm::DenseMap<const clang::FunctionDecl *, double> OpCache;
   llvm::DenseMap<const clang::ForStmt *, const LoopInfo *> LoopOf;
   llvm::DenseMap<const clang::FunctionDecl *, double> FnOps;

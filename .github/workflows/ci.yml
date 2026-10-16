@@ -41,11 +41,13 @@ jobs:
           CC="/usr/lib/llvm-$LLVM_VERSION/bin/clang" RUNS=20 scripts/check_parallel.sh tests/summaries.c eval/runtime/summaries_main.c
           CC="/usr/lib/llvm-$LLVM_VERSION/bin/clang" RUNS=20 scripts/check_parallel.sh tests/alias.c eval/runtime/alias_main.c
           CC="/usr/lib/llvm-$LLVM_VERSION/bin/clang" RUNS=20 scripts/check_parallel.sh tests/maps.c eval/runtime/maps_main.c
+          CC="/usr/lib/llvm-$LLVM_VERSION/bin/clang" RUNS=20 scripts/check_parallel.sh tests/hoist.c eval/runtime/hoist_main.c
 
-      - name: Runtime check of map() sections (target regions on the host device, separate memory)
+      - name: Runtime check of map() sections and data regions (target regions on the host device, separate memory)
         run: |
           export CC="/usr/lib/llvm-$LLVM_VERSION/bin/clang" RUNS=3 OFFLOAD=1
           scripts/check_parallel.sh tests/maps.c eval/runtime/maps_main.c
+          scripts/check_parallel.sh tests/hoist.c eval/runtime/hoist_main.c
           scripts/check_parallel.sh
           scripts/check_parallel.sh tests/scalars.c eval/runtime/scalars_main.c
           scripts/check_parallel.sh tests/summaries.c eval/runtime/summaries_main.c

@@ -207,6 +207,69 @@ bool exitsEarly(const Stmt *Body) {
 
 } // namespace
 
+Section hullSection(const std::vector<const ArrayRegion *> &Regs,
+                    std::string &Why) {
+  const ArrayRegion &F = *Regs.front();
+  const std::string Name = F.Base->getNameAsString();
+  for (const ArrayRegion *X : Regs)
+    if (X->Suffix != F.Suffix || X->ObjectExtent.has_value() !=
+                                     F.ObjectExtent.has_value()) {
+      Why = quoted(F.Base) + " is mapped with different shapes";
+      return {};
+    }
+  if (F.ObjectExtent)
+    return {Name, "0", std::to_string(*F.ObjectExtent), F.Suffix};
+  if (llvm::all_of(Regs, [&](const ArrayRegion *X) {
+        return X->SectionText == F.SectionText;
+      }))
+    return {Name, F.StartText, F.LenText, F.Suffix};
+  // Ends that differ by a constant merge into one; the rest are folded.
+  std::vector<AffineExpr> LoEs, HiEs;
+  std::vector<std::string> LoTs, HiTs;
+  auto Add = [](std::vector<AffineExpr> &Into, const AffineExpr &E, bool Min) {
+    for (AffineExpr &O : Into)
+      if (std::optional<int64_t> D = constDiff(E, O)) {
+        if (Min ? *D < 0 : *D > 0)
+          O = E;
+        return;
+      }
+    Into.push_back(E);
+  };
+  auto AddText = [](std::vector<std::string> &Into, const std::string &T) {
+    if (!llvm::is_contained(Into, T))
+      Into.push_back(T);
+  };
+  for (const ArrayRegion *X : Regs) {
+    if (X->StartE)
+      Add(LoEs, *X->StartE, true);
+    else
+      AddText(LoTs, X->StartText);
+    if (X->LastE)
+      Add(HiEs, *X->LastE, false);
+    else
+      AddText(HiTs, X->LastText);
+  }
+  std::optional<AffineExpr> LoE, HiE;
+  if (LoEs.size() == 1 && LoTs.empty())
+    LoE = LoEs[0];
+  if (HiEs.size() == 1 && HiTs.empty())
+    HiE = HiEs[0];
+  for (const AffineExpr &E : LoEs)
+    AddText(LoTs, text(E));
+  for (const AffineExpr &E : HiEs)
+    AddText(HiTs, text(E));
+  const std::string St = fold(LoTs, true), La = fold(HiTs, false);
+  std::string Len;
+  if (LoE && HiE) {
+    if (std::optional<AffineExpr> D = minus(*HiE, *LoE);
+        D && !__builtin_add_overflow(D->Const, 1, &D->Const))
+      Len = text(*D);
+  }
+  if (Len.empty())
+    Len = St == "0" ? "(" + La + ") + 1" : "(" + La + ") - (" + St + ") + 1";
+  return {Name, St, Len, F.Suffix};
+}
+
 RegionPlanner::RegionPlanner(ASTContext &Ctx, const std::vector<LoopInfo> &Loops)
     : Ctx(Ctx), Loops(Loops) {
   for (const LoopInfo &L : Loops)
@@ -296,6 +359,7 @@ RegionPlan RegionPlanner::plan(const LoopInfo &LI, const LoopAccesses &A,
   };
   // Every name a bound leaves behind: symbols and enclosing loops'
   // variables (the analyzed loop's and inner ones never survive bounds).
+  llvm::SetVector<const ValueDecl *> Used; // -> Plan.Names
   auto NameableExpr = [&](const AffineExpr &E, std::string &Bad) {
     for (const auto &[V, K] : E.SymTerms)
       if (!Names.nameable(V, Bad))
@@ -303,6 +367,10 @@ RegionPlan RegionPlanner::plan(const LoopInfo &LI, const LoopAccesses &A,
     for (const auto &[V, K] : E.IVTerms)
       if (!IsFixed(V) || !Names.nameable(V, Bad))
         return false;
+    for (const auto &[V, K] : E.SymTerms)
+      Used.insert(V);
+    for (const auto &[V, K] : E.IVTerms)
+      Used.insert(V);
     return true;
   };
   const IVRange *RootRange = RangeOf(A.RootIV);
@@ -458,6 +526,7 @@ RegionPlan RegionPlanner::plan(const LoopInfo &LI, const LoopAccesses &A,
                    ": " + Bad);
               Ok = false;
             }
+          Used.insert(X.RowLengths[D - 1]);
           const std::string N = "(" + std::string(IntPtrType) + ")" +
                                 X.RowLengths[D - 1]->getNameAsString();
           LoT = linear(LoT, N, Los[D]);
@@ -636,7 +705,18 @@ RegionPlan RegionPlanner::plan(const LoopInfo &LI, const LoopAccesses &A,
         R.ConstUnits = std::max<int64_t>(Len->Const + 1, 0);
     R.SectionText = VD->getNameAsString() + "[" + StartT + ":" + LenT + "]";
     for (int64_t E : L->Inner)
-      R.SectionText += "[0:" + std::to_string(E) + "]";
+      R.Suffix += "[0:" + std::to_string(E) + "]";
+    R.SectionText += R.Suffix;
+    R.StartText = StartT;
+    R.LastText = HiT;
+    R.LenText = LenT;
+    if (L->K != Layout::Object) {
+      R.StartE = LoE;
+      R.LastE = HiE;
+    }
+    if (L->K == Layout::Object)
+      R.ObjectExtent = L->OuterExtent;
+    Used.insert(VD);
 
     // `from`: an exact plain write whose outer subscript is one loop
     // variable (+-1) and whose inner subscripts each run over a whole row,
@@ -750,6 +830,7 @@ RegionPlan RegionPlanner::plan(const LoopInfo &LI, const LoopAccesses &A,
   }
   for (const std::string &G : Guards)
     Plan.MapGuard += (Plan.MapGuard.empty() ? "" : " && ") + G;
+  Plan.Names.assign(Used.begin(), Used.end());
   return Plan;
 }
 

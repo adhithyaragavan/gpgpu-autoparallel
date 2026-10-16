@@ -209,7 +209,7 @@ void k_prefix(long *a, const long *b, int n) {
   // CHECK: profitability : SEQUENTIAL{{$}}
   for (int i = 0; i < n; i++) {
     long s = 0;
-    // CHECK: alias.c:[[#LOOP10:@LINE+11]]:5{{$}}
+    // CHECK: alias.c:[[#LOOP10:@LINE+12]]:5{{$}}
     // CHECK: kind       : VARIABLE_BOUND{{$}}
     // CHECK: trip count : <not statically known>{{$}}
     // CHECK: nest       : depth 1, parent [[#LOOP9]]:3, 0 child loop(s), triangular{{$}}
@@ -220,6 +220,7 @@ void k_prefix(long *a, const long *b, int n) {
     // CHECK: deps       : 0 pair(s), 0 independent{{$}}
     // CHECK: scalars    : reduction(+: s){{$}}
     // CHECK: profitability : CPU_PARALLEL if (i >= {{[0-9]+}}){{$}}
+    // CHECK: - data region (line {{[0-9]+}}): not hoisted: 'i' changes inside it{{$}}
     for (int j = 0; j < i; j++)
       s += b[j];
     a[i] = s;

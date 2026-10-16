@@ -174,6 +174,11 @@ def main(paths):
                 mg = next((l.strip() for l in L if "- map guard:" in l), None)
                 if mg:
                     c.append(lit(mg) + A)
+            # Phase 2.2: a loop's data region (or why its candidate failed).
+            # Its line is the stripped copy's, so it is wildcarded.
+            c += [re.sub(r"^- data region \(line \d+\)", "- data region (line {{[0-9]+}})",
+                         lit(l.strip())) + A
+                  for l in L if l.strip().startswith("- data region (")]
             # An interlock decision is part of the verdict: pin it when present.
             decl = next((l.strip() for l in L if "GPU offload declined" in l), None)
             if decl:

@@ -830,7 +830,7 @@ void r1d_row_length_changed(int *a, int n) {
   // CHECK: deps       : 1 pair(s), 0 independent{{$}}
   // CHECK: profitability : SEQUENTIAL{{$}}
   for (int i = 0; i < n; i++) {
-    // CHECK: affine.c:[[#LOOP47:@LINE+10]]:5{{$}}
+    // CHECK: affine.c:[[#LOOP47:@LINE+11]]:5{{$}}
     // CHECK: kind       : VARIABLE_BOUND{{$}}
     // CHECK: trip count : <not statically known>{{$}}
     // CHECK: nest       : depth 1, parent [[#LOOP46]]:3, 0 child loop(s){{$}}
@@ -840,6 +840,7 @@ void r1d_row_length_changed(int *a, int n) {
     // CHECK-NEXT: safety     : SAFE{{$}}
     // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
     // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
+    // CHECK: - data region (line {{[0-9]+}}): not hoisted: 'i' changes inside it{{$}}
     for (int j = 0; j < n; j++)
       a[i * n + j] = 0;
     // CHECK: affine.c:[[#LOOP48:@LINE+10]]:5{{$}}

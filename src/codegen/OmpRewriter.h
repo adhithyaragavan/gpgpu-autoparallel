@@ -132,6 +132,7 @@
 #define P05_CODEGEN_OMPREWRITER_H
 
 #include "analysis/CallResolver.h"
+#include "analysis/Hoisting.h"
 #include "analysis/LoopInfo.h"
 #include "analysis/Profitability.h"
 
@@ -177,13 +178,17 @@ struct RewriteSummary {
   /// (GpuOffload/CpuParallel, Evaluated) — only cases that reached this pass
   /// eligible and were still declined or degraded.
   std::vector<std::string> Skipped;
+
+  /// Phase 2.2: "line N: #pragma omp target data ..." and its updates.
+  std::vector<std::string> DataRegions;
 };
 
 /// Applies ProfitabilityVerdicts to a Rewriter. One instance per translation
 /// unit: offer it every loop via rewriteLoop, then call finalize() once.
 class OmpRewriter {
 public:
-  OmpRewriter(clang::Rewriter &Rewrite, CallResolver &Resolver);
+  OmpRewriter(clang::Rewriter &Rewrite, CallResolver &Resolver,
+              clang::ASTContext &Ctx);
 
   /// No-op unless V.Evaluated && (V.Target == GpuOffload || CpuParallel).
   /// Safe to call once per loop, in any order relative to other loops.
@@ -193,6 +198,13 @@ public:
   /// across all rewriteLoop calls so far (GPU-offload sites only). Call
   /// exactly once, after every loop in the translation unit has been
   /// offered.
+  /// Phase 2.2: emit each hoisted `target data` region (wrapping a run of
+  /// statements in { } when it is one) and its host `target update`s. Run
+  /// after every rewriteLoop, so a region's pragma lands before the pragma
+  /// of a loop that starts it. A region whose text can't be placed is left
+  /// out entirely: its loops still map their own data, so they stay right.
+  void emitRegions(const std::vector<DataRegion> &Regions);
+
   void finalize();
 
   const RewriteSummary &summary() const { return Summary; }
@@ -200,6 +212,7 @@ public:
 private:
   clang::Rewriter &Rewrite;
   CallResolver &Resolver;
+  clang::ASTContext &Ctx;
   RewriteSummary Summary;
 
   /// Source ranges of loops already annotated (either kind), so a lexically

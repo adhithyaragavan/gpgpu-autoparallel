@@ -628,7 +628,8 @@ ProfitabilityAnalyzer::priceLoop(const LoopInfo &LI, const LoopSafety &Safety,
 
     V.Costs.GpuLaunchUs = Machine.KernelLaunchUs;
     V.Costs.GpuTransferUs =
-        V.Costs.TransferBytes * usPerByte(Machine.PcieBandwidthGBs);
+        Resident ? 0.0
+                 : V.Costs.TransferBytes * usPerByte(Machine.PcieBandwidthGBs);
     V.Costs.GpuComputeUs =
         std::max(V.Costs.Flops * usPerFlop(Machine.GpuThroughputGFs),
                  V.Costs.TouchedBytes * usPerByte(Machine.GpuBandwidthGBs));
@@ -668,7 +669,8 @@ ProfitabilityAnalyzer::priceLoop(const LoopInfo &LI, const LoopSafety &Safety,
     // each max() dominates is the same for every n > 0 — each side reduces
     // to one linear function of n, and the GPU-vs-CPU crossover has a closed
     // form rather than needing a numeric search.
-    double GpuTransferRate = BytesPerIter * usPerByte(Machine.PcieBandwidthGBs);
+    double GpuTransferRate =
+        Resident ? 0.0 : BytesPerIter * usPerByte(Machine.PcieBandwidthGBs);
     double GpuComputeRate =
         std::max(OpsPerIter * usPerFlop(Machine.GpuThroughputGFs),
                  BytesPerIter * usPerByte(Machine.GpuBandwidthGBs));
@@ -774,6 +776,16 @@ ProfitabilityAnalyzer::priceLoop(const LoopInfo &LI, const LoopSafety &Safety,
     }
   }
 
+  return V;
+}
+
+ProfitabilityVerdict
+ProfitabilityAnalyzer::priceResident(const LoopInfo &LI,
+                                     const LoopSafety &Safety,
+                                     const RegionPlan &Plan) {
+  Resident = true;
+  ProfitabilityVerdict V = priceLoop(LI, Safety, &Plan);
+  Resident = false;
   return V;
 }
 

@@ -88,6 +88,13 @@ struct ArrayRegion {
   std::optional<int64_t> ConstUnits;
   /// -maps=ranges: `from` was proven (a write covers the whole section).
   bool WriteCovers = false;
+  /// -maps=ranges, for hulls of several sections (Phase 2.2): the first and
+  /// last unit of the outermost dimension (or linear index) as text, the
+  /// inner dimensions' "[0:M]..." suffix, and an Object's outer extent.
+  std::string StartText, LastText, LenText, Suffix;
+  std::optional<int64_t> ObjectExtent;
+  /// The same ends as affine expressions, when each is a single one.
+  std::optional<AffineExpr> StartE, LastE;
 
   /// The OpenMP map kind this region implies: "to", "from", or "tofrom".
   llvm::StringRef mapKind() const {
@@ -111,7 +118,23 @@ struct RegionPlan {
   /// Conditions the sections need at run time ("n >= 1", ...), joined with
   /// &&; empty when none. A safety condition: kept under every policy.
   std::string MapGuard;
+  /// Every declaration the sections and MapGuard name (bases included):
+  /// what must stay unchanged for them to mean the same thing elsewhere.
+  std::vector<const clang::ValueDecl *> Names;
 };
+
+/// Phase 2.2: one section covering every section in Regs (all of one base,
+/// from loops that map it with the same shape): an Object whole, a pointer
+/// from the lowest first unit to the highest last one. Every unit in
+/// between belongs to the same object as the ends, each of which a loop
+/// touches when its map guard holds. Empty, with Why, on a shape mismatch.
+struct Section {
+  std::string Base, Start, Len, Suffix;
+  bool empty() const { return Base.empty(); }
+  std::string text() const { return Base + "[" + Start + ":" + Len + "]" + Suffix; }
+};
+Section hullSection(const std::vector<const ArrayRegion *> &Regs,
+                    std::string &Why);
 
 class RegionPlanner {
 public:

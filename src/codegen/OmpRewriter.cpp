@@ -1,6 +1,8 @@
 #include "codegen/OmpRewriter.h"
 
+#include "clang/AST/ParentMapContext.h"
 #include "clang/Basic/SourceManager.h"
+#include "clang/Lex/Lexer.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -8,8 +10,9 @@ using namespace clang;
 
 namespace p05 {
 
-OmpRewriter::OmpRewriter(Rewriter &Rewrite, CallResolver &Resolver)
-    : Rewrite(Rewrite), Resolver(Resolver) {}
+OmpRewriter::OmpRewriter(Rewriter &Rewrite, CallResolver &Resolver,
+                         ASTContext &Ctx)
+    : Rewrite(Rewrite), Resolver(Resolver), Ctx(Ctx) {}
 
 namespace {
 
@@ -109,6 +112,13 @@ bool OmpRewriter::insertPragma(const LoopInfo &LI, const std::string &Pragma) {
   }
   if (Begin.isMacroID() || !Rewriter::isRewritable(Begin)) {
     skip("loop location is inside a macro expansion, declined");
+    return false;
+  }
+  // `#pragma clang loop` / `#pragma unroll` must directly precede its loop.
+  if (DynTypedNodeList Ps = Ctx.getParents(*LI.Loop);
+      !Ps.empty() && Ps[0].get<AttributedStmt>()) {
+    skip("loop carries a loop-hint pragma (#pragma clang loop / unroll), "
+         "and no OpenMP pragma can go between them, declined");
     return false;
   }
   SourceRange Range = LI.Loop->getSourceRange();
@@ -218,6 +228,105 @@ void OmpRewriter::rewriteLoop(const LoopInfo &LI,
   // this pass's loop, not an error.
 }
 
+namespace {
+
+/// Where text after S goes: past its `;` when the statement ends with one
+/// that isn't part of its range (an expression statement, `do ... while`).
+SourceLocation afterStmt(const Stmt *S, const SourceManager &SM,
+                         const LangOptions &LO) {
+  SourceLocation End = S->getEndLoc();
+  std::optional<Token> Next = Lexer::findNextToken(End, SM, LO);
+  if (Next && Next->is(tok::semi) && !isa<CompoundStmt>(S) &&
+      !isa<DeclStmt>(S))
+    return Next->getLocation();
+  return End;
+}
+
+/// Nothing but blanks after Loc's token, up to the end of its line.
+bool restOfLineEmpty(SourceLocation Loc, const SourceManager &SM,
+                     const LangOptions &LO) {
+  SourceLocation After = Lexer::getLocForEndOfToken(Loc, 0, SM, LO);
+  bool Invalid = false;
+  const char *P = SM.getCharacterData(After, &Invalid);
+  if (Invalid)
+    return false;
+  while (*P == ' ' || *P == '\t')
+    ++P;
+  return *P == '\n' || *P == '\r' || *P == '\0';
+}
+
+} // namespace
+
+void OmpRewriter::emitRegions(const std::vector<DataRegion> &Regions) {
+  const SourceManager &SM = Rewrite.getSourceMgr();
+  const LangOptions &LO = Rewrite.getLangOpts();
+  auto Placeable = [&](SourceLocation L) {
+    return L.isValid() && !L.isMacroID() && SM.isWrittenInMainFile(L) &&
+           Rewriter::isRewritable(L);
+  };
+  auto Indent = [&](SourceLocation L) {
+    unsigned Col = SM.getPresumedColumnNumber(L);
+    return std::string(Col > 0 ? Col - 1 : 0, ' ');
+  };
+  for (const DataRegion &D : Regions) {
+    std::vector<SourceLocation> Locs{D.First->getBeginLoc(),
+                                     afterStmt(D.Last, SM, LO)};
+    for (const HostUpdate &U : D.Updates) {
+      Locs.push_back(U.S->getBeginLoc());
+      Locs.push_back(afterStmt(U.S, SM, LO));
+    }
+    if (!llvm::all_of(Locs, Placeable)) {
+      Summary.Skipped.push_back("line " + std::to_string(D.Line) +
+                                ": data region not emitted (a location is "
+                                "inside a macro); its loops map their own "
+                                "data");
+      continue;
+    }
+    auto Before = [&](const Stmt *S, const std::string &Text) {
+      const std::string In = Indent(S->getBeginLoc());
+      std::string T = Text + "\n" + In;
+      if (!startsOwnLine(SM, S->getBeginLoc()))
+        T = "\n" + T;
+      Rewrite.InsertTextBefore(S->getBeginLoc(), T);
+    };
+    auto After = [&](const Stmt *S, const std::string &Text) {
+      SourceLocation L = afterStmt(S, SM, LO);
+      const std::string In = Indent(S->getBeginLoc());
+      std::string T = "\n" + In + Text;
+      if (!restOfLineEmpty(L, SM, LO))
+        T += "\n" + In;
+      Rewrite.InsertTextAfterToken(L, T);
+    };
+    for (const HostUpdate &U : D.Updates) {
+      if (!U.Before.empty())
+        Before(U.S, U.Before);
+      if (!U.After.empty())
+        After(U.S, U.After);
+    }
+    const std::string In = Indent(D.First->getBeginLoc());
+    std::string Open = D.Pragma;
+    if (!D.Decls.empty())
+      Open = "{\n" + In + D.Decls + "\n" + In + Open;
+    if (D.Braces)
+      Open += "\n" + In + "{";
+    Before(D.First, Open);
+    if (D.Braces || !D.Decls.empty())
+      After(D.Last, std::string(D.Braces ? "}" : "") +
+                        (D.Braces && !D.Decls.empty() ? "\n" + In : "") +
+                        (D.Decls.empty() ? "" : "}"));
+    Summary.DataRegions.push_back("line " + std::to_string(D.Line) + ": " +
+                                  (D.Decls.empty() ? "" : D.Decls + " ") +
+                                  D.Pragma);
+    for (const HostUpdate &U : D.Updates) {
+      const unsigned L = SM.getPresumedLineNumber(U.S->getBeginLoc());
+      for (const std::string *T : {&U.Before, &U.After})
+        if (!T->empty())
+          Summary.DataRegions.push_back("  line " + std::to_string(L) + ": " +
+                                        *T);
+    }
+  }
+}
+
 void OmpRewriter::collectDeclareTargets(const LoopInfo &LI) {
   for (const FunctionDecl *Callee : LI.Callees) {
     if (Callee->hasBody())
@@ -325,6 +434,8 @@ void printRewriteReport(llvm::raw_ostream &OS, const RewriteSummary &S) {
   OS << "\n";
   for (const RewriteSite &Site : S.Sites)
     OS << "  line " << Site.Line << ": " << Site.Pragma << "\n";
+  for (const std::string &D : S.DataRegions)
+    OS << "  data region " << D << "\n";
   for (const FunctionDecl *FD : S.DeclareTargets)
     OS << "  declare target: " << FD->getNameAsString() << "\n";
   for (const std::string &Reason : S.Skipped)

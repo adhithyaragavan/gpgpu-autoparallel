@@ -275,7 +275,7 @@ void inside_unrecognized(double *a, int n) {
     // Its bound uses i, but i is not a recognized induction variable, so it is
     // NOT flagged triangular; the "inside an unrecognized loop" flag is what
     // keeps later phases conservative here.
-    // CHECK: nests.c:[[#LOOP17:@LINE+10]]:5{{$}}
+    // CHECK: nests.c:[[#LOOP17:@LINE+11]]:5{{$}}
     // CHECK: kind       : VARIABLE_BOUND{{$}}
     // CHECK: trip count : <not statically known>{{$}}
     // CHECK: nest       : depth 1, parent [[#LOOP16]]:3, 0 child loop(s), inside an unrecognized loop{{$}}
@@ -285,6 +285,7 @@ void inside_unrecognized(double *a, int n) {
     // CHECK-NEXT: safety     : SAFE{{$}}
     // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
     // CHECK: profitability : CPU_PARALLEL if (i >= {{[0-9]+}}){{$}}
+    // CHECK: - data region (line {{[0-9]+}}): not hoisted: a loop around a GPU loop isn't a counted loop, so whether it runs can't be tested before the region{{$}}
     for (int j = 0; j < i; j++)
       a[j] = 8.0;
 }
@@ -293,7 +294,7 @@ void inside_unrecognized(double *a, int n) {
 void inside_while(double *a, int n, int steps) {
   while (steps-- > 0) {
     // depth 0 (no enclosing FOR), INSIDE WHILE/DO
-    // CHECK: nests.c:[[#LOOP18:@LINE+11]]:5{{$}}
+    // CHECK: nests.c:[[#LOOP18:@LINE+12]]:5{{$}}
     // CHECK: kind       : VARIABLE_BOUND{{$}}
     // CHECK: trip count : <not statically known>{{$}}
     // CHECK: nest       : depth 0, 0 child loop(s), inside while/do or a loop header{{$}}
@@ -304,6 +305,7 @@ void inside_while(double *a, int n, int steps) {
     // CHECK-NEXT: safety     : SAFE{{$}}
     // CHECK: deps       : 2 pair(s), 2 independent (2 SIV){{$}}
     // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
+    // CHECK: - data region (line {{[0-9]+}}): not hoisted: a while loop around a GPU loop may not run, and a pointer's section is owned memory only when the loop touches it{{$}}
     for (int i = 0; i < n; i++)
       a[i] = a[i] * 0.5;
   }
@@ -312,7 +314,7 @@ void inside_while(double *a, int n, int steps) {
 void inside_do(double *a, int n, int steps) {
   do {
     // depth 0, INSIDE WHILE/DO
-    // CHECK: nests.c:[[#LOOP19:@LINE+11]]:5{{$}}
+    // CHECK: nests.c:[[#LOOP19:@LINE+14]]:5{{$}}
     // CHECK: kind       : VARIABLE_BOUND{{$}}
     // CHECK: trip count : <not statically known>{{$}}
     // CHECK: nest       : depth 0, 0 child loop(s), inside while/do or a loop header{{$}}
@@ -322,7 +324,10 @@ void inside_do(double *a, int n, int steps) {
     // CHECK-NEXT: R a[i] : [i]{{$}}
     // CHECK-NEXT: safety     : SAFE{{$}}
     // CHECK: deps       : 2 pair(s), 2 independent (2 SIV){{$}}
-    // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
+    // CHECK: profitability : GPU_OFFLOAD{{$}}
+    // CHECK: - data/iteration: 16 B across 1 region(s): a (map(tofrom: a[0:n]), 8 B/elem){{$}}
+    // CHECK: - map guard: n >= 1{{$}}
+    // CHECK: - data region (line {{[0-9]+}}): resident in target data if(n >= 1 && n >= 8192); GPU_OFFLOAD there: resident pricing (no transfer) makes it the cheapest{{$}}
     for (int i = 0; i < n; i++)
       a[i] = a[i] + 1.0;
   } while (--steps > 0);
@@ -528,7 +533,7 @@ void shadowing(double *a, int n) {
   // CHECK: profitability : SEQUENTIAL{{$}}
   for (int i = 0; i < n; i++)
     // depth 1, NOT triangular. ivs: i, i (two different variables both named i)
-    // CHECK: nests.c:[[#LOOP31:@LINE+10]]:5{{$}}
+    // CHECK: nests.c:[[#LOOP31:@LINE+13]]:5{{$}}
     // CHECK: kind       : VARIABLE_BOUND{{$}}
     // CHECK: trip count : <not statically known>{{$}}
     // CHECK: nest       : depth 1, parent [[#LOOP30]]:3, 0 child loop(s){{$}}
@@ -537,7 +542,10 @@ void shadowing(double *a, int n) {
     // CHECK-NEXT: W a[i] : [i]{{$}}
     // CHECK-NEXT: safety     : SAFE{{$}}
     // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
-    // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
+    // CHECK: profitability : GPU_OFFLOAD{{$}}
+    // CHECK: - data/iteration: 8 B across 1 region(s): a (map(from: a[0:n]), 8 B/elem){{$}}
+    // CHECK: - map guard: n >= 1{{$}}
+    // CHECK: - data region (line {{[0-9]+}}): resident in target data if(n >= 1 && n >= 16384 && (int)(0) < (n)); GPU_OFFLOAD there: resident pricing (no transfer) makes it the cheapest{{$}}
     for (int i = 0; i < n; i++)
       a[i] = 14.0;
 }
@@ -571,7 +579,7 @@ void rec_unrec_rec(double *a, int n) {
     for (int j = 1; j < n; j *= 2)
       // depth 2, INSIDE AN UNRECOGNIZED LOOP, TRIANGULAR (bound uses the
       // trusted outer i). ivs: i, k
-      // CHECK: nests.c:[[#LOOP34:@LINE+10]]:7{{$}}
+      // CHECK: nests.c:[[#LOOP34:@LINE+12]]:7{{$}}
       // CHECK: kind       : VARIABLE_BOUND{{$}}
       // CHECK: trip count : <not statically known>{{$}}
       // CHECK: nest       : depth 2, parent [[#LOOP33]]:5, 0 child loop(s), triangular, inside an unrecognized loop{{$}}
@@ -581,6 +589,8 @@ void rec_unrec_rec(double *a, int n) {
       // CHECK-NEXT: safety     : SAFE{{$}}
       // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
       // CHECK: profitability : CPU_PARALLEL if (i >= {{[0-9]+}}){{$}}
+      // CHECK: - data region (line {{[0-9]+}}): not hoisted: a loop around a GPU loop isn't a counted loop, so whether it runs can't be tested before the region{{$}}
+      // CHECK: - data region (line {{[0-9]+}}): not hoisted: a loop around a GPU loop isn't a counted loop, so whether it runs can't be tested before the region{{$}}
       for (int k = 0; k < i; k++)
         a[k] = 15.0;
 }
