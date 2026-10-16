@@ -84,6 +84,8 @@ public:
                                              PolicyMode);
     const bool RangeMaps = p05::mapModeFromFlags() == p05::MapMode::Ranges;
     p05::RegionPlanner Regions(Context, Collector.getLoops());
+    if (p05::aliasModeFromFlags() == p05::AliasMode::Check)
+      Regions.setAliasAnalyzer(&Alias);
     if (RangeMaps)
       Profitability.setLoops(Collector.getLoops());
 

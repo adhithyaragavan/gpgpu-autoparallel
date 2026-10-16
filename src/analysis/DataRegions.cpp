@@ -692,6 +692,26 @@ RegionPlan RegionPlanner::plan(const LoopInfo &LI, const LoopAccesses &A,
   if (!Plan.Mappable)
     return Plan;
 
+  // Two sections that partly overlap can't both be mapped: the runtime
+  // refuses to extend a mapping. A pair with a write was proven apart by
+  // Phase 1.6 (GPU needs a static proof); a read-only pair was never asked,
+  // and `restrict` doesn't keep two read-only pointers apart.
+  if (Alias)
+    for (size_t I = 0; I < Plan.Regions.size(); ++I)
+      for (size_t J = I + 1; J < Plan.Regions.size(); ++J) {
+        const ArrayRegion &X = Plan.Regions[I], &Y = Plan.Regions[J];
+        if (X.Written || Y.Written)
+          continue;
+        const AliasProof P = Alias->proof(F, X.Base, Y.Base);
+        if (P == AliasProof::Unproven || P == AliasProof::Restrict) {
+          Fail("'" + X.Base->getNameAsString() + "' and '" +
+               Y.Base->getNameAsString() +
+               "' are only read but may overlap, and overlapping sections "
+               "can't both be mapped");
+          return Plan;
+        }
+      }
+
   // Every loop whose variable an end depends on must run at least once.
   for (const VarDecl *V : MustRun) {
     const IVRange *R = RangeOf(V);

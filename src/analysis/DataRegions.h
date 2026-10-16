@@ -45,6 +45,7 @@
 #define P05_ANALYSIS_DATAREGIONS_H
 
 #include "analysis/AffineAccess.h"
+#include "analysis/AliasAnalysis.h"
 #include "analysis/LoopInfo.h"
 
 #include "clang/AST/ASTContext.h"
@@ -116,6 +117,10 @@ class RegionPlanner {
 public:
   RegionPlanner(clang::ASTContext &Ctx, const std::vector<LoopInfo> &Loops);
 
+  /// Bases that are only read must also be proven apart (null: -alias=
+  /// assume, where differently named bases are assumed apart anyway).
+  void setAliasAnalyzer(AliasAnalyzer *A) { Alias = A; }
+
   /// Sections for loop LI, from its accesses A (composed with callees'),
   /// with names written just before the loop in F.
   RegionPlan plan(const LoopInfo &LI, const LoopAccesses &A,
@@ -124,6 +129,7 @@ public:
 private:
   clang::ASTContext &Ctx;
   const std::vector<LoopInfo> &Loops;
+  AliasAnalyzer *Alias = nullptr;
   llvm::DenseMap<const clang::ForStmt *, const LoopInfo *> LoopOf;
 };
 

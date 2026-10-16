@@ -62,6 +62,7 @@ int main(int argc, char **argv) {
   fill(g_a, N); unsigned_obj(0); dump(g_a, sizeof g_a);
   unsigned_obj(77); dump(g_a, sizeof g_a);
   { long *a = arr(300), *b = arr(300); generic(a, b, 300); dump(a, sizeof(long) * 300); }
+  { long *x = arr(301), *c = arr(300); read_pair(c, x, x + 1, 300); dump(c, sizeof(long) * 300); }
   fclose(out);
   return 0;
 }

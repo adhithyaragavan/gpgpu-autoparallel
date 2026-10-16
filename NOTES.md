@@ -2402,3 +2402,21 @@ build.
 - Object and Rows sections rely on C's rule that a subscript stays inside its own dimension, as
   the dependence test does.
 
+
+### 2026-10-16 — Phase 2.1 fix: overlapping read-only bases can't both be mapped
+
+**Bug (found while designing 2.2, after 2.1 was pushed):** a GPU loop that only reads two pointers
+mapped each with its own section: `c[i] = a[i] + b[i]` gave `map(to: a[0:n]) map(to: b[0:n])`.
+Called with `b == a + 1`, the two sections partly overlap, and libomptarget refuses to extend a
+mapping: "failure of target construct while offloading is mandatory", the program aborts. This
+happens even with every parameter `restrict`: restrict keeps memory apart only when it is modified.
+Phase 1.6 only asked about pairs with a write, and Phase 2.1 required a static proof only for those.
+
+**Fix:** RegionPlanner now asks AliasAnalyzer about every pair of read-only bases. Without a proof
+that holds for reads (distinct objects, element types, every caller), the loop gets no map() and
+stays on the host. `restrict` alone doesn't count. Under `-alias=assume` the check is skipped, as
+for the other pairs.
+
+**Evidence:** no existing fixture or benchmark verdict changed. `tests/maps.c` `read_pair` is called
+with `b == a + 1` by the driver, and the separate-memory check (`OFFLOAD=1`) passes on all five
+fixtures.

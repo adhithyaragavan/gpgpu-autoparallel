@@ -1,5 +1,5 @@
 // RUN: %p05 %s -- %cflags | FileCheck %s
-// CHECK: Analyzed 29 loop(s).
+// CHECK: Analyzed 30 loop(s).
 // Phase 2.1: map() sections from the subscripts' ranges (DataRegions.h),
 // collapse(2), and map(tofrom:) for reduction/lastprivate scalars. Also RUN
 // by scripts/check_parallel.sh with OFFLOAD=1 and eval/runtime/maps_main.c,
@@ -576,5 +576,29 @@ void generic(long *restrict a, const long *restrict b, int n) {
   // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
   for (int i = 0; i < n; i++)
     a[i] = b[i] + _Generic(b[i + 1000], long: 1, default: 2);
+}
+
+// SAFE, but a and b are only read and may overlap (b == a + 1 below):
+// two overlapping sections can't both be mapped, and `restrict` doesn't
+// keep read-only pointers apart. No GPU offload.
+void read_pair(long *restrict c, const long *restrict a,
+               const long *restrict b, int n) {
+  // CHECK: maps.c:[[#LOOP29:@LINE+15]]:3{{$}}
+  // CHECK: kind       : VARIABLE_BOUND{{$}}
+  // CHECK: trip count : <not statically known>{{$}}
+  // CHECK: nest       : depth 0, 0 child loop(s){{$}}
+  // CHECK: nest ivs   : i{{$}}
+  // CHECK: work reaches 0 function(s), max depth 0: <nothing> (leaf){{$}}
+  // CHECK: accesses   : 3 (3 affine){{$}}
+  // CHECK-NEXT: W c[i] : [i]{{$}}
+  // CHECK-NEXT: R a[i] : [i]{{$}}
+  // CHECK-NEXT: R b[i] : [i]{{$}}
+  // CHECK-NEXT: safety     : SAFE{{$}}
+  // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
+  // CHECK: alias      : 'c' and 'a' can't overlap (restrict){{$}}
+  // CHECK: alias      : 'c' and 'b' can't overlap (restrict){{$}}
+  // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
+  for (int i = 0; i < n; i++)
+    c[i] = work(a[i]) + b[i];
 }
 
