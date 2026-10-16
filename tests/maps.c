@@ -463,7 +463,7 @@ static void scale_row(long *row, int m) {
 
 // SAFE; the callee's accesses, composed at the call, size the section.
 void callee_rows(long *a, int n, int m) {
-  // CHECK: maps.c:[[#LOOP23:@LINE+14]]:3{{$}}
+  // CHECK: maps.c:[[#LOOP23:@LINE+13]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
@@ -474,9 +474,8 @@ void callee_rows(long *a, int n, int m) {
   // CHECK-NEXT: R scale_row(): row[j] : [i][j] of 'a' delinearized, dims [?][m]{{$}}
   // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: deps       : 2 pair(s), 2 independent (2 SIV){{$}}
-  // CHECK: profitability : GPU_OFFLOAD if (n >= {{[0-9]+}}){{$}}
-  // CHECK: - data/iteration: 16 B across 1 region(s): a (map(tofrom: a[0:((((__INTPTR_TYPE__)n - 1)) * (__INTPTR_TYPE__)m + ((__INTPTR_TYPE__)m - 1)) + 1]), 8 B/elem){{$}}
-  // CHECK: - map guard: n >= 1 && m >= 1{{$}}
+  // CHECK: profitability : SEQUENTIAL{{$}}
+  // CHECK: - declined: it calls 'scale_row', which has a target region of its own, and one can't run inside another construct -> SEQUENTIAL{{$}}
   for (int i = 0; i < n; i++)
     scale_row(&a[i * m], m);
 }

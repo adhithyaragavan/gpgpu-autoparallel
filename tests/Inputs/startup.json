@@ -1,0 +1,10 @@
+{
+  "name": "test-startup",
+  "notes": "Test machine for tests/startup.c: the built-in defaults plus startup costs.",
+  "cpu": {"throughput_gflops": 4.0, "cores": 8, "dram_bandwidth_gbs": 20.0,
+          "single_core_dram_share": 0.25, "thread_start_us": 5.0,
+          "runtime_init_us": 400.0},
+  "gpu": {"kernel_launch_us": 10.0, "pcie_bandwidth_gbs": 12.0,
+          "throughput_gflops": 500.0, "bandwidth_gbs": 700.0,
+          "init_us": 100000.0}
+}

@@ -314,7 +314,7 @@ void inside_while(double *a, int n, int steps) {
 void inside_do(double *a, int n, int steps) {
   do {
     // depth 0, INSIDE WHILE/DO
-    // CHECK: nests.c:[[#LOOP19:@LINE+14]]:5{{$}}
+    // CHECK: nests.c:[[#LOOP19:@LINE+12]]:5{{$}}
     // CHECK: kind       : VARIABLE_BOUND{{$}}
     // CHECK: trip count : <not statically known>{{$}}
     // CHECK: nest       : depth 0, 0 child loop(s), inside while/do or a loop header{{$}}
@@ -324,10 +324,8 @@ void inside_do(double *a, int n, int steps) {
     // CHECK-NEXT: R a[i] : [i]{{$}}
     // CHECK-NEXT: safety     : SAFE{{$}}
     // CHECK: deps       : 2 pair(s), 2 independent (2 SIV){{$}}
-    // CHECK: profitability : GPU_OFFLOAD{{$}}
-    // CHECK: - data/iteration: 16 B across 1 region(s): a (map(tofrom: a[0:n]), 8 B/elem){{$}}
-    // CHECK: - map guard: n >= 1{{$}}
-    // CHECK: - data region (line {{[0-9]+}}): resident in target data if(n >= 1 && n >= 8192); GPU_OFFLOAD there: resident pricing (no transfer) makes it the cheapest{{$}}
+    // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
+    // CHECK: - data region (line {{[0-9]+}}): not hoisted: with the transfer shared across its kernel runs, no loop in it is cheapest on the GPU{{$}}
     for (int i = 0; i < n; i++)
       a[i] = a[i] + 1.0;
   } while (--steps > 0);
@@ -533,7 +531,7 @@ void shadowing(double *a, int n) {
   // CHECK: profitability : SEQUENTIAL{{$}}
   for (int i = 0; i < n; i++)
     // depth 1, NOT triangular. ivs: i, i (two different variables both named i)
-    // CHECK: nests.c:[[#LOOP31:@LINE+13]]:5{{$}}
+    // CHECK: nests.c:[[#LOOP31:@LINE+11]]:5{{$}}
     // CHECK: kind       : VARIABLE_BOUND{{$}}
     // CHECK: trip count : <not statically known>{{$}}
     // CHECK: nest       : depth 1, parent [[#LOOP30]]:3, 0 child loop(s){{$}}
@@ -542,10 +540,8 @@ void shadowing(double *a, int n) {
     // CHECK-NEXT: W a[i] : [i]{{$}}
     // CHECK-NEXT: safety     : SAFE{{$}}
     // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
-    // CHECK: profitability : GPU_OFFLOAD{{$}}
-    // CHECK: - data/iteration: 8 B across 1 region(s): a (map(from: a[0:n]), 8 B/elem){{$}}
-    // CHECK: - map guard: n >= 1{{$}}
-    // CHECK: - data region (line {{[0-9]+}}): resident in target data if(n >= 1 && n >= 16384 && (int)(0) < (n)); GPU_OFFLOAD there: resident pricing (no transfer) makes it the cheapest{{$}}
+    // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
+    // CHECK: - data region (line {{[0-9]+}}): not hoisted: with the transfer shared across its kernel runs, no loop in it is cheapest on the GPU{{$}}
     for (int i = 0; i < n; i++)
       a[i] = 14.0;
 }

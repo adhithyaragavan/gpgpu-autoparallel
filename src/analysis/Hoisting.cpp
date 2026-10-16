@@ -9,8 +9,11 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/Support/CommandLine.h"
+#include "llvm/Support/Format.h"
 
+#include <cmath>
 #include <functional>
+#include <limits>
 #include <map>
 #include <set>
 
@@ -255,6 +258,128 @@ struct HoistPlanner::Impl {
     }
   }
 
+  // ---- what a region moves (Phase 2.3) ---------------------------------------
+
+  /// How often a statement runs per entry of a region: Coef * t^Pow, t
+  /// standing for any trip count not known at compile time.
+  struct Mono {
+    double Coef = 1.0;
+    unsigned Pow = 0;
+  };
+  /// A sum of those.
+  struct Runs {
+    std::map<unsigned, double> Terms;
+    void add(Mono M, double Times) { Terms[M.Pow] += M.Coef * Times; }
+    double at(double T) const {
+      double V = 0.0;
+      for (const auto &[P, C] : Terms)
+        V += C * std::pow(T, static_cast<double>(P));
+      return V;
+    }
+    /// This over O, the most it is at t = 1, 2, 4, ..., 2^30 and as t ->
+    /// infinity (a ratio of two such sums can peak in between, so it is
+    /// sampled rather than taken at the ends).
+    double ratioTo(const Runs &O) const {
+      if (O.Terms.empty())
+        return 0.0;
+      double Max = 0.0;
+      for (int E = 0; E <= 30; ++E) {
+        const double T = std::ldexp(1.0, E);
+        const double B = O.at(T);
+        if (B > 0.0)
+          Max = std::max(Max, at(T) / B);
+      }
+      double Lim = 0.0;
+      if (!Terms.empty()) {
+        const auto &[PA, CA] = *Terms.rbegin();
+        const auto &[PB, CB] = *O.Terms.rbegin();
+        Lim = PA > PB   ? std::numeric_limits<double>::infinity()
+              : PA < PB ? 0.0
+                        : CA / CB;
+      }
+      return std::max(Max, Lim);
+    }
+    std::string text() const {
+      std::string Out;
+      for (auto It = Terms.rbegin(); It != Terms.rend(); ++It) {
+        if (!Out.empty())
+          Out += " + ";
+        std::string C = fmtCount(It->second);
+        Out += It->first == 0 ? C
+               : (C == "1" ? "" : C + "*") + "t" +
+                     (It->first > 1 ? "^" + std::to_string(It->first) : "");
+      }
+      return Out.empty() ? "0" : Out;
+    }
+  };
+  static std::string fmtCount(double X) {
+    std::string Buf;
+    llvm::raw_string_ostream OS(Buf);
+    if (X == std::floor(X) && X < 1e15)
+      OS << static_cast<int64_t>(X);
+    else
+      OS << llvm::format("%.3g", X);
+    return Buf;
+  }
+  static std::string fmtRatio(double X) {
+    if (std::isinf(X))
+      return "unbounded";
+    std::string Buf;
+    llvm::raw_string_ostream OS(Buf);
+    OS << llvm::format("%.3g", X) << "x";
+    return Buf;
+  }
+
+  /// Runs of S per entry of the region whose top statements are Top: the
+  /// trip counts of the loops between them (not S itself).
+  Mono runsIn(const Stmt *S, const llvm::DenseSet<const Stmt *> &Top) {
+    Mono M;
+    const Stmt *Cur = S;
+    while (!Top.count(Cur)) {
+      DynTypedNodeList Ps = P.Ctx.getParents(*Cur);
+      const Stmt *Par = Ps.empty() ? nullptr : Ps[0].get<Stmt>();
+      if (!Par)
+        break;
+      Cur = Par;
+      if (const auto *FS = dyn_cast<ForStmt>(Cur)) {
+        auto It = IndexOf.find(FS);
+        // A loop it can break out of may stop after any step.
+        if (It != IndexOf.end() && !breaksOut(FS->getBody()) &&
+            P.Loops[It->second].TripCount &&
+            *P.Loops[It->second].TripCount > 0) {
+          M.Coef *= static_cast<double>(*P.Loops[It->second].TripCount);
+          continue;
+        }
+      }
+      if (isa<ForStmt>(Cur) || isa<WhileStmt>(Cur) || isa<DoStmt>(Cur))
+        ++M.Pow;
+    }
+    return M;
+  }
+
+  /// Whether S has a break that leaves the loop S is the body of.
+  static bool breaksOut(const Stmt *S) {
+    if (!S)
+      return false;
+    if (isa<BreakStmt>(S))
+      return true;
+    if (isa<ForStmt>(S) || isa<WhileStmt>(S) || isa<DoStmt>(S) ||
+        isa<SwitchStmt>(S))
+      return false; // its breaks are its own
+    for (const Stmt *C : S->children())
+      if (breaksOut(C))
+        return true;
+    return false;
+  }
+
+  /// Stands in C's parts for loop K's cost guard until it is priced.
+  static std::string guardSlot(int K) { return "\x01" + std::to_string(K); }
+  static std::optional<int> slotOf(const std::string &G) {
+    if (G.empty() || G[0] != '\x01')
+      return std::nullopt;
+    return std::stoi(G.substr(1));
+  }
+
   // ---- loop facts ------------------------------------------------------------
 
   const ProfitabilityVerdict *resident(int K) {
@@ -262,7 +387,7 @@ struct HoistPlanner::Impl {
     if (It == ResidentCache.end()) {
       std::optional<ProfitabilityVerdict> R;
       if (GpuAble[K])
-        R = P.Profit.priceResident(P.Loops[K], Safety[K], *Plans[K]);
+        R = P.Profit.priceResident(P.Loops[K], Safety[K], *Plans[K], 0.0);
       It = ResidentCache.emplace(K, std::move(R)).first;
     }
     return It->second ? &*It->second : nullptr;
@@ -299,6 +424,29 @@ struct HoistPlanner::Impl {
                    S.Verdict == SafetyVerdict::Safe && Plans[K] &&
                    Plans[K]->Mappable && S.CalleesMappable &&
                    S.AliasGuard.empty();
+    }
+    // A target construct may not run inside another construct
+    // (declineNestedConstructs): no loop goes to the GPU here that calls a
+    // function with a candidate loop, or sits in one a candidate calls.
+    {
+      std::vector<const FunctionDecl *> Fn(N);
+      std::vector<llvm::DenseSet<const FunctionDecl *>> Reach(N);
+      llvm::DenseSet<const FunctionDecl *> HasCand, CalledByCand;
+      for (size_t K = 0; K < N; ++K) {
+        Fn[K] = functionOf(P.Ctx, P.Loops[K].Loop);
+        Reach[K] = reachableFrom(P.Resolver, P.Loops[K]);
+        if (Emitted[K] || GpuAble[K]) {
+          HasCand.insert(Fn[K]);
+          CalledByCand.insert(Reach[K].begin(), Reach[K].end());
+        }
+      }
+      for (size_t K = 0; K < N; ++K)
+        if (GpuAble[K] &&
+            (CalledByCand.count(Fn[K]) ||
+             llvm::any_of(Reach[K], [&](const FunctionDecl *F) {
+               return HasCand.count(F) > 0;
+             })))
+          GpuAble[K] = false;
     }
     for (size_t K = 0; K < N; ++K)
       Potential[K] = GpuAble[K] &&
@@ -767,28 +915,8 @@ struct HoistPlanner::Impl {
         if (const VarDecl *VD = canon(N))
           Names.insert(VD);
       AddPart(Plans[K]->MapGuard);
-      if (PolicyNaive())
-        continue;
-      const ProfitabilityVerdict *Res = resident(K);
-      if (Res && Res->Target == OffloadTarget::GpuOffload && Res->GuardExpr) {
-        AddPart(*Res->GuardExpr);
-        // The guard is the loop's bound text: every variable in it.
-        struct B : RecursiveASTVisitor<B> {
-          llvm::SetVector<const VarDecl *> *N;
-          bool Ok = true;
-          bool VisitDeclRefExpr(DeclRefExpr *E) {
-            if (const VarDecl *V = canon(E->getDecl()))
-              N->insert(V);
-            return true;
-          }
-          bool VisitCallExpr(CallExpr *) { return Ok = false; }
-        } Bound;
-        Bound.N = &Names;
-        if (P.Loops[K].BoundExpr)
-          Bound.TraverseStmt(const_cast<Expr *>(P.Loops[K].BoundExpr));
-        if (!Bound.Ok)
-          return Fail("a loop's bound calls a function");
-      }
+      // Its cost guard, once the transfer it shares is known (below).
+      Parts.push_back(guardSlot(K));
     }
     // Every GPU loop must run on each entry of R: a hull's ends are owned
     // memory only because loops touch them, and a region whose loops don't
@@ -826,10 +954,6 @@ struct HoistPlanner::Impl {
         Cur = Par;
       }
     }
-
-    std::string C;
-    for (const std::string &G : Parts)
-      C += (C.empty() ? "" : " && ") + G;
 
     // Written or address-taken in R (by name), or address-taken in F.
     llvm::DenseSet<const VarDecl *> WrittenInR, AddrTaken;
@@ -935,30 +1059,31 @@ struct HoistPlanner::Impl {
     };
 
     const NameScope Scope(P.Ctx, F, RR.getBegin());
-    for (const VarDecl *N : Names) {
+    // Why a name can't be used in C or a section, if it can't.
+    auto NameBad = [&](const VarDecl *N) -> std::optional<std::string> {
       const bool Array = N->getType()->isArrayType();
       if (N->getType().isVolatileQualified())
-        return Fail(quoted(N) + " is volatile");
+        return std::optional<std::string>(quoted(N) + " is volatile");
       if (!Array && N->hasGlobalStorage() && GlobalAddrTaken.count(N))
-        return Fail("the address of global " + quoted(N) +
+        return std::optional<std::string>("the address of global " + quoted(N) +
                     " is taken, so it may change through a pointer");
       if (!Array && WrittenInR.count(N))
-        return Fail(quoted(N) + " changes inside it");
+        return std::optional<std::string>(quoted(N) + " changes inside it");
       if (!Array && AddrTaken.count(N))
-        return Fail("the address of " + quoted(N) + " is taken");
+        return std::optional<std::string>("the address of " + quoted(N) + " is taken");
       std::string Bad;
       if (!Scope.nameable(N, Bad))
-        return Fail(Bad);
+        return Bad;
       if (N->hasGlobalStorage() && !N->isLocalVarDecl()) {
         std::string Who;
         if (!Array && !N->getType().isConstQualified() &&
             CallsMayWrite(N, Who))
-          return Fail("global " + quoted(N) + " may be changed by a call to '" +
+          return std::optional<std::string>("global " + quoted(N) + " may be changed by a call to '" +
                       Who + "' inside it");
       } else if (!isa<ParmVarDecl>(N)) {
         // A local must be declared before R, in a block around it.
         if (!SM.isBeforeInTranslationUnit(N->getLocation(), RR.getBegin()))
-          return Fail(quoted(N) + " is declared inside it");
+          return std::optional<std::string>(quoted(N) + " is declared inside it");
         DynTypedNodeList Ps = P.Ctx.getParents(*N);
         const Stmt *Decl = Ps.empty() ? nullptr : Ps[0].get<Stmt>();
         const Stmt *Scope = nullptr;
@@ -969,9 +1094,13 @@ struct HoistPlanner::Impl {
         // Its block, or the for loop whose header declares it.
         if (!Scope || !(isa<CompoundStmt>(Scope) || isa<ForStmt>(Scope)) ||
             !inRange(Scope->getSourceRange(), RR.getBegin()))
-          return Fail(quoted(N) + " is not in scope before it");
+          return std::optional<std::string>(quoted(N) + " is not in scope before it");
       }
-    }
+      return std::nullopt;
+    };
+    for (const VarDecl *N : Names)
+      if (std::optional<std::string> Bad = NameBad(N))
+        return Fail(*Bad);
 
     // --- mapped bases: apart, one shape each -------------------------------
     llvm::DenseSet<const VarDecl *> SiteWritten;
@@ -1074,6 +1203,105 @@ struct HoistPlanner::Impl {
       if (!Visit(S, Block))
         return Fail(Why);
 
+    // --- what the region costs each loop (Phase 2.3) -------------------------
+    llvm::SetVector<const VarDecl *> RegionWritten;
+    for (const VarDecl *B : M)
+      if (SiteWritten.count(B) || HostWritten.count(B))
+        RegionWritten.insert(B);
+    std::map<int, std::string> GuardOf;
+    std::map<int, std::string> ShareNote;
+    std::map<int, bool> SharedGpu;
+    if (!PolicyNaive()) {
+      // Copies per entry, in sections (one base one way): the hull in and
+      // out once, and each update each time it runs; kernel runs per entry.
+      Runs Copies, Kernels;
+      for (const VarDecl *B : M)
+        Copies.add(Mono{}, RegionWritten.count(B) ? 2.0 : 1.0);
+      for (const Pending &U : Updates)
+        Copies.add(runsIn(U.S, RSet), U.Both.size() + U.Writes.size());
+      for (int K : Sites)
+        Kernels.add(runsIn(P.Loops[K].Loop, RSet), 1.0);
+      // Sections assumed alike in size: a run of loop K costs its own
+      // transfer times (copies per kernel run) / (its own sections).
+      const double PerRun = Copies.ratioTo(Kernels);
+      auto OwnOf = [&](int K) {
+        double Own = 0.0;
+        for (const ArrayRegion &Reg : Plans[K]->Regions)
+          Own += Reg.mapKind() == "tofrom" ? 2.0 : 1.0;
+        return Own;
+      };
+      bool Any = false;
+      for (int K : Sites) {
+        const double Own = OwnOf(K);
+        const double Scale = Own > 0.0 ? PerRun / Own : 0.0;
+        ProfitabilityVerdict A =
+            P.Profit.priceResident(P.Loops[K], Safety[K], *Plans[K], Scale);
+        const bool Gpu = A.Target == OffloadTarget::GpuOffload;
+        if (V[K].Target == OffloadTarget::GpuOffload && !Gpu)
+          return Fail("a loop that picks the GPU with its own maps no longer "
+                      "does with its share of the region's transfer (" +
+                      fmtRatio(Scale) + " of its own maps per run)");
+        Any |= Gpu;
+        SharedGpu[K] = Gpu;
+        ShareNote[K] = "; transfer " + fmtRatio(Scale) +
+                       " of its own maps per run (" + Copies.text() +
+                       " section copies over " + Kernels.text() +
+                       " kernel runs per entry)";
+        if (Gpu && A.GuardExpr)
+          GuardOf[K] = *A.GuardExpr;
+      }
+      if (!Any)
+        return Fail("with the transfer shared across its kernel runs, no "
+                    "loop in it is cheapest on the GPU");
+      // A region pays only when it copies no more than per-loop maps would
+      // for the loops it puts on the GPU by their price (the others would
+      // stay on the host and copy nothing).
+      Runs OwnCopies;
+      for (int K : Sites)
+        if (SharedGpu[K])
+          OwnCopies.add(runsIn(P.Loops[K].Loop, RSet), OwnOf(K));
+      if (Copies.ratioTo(OwnCopies) > 1.0)
+        return Fail("it would copy more than its loops' own maps (" +
+                    Copies.text() + " section copies per entry against " +
+                    OwnCopies.text() + ")");
+      // A guard is the loop's bound text: every variable in it.
+      for (const auto &[K, G] : GuardOf) {
+        struct B : RecursiveASTVisitor<B> {
+          llvm::SetVector<const VarDecl *> N;
+          bool Ok = true;
+          bool VisitDeclRefExpr(DeclRefExpr *E) {
+            if (const VarDecl *V = canon(E->getDecl()))
+              N.insert(V);
+            return true;
+          }
+          bool VisitCallExpr(CallExpr *) { return Ok = false; }
+        } Bound;
+        if (P.Loops[K].BoundExpr)
+          Bound.TraverseStmt(const_cast<Expr *>(P.Loops[K].BoundExpr));
+        if (!Bound.Ok)
+          return Fail("a loop's bound calls a function");
+        for (const VarDecl *N : Bound.N)
+          if (!Names.count(N))
+            if (std::optional<std::string> Bad = NameBad(N))
+              return Fail(*Bad);
+      }
+    }
+    std::string C;
+    {
+      std::vector<std::string> Done;
+      for (const std::string &G : Parts) {
+        std::string Part = G;
+        if (std::optional<int> K = slotOf(G)) {
+          auto It = GuardOf.find(*K);
+          Part = It == GuardOf.end() ? "" : It->second;
+        }
+        if (Part.empty() || llvm::is_contained(Done, Part))
+          continue;
+        Done.push_back(Part);
+        C += (C.empty() ? "" : " && ") + Part;
+      }
+    }
+
     // --- the region ---------------------------------------------------------
     std::map<const VarDecl *, std::string> SectionOf;
     std::string Maps, Decls;
@@ -1102,7 +1330,7 @@ struct HoistPlanner::Impl {
       // Never `from`: a loop that would have written the whole section may
       // not run on this entry, and the region's end would copy the device's
       // uninitialized memory back.
-      const bool W = SiteWritten.count(B) || HostWritten.count(B);
+      const bool W = RegionWritten.count(B) > 0;
       Maps += std::string(" map(") + (W ? "tofrom" : "to") + ": " + Sec + ")";
     }
     const std::string If = C.empty() ? "" : " if(" + C + ")";
@@ -1137,11 +1365,13 @@ struct HoistPlanner::Impl {
       X.MapGuard = C;
       std::string Note = "data region (line " + std::to_string(Line) +
                          "): resident in target data" + If;
+      Note += ShareNote[K];
       if (Was != OffloadTarget::GpuOffload)
-        Note += Potential[K] ? "; GPU_OFFLOAD there: resident pricing (no "
-                               "transfer) makes it the cheapest"
-                             : "; GPU_OFFLOAD there: it touches data the "
-                               "region keeps on the device";
+        Note += PolicyNaive() || SharedGpu[K]
+                    ? "; GPU_OFFLOAD there: its share of the region's "
+                      "transfer makes it the cheapest"
+                    : "; GPU_OFFLOAD there: it touches data the region "
+                      "keeps on the device";
       X.Reasons.push_back(Note);
     }
     Out.push_back(std::move(D));

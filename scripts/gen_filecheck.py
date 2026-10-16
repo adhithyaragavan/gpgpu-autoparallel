@@ -75,6 +75,8 @@ def main(paths):
         if run_line:
             m = re.match(r"// RUN: %p05 (.*?)%s", run_line)
             flags = m.group(1).split() if m else []
+            # %S is lit's name for the fixture's directory.
+            flags = [f.replace("%S", os.path.dirname(path)) for f in flags]
         src = [l for l in lines if not re.match(r"\s*// (CHECK|CHECK-NEXT|RUN): ", l)]
         # Run the tool on a stripped temp copy in the same directory (so its
         # line numbers match `src` and relative #includes still resolve), and
@@ -174,6 +176,8 @@ def main(paths):
                 mg = next((l.strip() for l in L if "- map guard:" in l), None)
                 if mg:
                     c.append(lit(mg) + A)
+            # Phase 2.3: the startup costs charged to the loop.
+            c += [lit(l.strip()) + A for l in L if l.strip().startswith("- startup (")]
             # Phase 2.2: a loop's data region (or why its candidate failed).
             # Its line is the stripped copy's, so it is wildcarded.
             c += [re.sub(r"^- data region \(line \d+\)", "- data region (line {{[0-9]+}})",
@@ -183,6 +187,8 @@ def main(paths):
             decl = next((l.strip() for l in L if "GPU offload declined" in l), None)
             if decl:
                 c.append(lit(decl) + A)
+            # A loop declined because a callee has a target region of its own.
+            c += [lit(l.strip()) + A for l in L if l.strip().startswith("- declined: it calls")]
             checks[line] = (n, col, c)
 
             print(f"L{line}: SPEC> {spec_comment(src, line)[:160]}")
@@ -193,6 +199,12 @@ def main(paths):
 
         new = [run_line or RUN] if os.path.basename(os.path.dirname(path)) == "tests" else []
         new.append(f"// CHECK: Analyzed {nloops} loop(s).")
+        # Phase 2.3: which machine file, and whether startup costs are priced.
+        for l in parts[0].split("\n"):
+            if l.startswith("machine: "):
+                new.append("// CHECK: " + lit(re.sub(r" \(.*\)$", "", l)) + " ({{.*}})" + A)
+            elif l.startswith("startup costs "):
+                new.append("// CHECK: " + lit(l) + A)
         # The location CHECK uses the fixture's basename, not the temp copy's.
         for i, l in enumerate(src, start=1):
             if i in checks:

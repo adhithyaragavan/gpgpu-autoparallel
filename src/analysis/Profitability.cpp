@@ -1,8 +1,12 @@
 #include "analysis/Profitability.h"
 
+#include "clang/AST/ParentMapContext.h"
 #include "clang/AST/RecursiveASTVisitor.h"
+#include "clang/Basic/SourceManager.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/Support/Format.h"
+#include "llvm/Support/JSON.h"
+#include "llvm/Support/MemoryBuffer.h"
 
 #include <algorithm>
 #include <functional>
@@ -85,6 +89,13 @@ cl::opt<double>
     FlagThreadStartUs("thread-start-us",
                       cl::desc("Cost of starting an OpenMP thread team, in microseconds"),
                       cl::init(5.0), cl::cat(optionCategory()));
+
+// Phase 2.3: measured machine parameters (eval/calibrate/).
+cl::opt<std::string> FlagMachine(
+    "machine",
+    cl::desc("JSON file of measured machine parameters (eval/calibrate/); "
+             "explicit machine flags override it"),
+    cl::value_desc("file"), cl::cat(optionCategory()));
 
 // Day 21: which decision procedure ProfitabilityAnalyzer runs. See the
 // Policy enum's comment in Profitability.h for what Naive means. Defaults to
@@ -299,17 +310,132 @@ private:
 
 } // namespace
 
-MachineModel machineModelFromFlags() {
+namespace {
+
+/// One machine-file field: where it goes, and the flag that overrides it.
+struct Field {
+  const char *Key;
+  double MachineModel::*Dbl = nullptr;
+  unsigned MachineModel::*Uns = nullptr;
+  cl::Option *Flag = nullptr;
+};
+
+std::vector<Field> cpuFields() {
+  return {{"throughput_gflops", &MachineModel::CpuThroughputGFs, nullptr,
+           &FlagCpuThroughputGFs},
+          {"cores", nullptr, &MachineModel::CpuCores, &FlagCpuCores},
+          {"dram_bandwidth_gbs", &MachineModel::DramBandwidthGBs, nullptr,
+           &FlagDramBandwidthGBs},
+          {"single_core_dram_share", &MachineModel::SingleCoreDramShare,
+           nullptr, &FlagSingleCoreDramShare},
+          {"thread_start_us", &MachineModel::ThreadStartUs, nullptr,
+           &FlagThreadStartUs},
+          {"runtime_init_us", &MachineModel::CpuInitUs, nullptr, nullptr}};
+}
+
+std::vector<Field> gpuFields() {
+  return {{"kernel_launch_us", &MachineModel::KernelLaunchUs, nullptr,
+           &FlagKernelLaunchUs},
+          {"pcie_bandwidth_gbs", &MachineModel::PcieBandwidthGBs, nullptr,
+           &FlagPcieBandwidthGBs},
+          {"throughput_gflops", &MachineModel::GpuThroughputGFs, nullptr,
+           &FlagGpuThroughputGFs},
+          {"bandwidth_gbs", &MachineModel::GpuBandwidthGBs, nullptr,
+           &FlagGpuBandwidthGBs},
+          {"init_us", &MachineModel::GpuInitUs, nullptr, nullptr}};
+}
+
+llvm::Error machineError(const llvm::Twine &Msg) {
+  return llvm::createStringError(llvm::inconvertibleErrorCode(),
+                                 "-machine=" + FlagMachine + ": " + Msg);
+}
+
+/// Every field of one section, each a non-negative number (cores a
+/// positive integer); no other keys.
+llvm::Error readSection(const json::Object &O, const char *Name,
+                        const std::vector<Field> &Fields, MachineModel &M) {
+  for (const auto &KV : O)
+    if (llvm::none_of(Fields, [&](const Field &F) { return KV.first == F.Key; }))
+      return machineError("unknown key \"" + KV.first.str() + "\" in \"" +
+                          Name + "\"");
+  for (const Field &F : Fields) {
+    std::optional<double> V = O.getNumber(F.Key);
+    if (!V)
+      return machineError("\"" + std::string(Name) + "\" needs a number \"" +
+                          F.Key + "\"");
+    if (!std::isfinite(*V) || *V < 0.0)
+      return machineError("\"" + std::string(Name) + "." + F.Key +
+                          "\" must be a non-negative number");
+    // A rate of 0 would price everything on that side as infinitely slow.
+    const llvm::StringRef Key(F.Key);
+    if ((Key.ends_with("_gflops") || Key.ends_with("_gbs")) && *V <= 0.0)
+      return machineError("\"" + std::string(Name) + "." + F.Key +
+                          "\" must be positive");
+    if (Key == "single_core_dram_share" && (*V <= 0.0 || *V > 1.0))
+      return machineError("\"" + std::string(Name) + "." + F.Key +
+                          "\" must be in (0, 1]");
+    if (F.Uns) {
+      if (*V < 1.0 || *V != std::floor(*V) || *V > 65536.0)
+        return machineError("\"" + std::string(Name) + "." + F.Key +
+                            "\" must be a positive integer");
+      M.*F.Uns = static_cast<unsigned>(*V);
+    } else {
+      M.*F.Dbl = *V;
+    }
+  }
+  return llvm::Error::success();
+}
+
+} // namespace
+
+llvm::Expected<MachineModel> machineModelFromFlags() {
   MachineModel M;
-  M.KernelLaunchUs = FlagKernelLaunchUs;
-  M.PcieBandwidthGBs = FlagPcieBandwidthGBs;
-  M.GpuThroughputGFs = FlagGpuThroughputGFs;
-  M.GpuBandwidthGBs = FlagGpuBandwidthGBs;
-  M.CpuThroughputGFs = FlagCpuThroughputGFs;
-  M.CpuCores = FlagCpuCores;
-  M.DramBandwidthGBs = FlagDramBandwidthGBs;
-  M.SingleCoreDramShare = FlagSingleCoreDramShare;
-  M.ThreadStartUs = FlagThreadStartUs;
+  if (!FlagMachine.empty()) {
+    auto Buf = llvm::MemoryBuffer::getFile(FlagMachine);
+    if (!Buf)
+      return machineError(Buf.getError().message());
+    llvm::Expected<json::Value> J = json::parse((*Buf)->getBuffer());
+    if (!J)
+      return machineError(llvm::toString(J.takeError()));
+    const json::Object *O = J->getAsObject();
+    if (!O)
+      return machineError("not a JSON object");
+    // Metadata the calibration writes for people; not read.
+    static const char *const Meta[] = {"name",     "measured", "host",
+                                       "device",   "compiler", "notes",
+                                       "raw"};
+    for (const auto &KV : *O)
+      if (KV.first != "cpu" && KV.first != "gpu" &&
+          llvm::none_of(Meta, [&](const char *K) { return KV.first == K; }))
+        return machineError("unknown key \"" + KV.first.str() + "\"");
+    const json::Object *Cpu = O->getObject("cpu");
+    if (!Cpu)
+      return machineError("needs a \"cpu\" section");
+    if (llvm::Error E = readSection(*Cpu, "cpu", cpuFields(), M))
+      return std::move(E);
+    if (const json::Value *G = O->get("gpu")) {
+      const json::Object *Gpu = G->getAsObject();
+      if (!Gpu)
+        return machineError("\"gpu\" must be an object");
+      if (llvm::Error E = readSection(*Gpu, "gpu", gpuFields(), M))
+        return std::move(E);
+    } else {
+      M.HasGpu = false;
+    }
+    if (std::optional<llvm::StringRef> N = O->getString("name"))
+      M.Name = N->str();
+    M.Source = FlagMachine;
+  }
+  // A flag given on the command line beats the file.
+  for (const std::vector<Field> &Fs : {cpuFields(), gpuFields()})
+    for (const Field &F : Fs) {
+      if (!F.Flag || !F.Flag->getNumOccurrences())
+        continue;
+      if (F.Uns)
+        M.*F.Uns = static_cast<cl::opt<unsigned> *>(F.Flag)->getValue();
+      else
+        M.*F.Dbl = static_cast<cl::opt<double> *>(F.Flag)->getValue();
+    }
   return M;
 }
 
@@ -540,6 +666,17 @@ ProfitabilityAnalyzer::priceLoop(const LoopInfo &LI, const LoopSafety &Safety,
       " flop/byte)");
 
   double CpuAggGFs = Machine.CpuThroughputGFs * Machine.CpuCores;
+  // Phase 2.3: startup costs charged to this loop's runs, if any.
+  StartupCharge Charge;
+  if (auto It = Startup.find(LI.Loop); It != Startup.end())
+    Charge = It->second;
+  const double ThreadFixedUs = Machine.ThreadStartUs + Charge.CpuUs;
+  const double LaunchFixedUs = Machine.KernelLaunchUs + Charge.GpuUs;
+  if (!Charge.Note.empty())
+    V.Reasons.push_back(Charge.Note);
+  if (!Machine.HasGpu)
+    V.Reasons.push_back("no GPU on this machine (" + Machine.Name +
+                        "): offload is not a choice");
 
   // A loop can lack a known TripCount for two different reasons (LoopInfo.h:
   // Kind and TripCount are independent facts), and only one of them leaves
@@ -620,21 +757,22 @@ ProfitabilityAnalyzer::priceLoop(const LoopInfo &LI, const LoopSafety &Safety,
     double CpuCompute =
         std::max(V.Costs.Flops * usPerFlop(CpuAggGFs),
                  V.Costs.TouchedBytes * usPerByte(Machine.DramBandwidthGBs));
-    V.Costs.CpuUs = CpuCompute + Machine.ThreadStartUs;
+    V.Costs.CpuUs = CpuCompute + ThreadFixedUs;
     // Known unconditionally at this trip count: no CpuGuardExpr is needed
     // (or possible) — t_cpu vs t_seq was already decided numerically, not
     // symbolically, for this specific N.
     V.CpuBeatsSeq = V.Costs.CpuUs <= V.Costs.SeqUs;
 
-    V.Costs.GpuLaunchUs = Machine.KernelLaunchUs;
-    V.Costs.GpuTransferUs =
-        Resident ? 0.0
-                 : V.Costs.TransferBytes * usPerByte(Machine.PcieBandwidthGBs);
+    V.Costs.GpuLaunchUs = LaunchFixedUs;
+    V.Costs.GpuTransferUs = V.Costs.TransferBytes * TransferScale *
+                            usPerByte(Machine.PcieBandwidthGBs);
     V.Costs.GpuComputeUs =
         std::max(V.Costs.Flops * usPerFlop(Machine.GpuThroughputGFs),
                  V.Costs.TouchedBytes * usPerByte(Machine.GpuBandwidthGBs));
     V.Costs.GpuUs =
         V.Costs.GpuLaunchUs + V.Costs.GpuTransferUs + V.Costs.GpuComputeUs;
+    if (!Machine.HasGpu)
+      V.Costs.GpuUs = std::numeric_limits<double>::infinity();
 
     V.Reasons.push_back("trip count " + std::to_string(N) +
                          " (known): t_seq=" + fmtUs(V.Costs.SeqUs) +
@@ -644,12 +782,14 @@ ProfitabilityAnalyzer::priceLoop(const LoopInfo &LI, const LoopSafety &Safety,
                          fmtUs(V.Costs.GpuTransferUs) + " + compute " +
                          fmtUs(V.Costs.GpuComputeUs) + ")");
 
-    if (V.Costs.GpuUs <= V.Costs.CpuUs && V.Costs.GpuUs <= V.Costs.SeqUs) {
+    if (Machine.HasGpu && V.Costs.GpuUs <= V.Costs.CpuUs &&
+        V.Costs.GpuUs <= V.Costs.SeqUs) {
       V.Target = OffloadTarget::GpuOffload;
       V.Reasons.push_back("-> GPU_OFFLOAD: cheapest of the three modelled times");
     } else if (V.Costs.CpuUs <= V.Costs.SeqUs) {
       V.Target = OffloadTarget::CpuParallel;
-      std::string Why = V.Costs.GpuTransferUs > V.Costs.GpuComputeUs
+      std::string Why = !Machine.HasGpu ? std::string("threading beats sequential")
+                        : V.Costs.GpuTransferUs > V.Costs.GpuComputeUs
                              ? "GPU is transfer-bound (" + fmtUs(V.Costs.GpuTransferUs) +
                                    " of " + fmtUs(V.Costs.GpuUs) + " is data movement)"
                              : "GPU's compute/launch cost doesn't beat threading on the host";
@@ -658,8 +798,8 @@ ProfitabilityAnalyzer::priceLoop(const LoopInfo &LI, const LoopSafety &Safety,
       V.Target = OffloadTarget::Sequential;
       V.Reasons.push_back(
           "-> SEQUENTIAL: trip count too small to recover thread-start overhead (" +
-          fmtUs(Machine.ThreadStartUs) + ") or kernel-launch overhead (" +
-          fmtUs(Machine.KernelLaunchUs) + ")");
+          fmtUs(ThreadFixedUs) + ") or kernel-launch overhead (" +
+          fmtUs(LaunchFixedUs) + ")");
     }
   } else {
     // --- Symbolic trip count: compare per-element rates ------------------
@@ -670,7 +810,7 @@ ProfitabilityAnalyzer::priceLoop(const LoopInfo &LI, const LoopSafety &Safety,
     // to one linear function of n, and the GPU-vs-CPU crossover has a closed
     // form rather than needing a numeric search.
     double GpuTransferRate =
-        Resident ? 0.0 : BytesPerIter * usPerByte(Machine.PcieBandwidthGBs);
+        BytesPerIter * TransferScale * usPerByte(Machine.PcieBandwidthGBs);
     double GpuComputeRate =
         std::max(OpsPerIter * usPerFlop(Machine.GpuThroughputGFs),
                  BytesPerIter * usPerByte(Machine.GpuBandwidthGBs));
@@ -689,8 +829,8 @@ ProfitabilityAnalyzer::priceLoop(const LoopInfo &LI, const LoopSafety &Safety,
         "trip count symbolic (bound: " + LI.BoundText +
         "); per-element rate gpu=" + fmtUs(RateGpu) + "/iter, cpu=" +
         fmtUs(RateCpu) + "/iter, seq=" + fmtUs(RateSeq) +
-        "/iter, fixed overhead launch=" + fmtUs(Machine.KernelLaunchUs) +
-        " vs thread-start=" + fmtUs(Machine.ThreadStartUs));
+        "/iter, fixed overhead launch=" + fmtUs(LaunchFixedUs) +
+        " vs thread-start=" + fmtUs(ThreadFixedUs));
 
     // --- CPU-vs-sequential crossover, independent of the GPU decision below.
     //
@@ -704,7 +844,7 @@ ProfitabilityAnalyzer::priceLoop(const LoopInfo &LI, const LoopSafety &Safety,
     // case too; it is only when RateSeq is strictly cheaper than RateCpu
     // that ThreadStartUs can ever dominate, which is the case guarded below.
     if (RateSeq > RateCpu) {
-      double NStarCpu = Machine.ThreadStartUs / (RateSeq - RateCpu);
+      double NStarCpu = ThreadFixedUs / (RateSeq - RateCpu);
       V.CpuBeatsSeq = true;
       if (NStarCpu > 0.0) {
         int64_t TCpu = nextPow2(NStarCpu);
@@ -732,9 +872,8 @@ ProfitabilityAnalyzer::priceLoop(const LoopInfo &LI, const LoopSafety &Safety,
           "model (rate_seq <= rate_cpu)");
     }
 
-    if (RateGpu < RateCpu) {
-      double NStar = (Machine.KernelLaunchUs - Machine.ThreadStartUs) /
-                      (RateCpu - RateGpu);
+    if (Machine.HasGpu && RateGpu < RateCpu) {
+      double NStar = (LaunchFixedUs - ThreadFixedUs) / (RateCpu - RateGpu);
       if (NStar <= 0.0) {
         V.Target = OffloadTarget::GpuOffload;
         V.Reasons.push_back(
@@ -756,8 +895,10 @@ ProfitabilityAnalyzer::priceLoop(const LoopInfo &LI, const LoopSafety &Safety,
           "-> CPU_PARALLEL" +
           (V.CpuGuardExpr ? (" if (" + *V.CpuGuardExpr + ")")
                           : std::string(" unconditionally")) +
-          ": GPU's per-element cost never falls below the host's, so no n "
-          "makes offload pay off, and threading beats sequential " +
+          (Machine.HasGpu
+               ? ": GPU's per-element cost never falls below the host's, so "
+                 "no n makes offload pay off, and threading beats sequential "
+               : ": threading beats sequential ") +
           (V.CpuGuardExpr ? "above that guard" : "at every n"));
     } else {
       // Neither target's per-element rate beats the alternative that would
@@ -782,11 +923,21 @@ ProfitabilityAnalyzer::priceLoop(const LoopInfo &LI, const LoopSafety &Safety,
 ProfitabilityVerdict
 ProfitabilityAnalyzer::priceResident(const LoopInfo &LI,
                                      const LoopSafety &Safety,
-                                     const RegionPlan &Plan) {
-  Resident = true;
+                                     const RegionPlan &Plan, double Scale) {
+  TransferScale = Scale;
   ProfitabilityVerdict V = priceLoop(LI, Safety, &Plan);
-  Resident = false;
+  TransferScale = 1.0;
   return V;
+}
+
+void ProfitabilityAnalyzer::setStartupCharge(const ForStmt *Loop,
+                                             StartupCharge C) {
+  Startup[Loop] = std::move(C);
+}
+
+void ProfitabilityAnalyzer::declineNested(const ForStmt *Loop,
+                                          std::string Why) {
+  Nested[Loop] = std::move(Why);
 }
 
 ProfitabilityVerdict
@@ -878,6 +1029,14 @@ ProfitabilityAnalyzer::analyzeLoop(const LoopInfo &LI, const LoopSafety &Safety,
           "and threading does not beat sequential -> SEQUENTIAL");
     }
   }
+  if (auto It = Nested.find(LI.Loop);
+      It != Nested.end() && V.Evaluated &&
+      V.Target != OffloadTarget::Sequential) {
+    V.Target = OffloadTarget::Sequential;
+    V.GuardExpr.reset();
+    V.CpuGuardExpr.reset();
+    V.Reasons.push_back(It->second);
+  }
   return V;
 }
 
@@ -944,6 +1103,166 @@ void ProfitabilityAnalyzer::applyPolicy(ProfitabilityVerdict &V) {
   // forcing it true here would let this pass emit a pragma the cost model
   // itself contradicts -- exactly the invariant OmpRewriter.h documents and
   // enforces for the gated policy already.
+}
+
+const FunctionDecl *functionOf(ASTContext &Ctx, const Stmt *S) {
+  DynTypedNodeList Ps = Ctx.getParents(*S);
+  while (!Ps.empty()) {
+    if (const auto *F = Ps[0].get<FunctionDecl>())
+      return F->getCanonicalDecl();
+    Ps = Ctx.getParents(Ps[0]);
+  }
+  return nullptr;
+}
+
+llvm::DenseSet<const FunctionDecl *> reachableFrom(CallResolver &Resolver,
+                                                   const LoopInfo &Loop) {
+  llvm::DenseSet<const FunctionDecl *> Out;
+  for (const FunctionDecl *C : Loop.Callees) {
+    Out.insert(C->getCanonicalDecl());
+    for (const ResolvedCallee &RC : Resolver.getReachable(C).Reachable)
+      Out.insert(RC.Callee->getCanonicalDecl());
+  }
+  return Out;
+}
+
+std::vector<int> constructKinds(const SourceManager &SM,
+                                const std::vector<LoopInfo> &Loops,
+                                const std::vector<ProfitabilityVerdict> &Vs) {
+  std::vector<int> Out(Loops.size(), 0);
+  for (size_t K = 0; K < Loops.size(); ++K) {
+    const ProfitabilityVerdict &V = Vs[K];
+    bool Under = false;
+    for (int A = Loops[K].Parent; A >= 0; A = Loops[A].Parent)
+      Under |= Out[A] != 0;
+    if (Under || !V.Evaluated ||
+        !SM.isWrittenInMainFile(Loops[K].Loop->getBeginLoc()))
+      continue;
+    if (V.Target == OffloadTarget::GpuOffload)
+      Out[K] = 2;
+    else if (V.Target == OffloadTarget::CpuParallel && V.CpuBeatsSeq)
+      Out[K] = 1;
+  }
+  return Out;
+}
+
+void declineNestedConstructs(
+    ProfitabilityAnalyzer &Profit, ASTContext &Ctx, CallResolver &Resolver,
+    const std::vector<LoopInfo> &Loops, const std::vector<LoopSafety> &Safety,
+    const std::vector<std::optional<RegionPlan>> &Plans,
+    std::vector<ProfitabilityVerdict> &Verdicts) {
+  const size_t N = Loops.size();
+  std::vector<const FunctionDecl *> Fn(N);
+  std::vector<llvm::DenseSet<const FunctionDecl *>> Reach(N);
+  for (size_t K = 0; K < N; ++K) {
+    Fn[K] = functionOf(Ctx, Loops[K].Loop);
+    Reach[K] = reachableFrom(Resolver, Loops[K]);
+  }
+  std::vector<bool> Declined(N, false);
+  for (bool Changed = true; Changed;) {
+    Changed = false;
+    const std::vector<int> Kind =
+        constructKinds(Ctx.getSourceManager(), Loops, Verdicts);
+    for (size_t K = 0; K < N; ++K) {
+      if (!Kind[K] || Declined[K])
+        continue;
+      for (size_t J = 0; J < N; ++J) {
+        if (Kind[J] != 2 || !Fn[J] || !Reach[K].count(Fn[J]))
+          continue;
+        Declined[K] = Changed = true;
+        Profit.declineNested(
+            Loops[K].Loop,
+            "declined: it calls '" + Fn[J]->getNameAsString() +
+                "', which has a target region of its own, and one can't "
+                "run inside another construct -> SEQUENTIAL");
+        Verdicts[K] = Profit.analyzeLoop(Loops[K], Safety[K],
+                                         Plans[K] ? &*Plans[K] : nullptr);
+        break;
+      }
+    }
+  }
+}
+
+std::string chargeStartup(ProfitabilityAnalyzer &Profit,
+                          const MachineModel &Machine, ASTContext &Ctx,
+                          CallResolver &Resolver,
+                          const std::vector<LoopInfo> &Loops,
+                          const std::vector<LoopSafety> &Safety,
+                          const std::vector<std::optional<RegionPlan>> &Plans,
+                          std::vector<ProfitabilityVerdict> &Verdicts) {
+  if (Machine.CpuInitUs <= 0.0 && Machine.GpuInitUs <= 0.0)
+    return "";
+  std::string Costs = "runtime " + fmtUs(Machine.CpuInitUs);
+  if (Machine.HasGpu)
+    Costs += ", device " + fmtUs(Machine.GpuInitUs);
+  const FunctionDecl *Main = nullptr;
+  for (const Decl *D : Ctx.getTranslationUnitDecl()->decls())
+    if (const auto *F = dyn_cast<FunctionDecl>(D))
+      if (F->isMain() && F->doesThisDeclarationHaveABody())
+        Main = F;
+  if (!Main)
+    return "startup costs (" + Costs + ") not priced: no main() in this "
+           "file, so how many constructs share them can't be seen";
+
+  const SourceManager &SM = Ctx.getSourceManager();
+  const size_t N = Loops.size();
+  // Runs per entry of the function: constant trips of the loops around.
+  std::vector<double> Runs(N, 1.0);
+  for (size_t K = 0; K < N; ++K)
+    for (int A = Loops[K].Parent; A >= 0; A = Loops[A].Parent)
+      if (Loops[A].TripCount && *Loops[A].TripCount > 0)
+        Runs[K] *= static_cast<double>(*Loops[A].TripCount);
+
+  // Only constructs main() can reach run, so only they share the costs.
+  llvm::DenseSet<const FunctionDecl *> Live{Main->getCanonicalDecl()};
+  for (const ResolvedCallee &RC : Resolver.getReachable(Main).Reachable)
+    Live.insert(RC.Callee->getCanonicalDecl());
+  std::vector<bool> Runs1(N);
+  for (size_t K = 0; K < N; ++K)
+    Runs1[K] = Live.count(functionOf(Ctx, Loops[K].Loop)) > 0;
+  auto Kind = [&](const std::vector<ProfitabilityVerdict> &Vs) {
+    std::vector<int> Out = constructKinds(SM, Loops, Vs);
+    for (size_t K = 0; K < N; ++K)
+      if (!Runs1[K])
+        Out[K] = 0;
+    return Out;
+  };
+
+  std::vector<int> Cur = Kind(Verdicts);
+  for (size_t Round = 0; Round <= N + 1; ++Round) {
+    unsigned NCpu = 0, NGpu = 0;
+    for (int C : Cur) {
+      NCpu += C == 1;
+      NGpu += C == 2;
+    }
+    std::vector<ProfitabilityVerdict> Next;
+    for (size_t K = 0; K < N; ++K) {
+      // The loop itself counted in, whichever target it ends up on.
+      const unsigned ShCpu = NCpu - (Cur[K] == 1) + 1;
+      const unsigned ShGpu = NGpu - (Cur[K] == 2) + 1;
+      ProfitabilityAnalyzer::StartupCharge C;
+      C.CpuUs = Machine.CpuInitUs / ShCpu / Runs[K];
+      C.GpuUs = Machine.HasGpu ? Machine.GpuInitUs / ShGpu / Runs[K] : 0.0;
+      C.Note = "startup (main() in this file): runtime " +
+               fmtUs(Machine.CpuInitUs) + " / " + std::to_string(ShCpu) +
+               " construct(s)";
+      if (Machine.HasGpu)
+        C.Note += ", device " + fmtUs(Machine.GpuInitUs) + " / " +
+                  std::to_string(ShGpu);
+      C.Note += ", over " + fmtNum(Runs[K]) + " run(s): +" +
+                fmtUs(C.CpuUs) + " on t_cpu" +
+                (Machine.HasGpu ? ", +" + fmtUs(C.GpuUs) + " on t_gpu" : "");
+      Profit.setStartupCharge(Loops[K].Loop, std::move(C));
+      const RegionPlan *P = Plans[K] ? &*Plans[K] : nullptr;
+      Next.push_back(Profit.analyzeLoop(Loops[K], Safety[K], P));
+    }
+    std::vector<int> NextKind = Kind(Next);
+    Verdicts = std::move(Next);
+    if (NextKind == Cur)
+      break;
+    Cur = std::move(NextKind);
+  }
+  return "startup costs (" + Costs + ") priced: main() is in this file";
 }
 
 void printProfitabilityReport(llvm::raw_ostream &OS,

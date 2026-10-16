@@ -541,7 +541,7 @@ void d2_two_row_lengths(double *a, int n, int m) {
     // CHECK: - data/iteration: 16 B across 1 region(s): a (map(tofrom: a[((__INTPTR_TYPE__)i) * (__INTPTR_TYPE__)n:(((__INTPTR_TYPE__)i) * (__INTPTR_TYPE__)n + ((__INTPTR_TYPE__)n - 1)) - (((__INTPTR_TYPE__)i) * (__INTPTR_TYPE__)n) + 1]), 8 B/elem){{$}}
     // CHECK: - map guard: ((__INTPTR_TYPE__)i) * (__INTPTR_TYPE__)n >= 0 && n >= 1{{$}}
     // CHECK: - data region (line {{[0-9]+}}): not hoisted: 'i' changes inside it{{$}}
-    // CHECK: - data region (line {{[0-9]+}}): resident in target data if(((__INTPTR_TYPE__)i) * (__INTPTR_TYPE__)n >= 0 && n >= 1 && n >= 8192 && ((__INTPTR_TYPE__)i) * (__INTPTR_TYPE__)m >= 0 && m >= 1 && m >= 8192); GPU_OFFLOAD there: resident pricing (no transfer) makes it the cheapest{{$}}
+    // CHECK: - data region (line {{[0-9]+}}): resident in target data if(((__INTPTR_TYPE__)i) * (__INTPTR_TYPE__)n >= 0 && n >= 1 && n >= 65536 && ((__INTPTR_TYPE__)i) * (__INTPTR_TYPE__)m >= 0 && m >= 1 && m >= 65536); transfer 0.5x of its own maps per run (2 section copies over 2 kernel runs per entry); GPU_OFFLOAD there: its share of the region's transfer makes it the cheapest{{$}}
     for (int j = 0; j < n; j++)
       a[i * n + j] = a[i * n + j] + 1.0;
     // CHECK: dependence.c:[[#LOOP30:@LINE+15]]:5{{$}}
@@ -558,7 +558,7 @@ void d2_two_row_lengths(double *a, int n, int m) {
     // CHECK: - data/iteration: 16 B across 1 region(s): a (map(tofrom: a[((__INTPTR_TYPE__)i) * (__INTPTR_TYPE__)m:(((__INTPTR_TYPE__)i) * (__INTPTR_TYPE__)m + ((__INTPTR_TYPE__)m - 1)) - (((__INTPTR_TYPE__)i) * (__INTPTR_TYPE__)m) + 1]), 8 B/elem){{$}}
     // CHECK: - map guard: ((__INTPTR_TYPE__)i) * (__INTPTR_TYPE__)m >= 0 && m >= 1{{$}}
     // CHECK: - data region (line {{[0-9]+}}): not hoisted: 'i' changes inside it{{$}}
-    // CHECK: - data region (line {{[0-9]+}}): resident in target data if(((__INTPTR_TYPE__)i) * (__INTPTR_TYPE__)n >= 0 && n >= 1 && n >= 8192 && ((__INTPTR_TYPE__)i) * (__INTPTR_TYPE__)m >= 0 && m >= 1 && m >= 8192); GPU_OFFLOAD there: resident pricing (no transfer) makes it the cheapest{{$}}
+    // CHECK: - data region (line {{[0-9]+}}): resident in target data if(((__INTPTR_TYPE__)i) * (__INTPTR_TYPE__)n >= 0 && n >= 1 && n >= 65536 && ((__INTPTR_TYPE__)i) * (__INTPTR_TYPE__)m >= 0 && m >= 1 && m >= 65536); transfer 0.5x of its own maps per run (2 section copies over 2 kernel runs per entry); GPU_OFFLOAD there: its share of the region's transfer makes it the cheapest{{$}}
     for (int k = 0; k < m; k++)
       a[i * m + k] = a[i * m + k] * 2.0 + 1.0;
   }

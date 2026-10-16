@@ -1,0 +1,2 @@
+{"name": "x", "cpu": {"throughput_gflops": 0, "cores": 8, "dram_bandwidth_gbs": 20.0,
+ "single_core_dram_share": 0.25, "thread_start_us": 5.0, "runtime_init_us": 0.0}}

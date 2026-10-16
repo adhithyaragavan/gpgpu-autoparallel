@@ -1,0 +1,41 @@
+{
+  "name": "m4",
+  "measured": "2026-10-16",
+  "host": "arm64 arm, 10 OpenMP threads",
+  "compiler": "Homebrew clang version 22.1.8 (-O2 -fopenmp -isysroot /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk -L/opt/homebrew/opt/llvm/lib -Wl,-rpath,/opt/homebrew/opt/llvm/lib)",
+  "cpu": {
+    "throughput_gflops": 31.722,
+    "cores": 4,
+    "dram_bandwidth_gbs": 96.179,
+    "single_core_dram_share": 0.905,
+    "thread_start_us": 23.679,
+    "runtime_init_us": 48.321
+  },
+  "notes": "Apple M4 (4 performance + 6 efficiency cores), Homebrew LLVM 22 libomp. No NVIDIA GPU: no gpu section, so offload is never chosen.",
+  "raw": {
+    "threads": 10.0,
+    "stream_1thread_gbs": 87.022517,
+    "stream_all_gbs": 96.178952,
+    "ops_1thread_gops": 31.72246,
+    "ops_all_gops": 121.135134,
+    "empty_parallel_for_us": 23.679,
+    "first_parallel_us": [
+      84.0,
+      72.0,
+      65.0,
+      73.0,
+      69.0,
+      71.0,
+      74.0
+    ],
+    "first_parallel_if0_us": [
+      1.0,
+      0.0,
+      1.0,
+      0.0,
+      0.0,
+      1.0,
+      1.0
+    ]
+  }
+}

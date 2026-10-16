@@ -1,0 +1,41 @@
+{
+  "name": "colab-t4",
+  "measured": "2026-10-16",
+  "host": "x86_64 x86_64, 2 OpenMP threads",
+  "compiler": "nvc, NVIDIA HPC SDK 2026 (from its install path; the version line came out empty) (-O2 -mp=gpu -gpu=cc75)",
+  "cpu": {
+    "throughput_gflops": 13.504,
+    "cores": 1,
+    "dram_bandwidth_gbs": 13.43,
+    "single_core_dram_share": 0.927,
+    "thread_start_us": 0.496,
+    "runtime_init_us": 86.518
+  },
+  "gpu": {
+    "kernel_launch_us": 8.757,
+    "pcie_bandwidth_gbs": 4.719,
+    "throughput_gflops": 194.383,
+    "bandwidth_gbs": 261.177,
+    "init_us": 159457.772
+  },
+  "device": "Tesla T4, 580.82.07",
+  "notes": "Colab Tesla T4, host 2 vCPU; nvc -mp=gpu. Run by the user from eval/colab/calibrate.ipynb on 2026-10-16.",
+  "raw": {
+    "threads": 2.0,
+    "stream_1thread_gbs": 12.451897,
+    "stream_all_gbs": 13.429722,
+    "ops_1thread_gops": 13.503554,
+    "ops_all_gops": 17.189781,
+    "empty_parallel_for_us": 0.496388,
+    "first_parallel_us": [88.372, 86.139, 107.156, 107.673, 87.014, 86.645, 85.55],
+    "first_parallel_if0_us": [2.215, 1.902, 1.817, 1.608, 1.72, 1.725, 1.742],
+    "empty_kernel_us": 8.757493,
+    "first_target_us": [196015.478, 171277.034, 160754.528, 159466.529, 157761.21, 154601.829, 156012.212],
+    "map_to_us": [[1024, 6.905], [4096, 7.437], [16384, 10.591], [65536, 26.694], [262144, 79.054], [1048576, 287.59], [4194304, 882.947], [16777216, 3256.268], [67108864, 14100.087], [268435456, 56719.179]],
+    "map_from_us": [[1024, 10.354], [4096, 11.258], [16384, 14.015], [65536, 26.095], [262144, 80.332], [1048576, 303.005], [4194304, 969.416], [16777216, 3693.657], [67108864, 14293.897], [268435456, 57079.173]],
+    "map_to_fit": {"latency_us": 0.0, "gbs": 4.727597613847101},
+    "map_from_fit": {"latency_us": 86.50360087719491, "gbs": 4.710582145731677},
+    "device_stream_gbs": 261.176999,
+    "device_ops_gops": 194.382555
+  }
+}

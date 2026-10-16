@@ -1,8 +1,10 @@
-// RUN: %p05 %s -- %cflags | FileCheck %s
+// RUN: %p05 -policy naive %s -- %cflags | FileCheck %s
 // CHECK: Analyzed 53 loop(s).
 // Phase 2.2: keeping data on the device across GPU loops (Hoisting.h). Each
 // function is a region the tool should hoist into one `target data`, or a
-// near miss it must refuse. Also RUN by scripts/check_parallel.sh with
+// near miss it must refuse. Run under -policy naive, which hoists every
+// region it may, so the regions' shapes are tested here; whether one pays
+// for itself is tests/amortize.c. Also RUN by scripts/check_parallel.sh with
 // OFFLOAD=1 and eval/runtime/hoist_main.c: on the host device with memory
 // of its own, a missing `target update` or a loop left on the host inside
 // the region reads stale data and the output differs.
@@ -61,7 +63,7 @@ void jacobi(double *restrict u, double *restrict v, int n, int steps) {
     // CHECK: profitability : GPU_OFFLOAD{{$}}
     // CHECK: - data/iteration: 16 B across 2 region(s): v (map(from: v[1:((__INTPTR_TYPE__)n - 2)]), 8 B/elem), u (map(to: u[0:n]), 8 B/elem){{$}}
     // CHECK: - map guard: n >= 3{{$}}
-    // CHECK: - data region (line {{[0-9]+}}): resident in target data if(n >= 3 && n - 1 >= 8192 && (int)(0) < (steps)); GPU_OFFLOAD there: resident pricing (no transfer) makes it the cheapest{{$}}
+    // CHECK: - data region (line {{[0-9]+}}): resident in target data if(n >= 3 && (int)(0) < (steps)){{$}}
     for (int i = 1; i < n - 1; i++)
       v[i] = relax(u[i - 1] + u[i + 1]);
     // CHECK: hoist.c:[[#LOOP3:@LINE+16]]:5{{$}}
@@ -79,7 +81,7 @@ void jacobi(double *restrict u, double *restrict v, int n, int steps) {
     // CHECK: profitability : GPU_OFFLOAD{{$}}
     // CHECK: - data/iteration: 16 B across 2 region(s): u (map(from: u[1:((__INTPTR_TYPE__)n - 2)]), 8 B/elem), v (map(to: v[1:((__INTPTR_TYPE__)n - 2)]), 8 B/elem){{$}}
     // CHECK: - map guard: n >= 3{{$}}
-    // CHECK: - data region (line {{[0-9]+}}): resident in target data if(n >= 3 && n - 1 >= 8192 && (int)(0) < (steps)); GPU_OFFLOAD there: resident pricing (no transfer) makes it the cheapest{{$}}
+    // CHECK: - data region (line {{[0-9]+}}): resident in target data if(n >= 3 && (int)(0) < (steps)){{$}}
     for (int i = 1; i < n - 1; i++)
       u[i] = relax(v[i]);
   }
@@ -103,7 +105,7 @@ void pipeline(double *restrict a, double *restrict b, double *restrict c,
   // CHECK: profitability : GPU_OFFLOAD{{$}}
   // CHECK: - data/iteration: 16 B across 2 region(s): b (map(from: b[0:n]), 8 B/elem), a (map(to: a[0:n]), 8 B/elem){{$}}
   // CHECK: - map guard: n >= 1{{$}}
-  // CHECK: - data region (line {{[0-9]+}}): resident in target data if(n >= 1 && n >= 8192); GPU_OFFLOAD there: resident pricing (no transfer) makes it the cheapest{{$}}
+  // CHECK: - data region (line {{[0-9]+}}): resident in target data if(n >= 1){{$}}
   for (int i = 0; i < n; i++)
     b[i] = relax(a[i]);
   // CHECK: hoist.c:[[#LOOP5:@LINE+16]]:3{{$}}
@@ -121,7 +123,7 @@ void pipeline(double *restrict a, double *restrict b, double *restrict c,
   // CHECK: profitability : GPU_OFFLOAD{{$}}
   // CHECK: - data/iteration: 16 B across 2 region(s): c (map(from: c[0:n]), 8 B/elem), b (map(to: b[0:n]), 8 B/elem){{$}}
   // CHECK: - map guard: n >= 1{{$}}
-  // CHECK: - data region (line {{[0-9]+}}): resident in target data if(n >= 1 && n >= 8192); GPU_OFFLOAD there: resident pricing (no transfer) makes it the cheapest{{$}}
+  // CHECK: - data region (line {{[0-9]+}}): resident in target data if(n >= 1){{$}}
   for (int i = 0; i < n; i++)
     c[i] = relax(b[i]) * 2.0;
 }
@@ -163,7 +165,7 @@ double residual(double *restrict u, double *restrict r, int n, int steps) {
     // CHECK: profitability : GPU_OFFLOAD{{$}}
     // CHECK: - data/iteration: 16 B across 2 region(s): r (map(from: r[0:n]), 8 B/elem), u (map(to: u[0:n]), 8 B/elem){{$}}
     // CHECK: - map guard: n >= 1{{$}}
-    // CHECK: - data region (line {{[0-9]+}}): resident in target data if(n >= 1 && n >= 8192 && (int)(0) < (steps)); GPU_OFFLOAD there: resident pricing (no transfer) makes it the cheapest{{$}}
+    // CHECK: - data region (line {{[0-9]+}}): resident in target data if(n >= 1 && (int)(0) < (steps)){{$}}
     for (int i = 0; i < n; i++)
       r[i] = relax(u[i]);
     // CHECK: hoist.c:[[#LOOP8:@LINE+15]]:5{{$}}
@@ -180,7 +182,7 @@ double residual(double *restrict u, double *restrict r, int n, int steps) {
     // CHECK: profitability : GPU_OFFLOAD{{$}}
     // CHECK: - data/iteration: 16 B across 2 region(s): u (map(from: u[0:n]), 8 B/elem), r (map(to: r[0:n]), 8 B/elem){{$}}
     // CHECK: - map guard: n >= 1{{$}}
-    // CHECK: - data region (line {{[0-9]+}}): resident in target data if(n >= 1 && n >= 8192 && (int)(0) < (steps)); GPU_OFFLOAD there: resident pricing (no transfer) makes it the cheapest{{$}}
+    // CHECK: - data region (line {{[0-9]+}}): resident in target data if(n >= 1 && (int)(0) < (steps)){{$}}
     for (int i = 0; i < n; i++)
       u[i] = r[i] * 0.5;
     norm += u[0];
@@ -227,7 +229,7 @@ void boundary(double *restrict u, double *restrict w, int n, int steps) {
     // CHECK: profitability : GPU_OFFLOAD{{$}}
     // CHECK: - data/iteration: 16 B across 2 region(s): w (map(from: w[1:((__INTPTR_TYPE__)n - 1)]), 8 B/elem), u (map(to: u[0:n]), 8 B/elem){{$}}
     // CHECK: - map guard: n >= 2{{$}}
-    // CHECK: - data region (line {{[0-9]+}}): resident in target data if(n >= 2 && n >= 8192 && (int)(0) < (steps)); GPU_OFFLOAD there: resident pricing (no transfer) makes it the cheapest{{$}}
+    // CHECK: - data region (line {{[0-9]+}}): resident in target data if(n >= 2 && (int)(0) < (steps)){{$}}
     for (int i = 1; i < n; i++)
       w[i] = relax(u[i] + u[i - 1]);
     // CHECK: hoist.c:[[#LOOP11:@LINE+15]]:5{{$}}
@@ -244,7 +246,7 @@ void boundary(double *restrict u, double *restrict w, int n, int steps) {
     // CHECK: profitability : GPU_OFFLOAD{{$}}
     // CHECK: - data/iteration: 16 B across 2 region(s): u (map(from: u[1:((__INTPTR_TYPE__)n - 1)]), 8 B/elem), w (map(to: w[1:((__INTPTR_TYPE__)n - 1)]), 8 B/elem){{$}}
     // CHECK: - map guard: n >= 2{{$}}
-    // CHECK: - data region (line {{[0-9]+}}): resident in target data if(n >= 2 && n >= 8192 && (int)(0) < (steps)); GPU_OFFLOAD there: resident pricing (no transfer) makes it the cheapest{{$}}
+    // CHECK: - data region (line {{[0-9]+}}): resident in target data if(n >= 2 && (int)(0) < (steps)){{$}}
     for (int i = 1; i < n; i++)
       u[i] = w[i];
   }
@@ -270,7 +272,7 @@ void global_steps(int steps) {
     // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
     // CHECK: profitability : GPU_OFFLOAD{{$}}
     // CHECK: - data/iteration: 16 B across 2 region(s): g_y (map(from: g_y[0:262144]), 8 B/elem), g_x (map(to: g_x[0:262144]), 8 B/elem){{$}}
-    // CHECK: - data region (line {{[0-9]+}}): resident in target data; GPU_OFFLOAD there: resident pricing (no transfer) makes it the cheapest{{$}}
+    // CHECK: - data region (line {{[0-9]+}}): resident in target data{{$}}
     for (int i = 0; i < G; i++)
       g_y[i] = relax(g_x[i]);
     // CHECK: hoist.c:[[#LOOP13:@LINE+13]]:5{{$}}
@@ -285,7 +287,7 @@ void global_steps(int steps) {
     // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
     // CHECK: profitability : GPU_OFFLOAD{{$}}
     // CHECK: - data/iteration: 16 B across 2 region(s): g_x (map(from: g_x[0:262144]), 8 B/elem), g_y (map(to: g_y[0:262144]), 8 B/elem){{$}}
-    // CHECK: - data region (line {{[0-9]+}}): resident in target data; GPU_OFFLOAD there: resident pricing (no transfer) makes it the cheapest{{$}}
+    // CHECK: - data region (line {{[0-9]+}}): resident in target data{{$}}
     for (int i = 0; i < G; i++)
       g_x[i] = g_y[i] * 0.5;
     t++;
@@ -331,7 +333,7 @@ void shrink(double *restrict a, double *restrict b, int n, int steps) {
     // CHECK: - data/iteration: 16 B across 2 region(s): b (map(from: b[0:n]), 8 B/elem), a (map(to: a[0:n]), 8 B/elem){{$}}
     // CHECK: - map guard: n >= 1{{$}}
     // CHECK: - data region (line {{[0-9]+}}): not hoisted: 'n' changes inside it{{$}}
-    // CHECK: - data region (line {{[0-9]+}}): resident in target data if(n >= 1 && n >= 8192); GPU_OFFLOAD there: resident pricing (no transfer) makes it the cheapest{{$}}
+    // CHECK: - data region (line {{[0-9]+}}): resident in target data if(n >= 1){{$}}
     for (int i = 0; i < n; i++)
       b[i] = relax(a[i]);
     // CHECK: hoist.c:[[#LOOP16:@LINE+16]]:5{{$}}
@@ -349,7 +351,7 @@ void shrink(double *restrict a, double *restrict b, int n, int steps) {
     // CHECK: - data/iteration: 16 B across 2 region(s): a (map(from: a[0:n]), 8 B/elem), b (map(to: b[0:n]), 8 B/elem){{$}}
     // CHECK: - map guard: n >= 1{{$}}
     // CHECK: - data region (line {{[0-9]+}}): not hoisted: 'n' changes inside it{{$}}
-    // CHECK: - data region (line {{[0-9]+}}): resident in target data if(n >= 1 && n >= 8192); GPU_OFFLOAD there: resident pricing (no transfer) makes it the cheapest{{$}}
+    // CHECK: - data region (line {{[0-9]+}}): resident in target data if(n >= 1){{$}}
     for (int i = 0; i < n; i++)
       a[i] = b[i];
     n = n - 1;
@@ -451,7 +453,7 @@ double escape(double *restrict a, double *restrict b, int n, int steps) {
     // CHECK: - data/iteration: 16 B across 2 region(s): b (map(from: b[0:n]), 8 B/elem), a (map(to: a[0:n]), 8 B/elem){{$}}
     // CHECK: - map guard: n >= 1{{$}}
     // CHECK: - data region (line {{[0-9]+}}): not hoisted: host code calls 'host_sum', which reaches memory through a pointer{{$}}
-    // CHECK: - data region (line {{[0-9]+}}): resident in target data if(n >= 1 && n >= 8192); GPU_OFFLOAD there: resident pricing (no transfer) makes it the cheapest{{$}}
+    // CHECK: - data region (line {{[0-9]+}}): resident in target data if(n >= 1){{$}}
     for (int i = 0; i < n; i++)
       b[i] = relax(a[i]);
     // CHECK: hoist.c:[[#LOOP22:@LINE+16]]:5{{$}}
@@ -469,7 +471,7 @@ double escape(double *restrict a, double *restrict b, int n, int steps) {
     // CHECK: - data/iteration: 16 B across 2 region(s): a (map(from: a[0:n]), 8 B/elem), b (map(to: b[0:n]), 8 B/elem){{$}}
     // CHECK: - map guard: n >= 1{{$}}
     // CHECK: - data region (line {{[0-9]+}}): not hoisted: host code calls 'host_sum', which reaches memory through a pointer{{$}}
-    // CHECK: - data region (line {{[0-9]+}}): resident in target data if(n >= 1 && n >= 8192); GPU_OFFLOAD there: resident pricing (no transfer) makes it the cheapest{{$}}
+    // CHECK: - data region (line {{[0-9]+}}): resident in target data if(n >= 1){{$}}
     for (int i = 0; i < n; i++)
       a[i] = b[i];
     s += host_sum(a, n);
@@ -497,7 +499,7 @@ void cond_reads(double *restrict a, double *restrict b, int n) {
     // CHECK: - data/iteration: 16 B across 2 region(s): b (map(from: b[0:n]), 8 B/elem), a (map(to: a[0:n]), 8 B/elem){{$}}
     // CHECK: - map guard: n >= 1{{$}}
     // CHECK: - data region (line {{[0-9]+}}): not hoisted: a while loop around a GPU loop may not run, and a pointer's section is owned memory only when the loop touches it{{$}}
-    // CHECK: - data region (line {{[0-9]+}}): resident in target data if(n >= 1 && n >= 8192); GPU_OFFLOAD there: resident pricing (no transfer) makes it the cheapest{{$}}
+    // CHECK: - data region (line {{[0-9]+}}): resident in target data if(n >= 1){{$}}
     for (int i = 0; i < n; i++)
       b[i] = relax(a[i]) + 1.0;
     // CHECK: hoist.c:[[#LOOP24:@LINE+17]]:5{{$}}
@@ -516,7 +518,7 @@ void cond_reads(double *restrict a, double *restrict b, int n) {
     // CHECK: - data/iteration: 24 B across 2 region(s): a (map(tofrom: a[0:n]), 8 B/elem), b (map(to: b[0:n]), 8 B/elem){{$}}
     // CHECK: - map guard: n >= 1{{$}}
     // CHECK: - data region (line {{[0-9]+}}): not hoisted: a while loop around a GPU loop may not run, and a pointer's section is owned memory only when the loop touches it{{$}}
-    // CHECK: - data region (line {{[0-9]+}}): resident in target data if(n >= 1 && n >= 8192); GPU_OFFLOAD there: resident pricing (no transfer) makes it the cheapest{{$}}
+    // CHECK: - data region (line {{[0-9]+}}): resident in target data if(n >= 1){{$}}
     for (int i = 0; i < n; i++)
       a[i] = b[i] + a[i];
   }
@@ -541,7 +543,7 @@ void maybe_alias(double *a, double *b, int n, int steps) {
   // CHECK: alias      : 'a' and 'b' may overlap: checked at run time{{$}}
   // CHECK: profitability : SEQUENTIAL{{$}}
   for (int t = 0; t < steps; t++) {
-    // CHECK: hoist.c:[[#LOOP26:@LINE+14]]:5{{$}}
+    // CHECK: hoist.c:[[#LOOP26:@LINE+16]]:5{{$}}
     // CHECK: kind       : VARIABLE_BOUND{{$}}
     // CHECK: trip count : <not statically known>{{$}}
     // CHECK: nest       : depth 1, parent [[#LOOP25]]:3, 0 child loop(s){{$}}
@@ -552,12 +554,14 @@ void maybe_alias(double *a, double *b, int n, int steps) {
     // CHECK-NEXT: R a[i] : [i]{{$}}
     // CHECK-NEXT: safety     : SAFE{{$}}
     // CHECK: deps       : 2 pair(s), 2 independent (2 SIV){{$}}
-    // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
+    // CHECK: profitability : GPU_OFFLOAD{{$}}
+    // CHECK: - data/iteration: 16 B across 1 region(s): a (map(tofrom: a[0:n]), 8 B/elem){{$}}
+    // CHECK: - map guard: n >= 1{{$}}
     // CHECK: - data region (line {{[0-9]+}}): not hoisted: 'a' and 'b' may overlap, and one region can't map both{{$}}
     // CHECK: - data region (line {{[0-9]+}}): not hoisted: 'a' and 'b' may overlap, and one region can't map both{{$}}
     for (int i = 0; i < n; i++)
       a[i] = relax(a[i]);
-    // CHECK: hoist.c:[[#LOOP27:@LINE+14]]:5{{$}}
+    // CHECK: hoist.c:[[#LOOP27:@LINE+16]]:5{{$}}
     // CHECK: kind       : VARIABLE_BOUND{{$}}
     // CHECK: trip count : <not statically known>{{$}}
     // CHECK: nest       : depth 1, parent [[#LOOP25]]:3, 0 child loop(s){{$}}
@@ -568,7 +572,9 @@ void maybe_alias(double *a, double *b, int n, int steps) {
     // CHECK-NEXT: R b[i] : [i]{{$}}
     // CHECK-NEXT: safety     : SAFE{{$}}
     // CHECK: deps       : 2 pair(s), 2 independent (2 SIV){{$}}
-    // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
+    // CHECK: profitability : GPU_OFFLOAD{{$}}
+    // CHECK: - data/iteration: 16 B across 1 region(s): b (map(tofrom: b[0:n]), 8 B/elem){{$}}
+    // CHECK: - map guard: n >= 1{{$}}
     // CHECK: - data region (line {{[0-9]+}}): not hoisted: 'a' and 'b' may overlap, and one region can't map both{{$}}
     // CHECK: - data region (line {{[0-9]+}}): not hoisted: 'a' and 'b' may overlap, and one region can't map both{{$}}
     for (int i = 0; i < n; i++)
@@ -578,7 +584,7 @@ void maybe_alias(double *a, double *b, int n, int steps) {
 
 // One GPU loop, run once: nothing to save.
 void once(double *restrict a, const double *restrict b, int n) {
-  // CHECK: hoist.c:[[#LOOP28:@LINE+13]]:3{{$}}
+  // CHECK: hoist.c:[[#LOOP28:@LINE+15]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
@@ -590,7 +596,9 @@ void once(double *restrict a, const double *restrict b, int n) {
   // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
   // CHECK: alias      : 'a' and 'b' can't overlap (restrict){{$}}
-  // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
+  // CHECK: profitability : GPU_OFFLOAD{{$}}
+  // CHECK: - data/iteration: 16 B across 2 region(s): a (map(from: a[0:n]), 8 B/elem), b (map(to: b[0:n]), 8 B/elem){{$}}
+  // CHECK: - map guard: n >= 1{{$}}
   for (int i = 0; i < n; i++)
     a[i] = relax(b[i]);
 }
@@ -603,7 +611,7 @@ double h_acc;
 
 static void h_helper(void) {
   h_x[0] = 100.0;
-  // CHECK: hoist.c:[[#LOOP29:@LINE+12]]:3{{$}}
+  // CHECK: hoist.c:[[#LOOP29:@LINE+13]]:3{{$}}
   // CHECK: kind       : CONSTANT_BOUND{{$}}
   // CHECK: trip count : 4096{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
@@ -614,7 +622,8 @@ static void h_helper(void) {
   // CHECK-NEXT: R h_x[i] : [i]{{$}}
   // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
-  // CHECK: profitability : CPU_PARALLEL{{$}}
+  // CHECK: profitability : GPU_OFFLOAD{{$}}
+  // CHECK: - data/iteration: 16 B across 2 region(s): h_y (map(from: h_y[0:4096]), 8 B/elem), h_x (map(to: h_x[0:4096]), 8 B/elem){{$}}
   for (int i = 0; i < H; i++)
     h_y[i] = relax(h_x[i]);
   h_acc += h_y[5];
@@ -646,7 +655,7 @@ void calls_offloader(int steps) {
   // CHECK: deps       : 16 pair(s), 0 independent{{$}}
   // CHECK: profitability : SEQUENTIAL{{$}}
   for (int t = 0; t < steps; t++) {
-    // CHECK: hoist.c:[[#LOOP31:@LINE+12]]:5{{$}}
+    // CHECK: hoist.c:[[#LOOP31:@LINE+15]]:5{{$}}
     // CHECK: kind       : CONSTANT_BOUND{{$}}
     // CHECK: trip count : 4096{{$}}
     // CHECK: nest       : depth 1, parent [[#LOOP30]]:3, 0 child loop(s){{$}}
@@ -657,11 +666,14 @@ void calls_offloader(int steps) {
     // CHECK-NEXT: R h_x[i] : [i]{{$}}
     // CHECK-NEXT: safety     : SAFE{{$}}
     // CHECK: deps       : 2 pair(s), 2 independent (2 SIV){{$}}
-    // CHECK: profitability : CPU_PARALLEL{{$}}
+    // CHECK: profitability : GPU_OFFLOAD{{$}}
+    // CHECK: - data/iteration: 16 B across 1 region(s): h_x (map(tofrom: h_x[0:4096]), 8 B/elem){{$}}
+    // CHECK: - data region (line {{[0-9]+}}): not hoisted: host code calls 'h_helper', which offloads loops of its own{{$}}
+    // CHECK: - data region (line {{[0-9]+}}): not hoisted: host code calls 'h_helper', which offloads loops of its own{{$}}
     for (int i = 0; i < H; i++)
       h_x[i] = relax(h_x[i]);
     h_helper();
-    // CHECK: hoist.c:[[#LOOP32:@LINE+12]]:5{{$}}
+    // CHECK: hoist.c:[[#LOOP32:@LINE+15]]:5{{$}}
     // CHECK: kind       : CONSTANT_BOUND{{$}}
     // CHECK: trip count : 4096{{$}}
     // CHECK: nest       : depth 1, parent [[#LOOP30]]:3, 0 child loop(s){{$}}
@@ -672,7 +684,10 @@ void calls_offloader(int steps) {
     // CHECK-NEXT: R h_x[i] : [i]{{$}}
     // CHECK-NEXT: safety     : SAFE{{$}}
     // CHECK: deps       : 2 pair(s), 2 independent (2 SIV){{$}}
-    // CHECK: profitability : CPU_PARALLEL{{$}}
+    // CHECK: profitability : GPU_OFFLOAD{{$}}
+    // CHECK: - data/iteration: 24 B across 2 region(s): h_y (map(tofrom: h_y[0:4096]), 8 B/elem), h_x (map(to: h_x[0:4096]), 8 B/elem){{$}}
+    // CHECK: - data region (line {{[0-9]+}}): not hoisted: host code calls 'h_helper', which offloads loops of its own{{$}}
+    // CHECK: - data region (line {{[0-9]+}}): not hoisted: host code calls 'h_helper', which offloads loops of its own{{$}}
     for (int i = 0; i < H; i++)
       h_y[i] = h_y[i] + h_x[i];
   }
@@ -719,7 +734,7 @@ double loaded_ptr(double *restrict a, double *restrict b, int n, int steps) {
     // CHECK: - data/iteration: 16 B across 2 region(s): b (map(from: b[0:n]), 8 B/elem), a (map(to: a[0:n]), 8 B/elem){{$}}
     // CHECK: - map guard: n >= 1{{$}}
     // CHECK: - data region (line {{[0-9]+}}): not hoisted: host code reaches memory through a pointer it loaded or computed{{$}}
-    // CHECK: - data region (line {{[0-9]+}}): resident in target data if(n >= 1 && n >= 8192); GPU_OFFLOAD there: resident pricing (no transfer) makes it the cheapest{{$}}
+    // CHECK: - data region (line {{[0-9]+}}): resident in target data if(n >= 1){{$}}
     for (int i = 0; i < n; i++)
       b[i] = relax(a[i]);
     // CHECK: hoist.c:[[#LOOP35:@LINE+16]]:5{{$}}
@@ -737,7 +752,7 @@ double loaded_ptr(double *restrict a, double *restrict b, int n, int steps) {
     // CHECK: - data/iteration: 16 B across 2 region(s): a (map(from: a[0:n]), 8 B/elem), b (map(to: b[0:n]), 8 B/elem){{$}}
     // CHECK: - map guard: n >= 1{{$}}
     // CHECK: - data region (line {{[0-9]+}}): not hoisted: host code reaches memory through a pointer it loaded or computed{{$}}
-    // CHECK: - data region (line {{[0-9]+}}): resident in target data if(n >= 1 && n >= 8192); GPU_OFFLOAD there: resident pricing (no transfer) makes it the cheapest{{$}}
+    // CHECK: - data region (line {{[0-9]+}}): resident in target data if(n >= 1){{$}}
     for (int i = 0; i < n; i++)
       a[i] = b[i];
     r += s.d[3];
@@ -783,7 +798,7 @@ double local_ptr(double *restrict a, double *restrict b, int n, int steps) {
     // CHECK: - data/iteration: 16 B across 2 region(s): b (map(from: b[0:n]), 8 B/elem), a (map(to: a[0:n]), 8 B/elem){{$}}
     // CHECK: - map guard: n >= 1{{$}}
     // CHECK: - data region (line {{[0-9]+}}): not hoisted: host code uses pointer 'p', which may point into mapped data{{$}}
-    // CHECK: - data region (line {{[0-9]+}}): resident in target data if(n >= 1 && n >= 8192); GPU_OFFLOAD there: resident pricing (no transfer) makes it the cheapest{{$}}
+    // CHECK: - data region (line {{[0-9]+}}): resident in target data if(n >= 1){{$}}
     for (int i = 0; i < n; i++)
       b[i] = relax(a[i]);
     // CHECK: hoist.c:[[#LOOP38:@LINE+16]]:5{{$}}
@@ -801,7 +816,7 @@ double local_ptr(double *restrict a, double *restrict b, int n, int steps) {
     // CHECK: - data/iteration: 16 B across 2 region(s): a (map(from: a[0:n]), 8 B/elem), b (map(to: b[0:n]), 8 B/elem){{$}}
     // CHECK: - map guard: n >= 1{{$}}
     // CHECK: - data region (line {{[0-9]+}}): not hoisted: host code uses pointer 'p', which may point into mapped data{{$}}
-    // CHECK: - data region (line {{[0-9]+}}): resident in target data if(n >= 1 && n >= 8192); GPU_OFFLOAD there: resident pricing (no transfer) makes it the cheapest{{$}}
+    // CHECK: - data region (line {{[0-9]+}}): resident in target data if(n >= 1){{$}}
     for (int i = 0; i < n; i++)
       a[i] = b[i];
     r += p[0];
@@ -850,11 +865,11 @@ void escaped_bound(double *restrict a, double *restrict b, int steps) {
     // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
     // CHECK: alias      : 'b' and 'a' can't overlap (restrict){{$}}
     // CHECK: alias      : 'b' and 'h_n' can't overlap (incompatible element types){{$}}
-    // CHECK: profitability : CPU_PARALLEL if (h_n >= {{[0-9]+}}){{$}}
+    // CHECK: profitability : CPU_PARALLEL{{$}}
     // CHECK: - GPU offload declined: no map() section: the range of b[i] can't be bounded -> CPU_PARALLEL, which needs no map{{$}}
     for (int i = 0; i < h_n; i++)
       b[i] = relax(a[i]);
-    // CHECK: hoist.c:[[#LOOP41:@LINE+14]]:5{{$}}
+    // CHECK: hoist.c:[[#LOOP41:@LINE+16]]:5{{$}}
     // CHECK: kind       : VARIABLE_BOUND{{$}}
     // CHECK: trip count : <not statically known>{{$}}
     // CHECK: nest       : depth 1, parent [[#LOOP39]]:3, 0 child loop(s){{$}}
@@ -866,7 +881,9 @@ void escaped_bound(double *restrict a, double *restrict b, int steps) {
     // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
     // CHECK: alias      : 'a' and 'b' can't overlap (restrict){{$}}
     // CHECK: alias      : 'a' and 'h_n' can't overlap (incompatible element types){{$}}
-    // CHECK: profitability : CPU_PARALLEL if (h_n >= {{[0-9]+}}){{$}}
+    // CHECK: profitability : GPU_OFFLOAD{{$}}
+    // CHECK: - data/iteration: 16 B across 2 region(s): a (map(from: a[0:h_n]), 8 B/elem), b (map(to: b[0:h_n]), 8 B/elem){{$}}
+    // CHECK: - map guard: h_n >= 1{{$}}
     // CHECK: - data region (line {{[0-9]+}}): not hoisted: the address of global 'h_n' is taken, so it may change through a pointer{{$}}
     for (int i = 0; i < h_n; i++)
       a[i] = b[i];
@@ -910,7 +927,7 @@ void zero_steps(double *restrict a, double *restrict b, int n, int steps) {
     // CHECK: profitability : GPU_OFFLOAD{{$}}
     // CHECK: - data/iteration: 16 B across 2 region(s): b (map(from: b[0:n]), 8 B/elem), a (map(to: a[0:n]), 8 B/elem){{$}}
     // CHECK: - map guard: n >= 1{{$}}
-    // CHECK: - data region (line {{[0-9]+}}): resident in target data if(n >= 1 && n >= 8192 && (int)(0) < (steps)); GPU_OFFLOAD there: resident pricing (no transfer) makes it the cheapest{{$}}
+    // CHECK: - data region (line {{[0-9]+}}): resident in target data if(n >= 1 && (int)(0) < (steps)){{$}}
     for (int i = 0; i < n; i++)
       b[i] = relax(a[i]);
     // CHECK: hoist.c:[[#LOOP44:@LINE+15]]:5{{$}}
@@ -927,7 +944,7 @@ void zero_steps(double *restrict a, double *restrict b, int n, int steps) {
     // CHECK: profitability : GPU_OFFLOAD{{$}}
     // CHECK: - data/iteration: 16 B across 2 region(s): a (map(from: a[0:n]), 8 B/elem), b (map(to: b[0:n]), 8 B/elem){{$}}
     // CHECK: - map guard: n >= 1{{$}}
-    // CHECK: - data region (line {{[0-9]+}}): resident in target data if(n >= 1 && n >= 8192 && (int)(0) < (steps)); GPU_OFFLOAD there: resident pricing (no transfer) makes it the cheapest{{$}}
+    // CHECK: - data region (line {{[0-9]+}}): resident in target data if(n >= 1 && (int)(0) < (steps)){{$}}
     for (int i = 0; i < n; i++)
       a[i] = b[i];
   }
@@ -954,7 +971,7 @@ void under_if(double *restrict a, double *restrict b, int n, int m,
   // CHECK: alias      : 'a' and 'b' can't overlap (restrict){{$}}
   // CHECK: profitability : SEQUENTIAL{{$}}
   for (int t = 0; t < steps; t++) {
-    // CHECK: hoist.c:[[#LOOP46:@LINE+14]]:5{{$}}
+    // CHECK: hoist.c:[[#LOOP46:@LINE+16]]:5{{$}}
     // CHECK: kind       : VARIABLE_BOUND{{$}}
     // CHECK: trip count : <not statically known>{{$}}
     // CHECK: nest       : depth 1, parent [[#LOOP45]]:3, 0 child loop(s){{$}}
@@ -965,13 +982,15 @@ void under_if(double *restrict a, double *restrict b, int n, int m,
     // CHECK-NEXT: R a[i] : [i]{{$}}
     // CHECK-NEXT: safety     : SAFE{{$}}
     // CHECK: deps       : 2 pair(s), 2 independent (2 SIV){{$}}
-    // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
+    // CHECK: profitability : GPU_OFFLOAD{{$}}
+    // CHECK: - data/iteration: 16 B across 1 region(s): a (map(tofrom: a[0:n]), 8 B/elem){{$}}
+    // CHECK: - map guard: n >= 1{{$}}
     // CHECK: - data region (line {{[0-9]+}}): not hoisted: a GPU loop in it runs only under a condition{{$}}
     // CHECK: - data region (line {{[0-9]+}}): not hoisted: a GPU loop in it runs only under a condition{{$}}
     for (int i = 0; i < n; i++)
       a[i] = relax(a[i]);
     if (m <= n)
-      // CHECK: hoist.c:[[#LOOP47:@LINE+14]]:7{{$}}
+      // CHECK: hoist.c:[[#LOOP47:@LINE+16]]:7{{$}}
       // CHECK: kind       : VARIABLE_BOUND{{$}}
       // CHECK: trip count : <not statically known>{{$}}
       // CHECK: nest       : depth 1, parent [[#LOOP45]]:3, 0 child loop(s){{$}}
@@ -982,7 +1001,9 @@ void under_if(double *restrict a, double *restrict b, int n, int m,
       // CHECK-NEXT: safety     : SAFE{{$}}
       // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
       // CHECK: alias      : 'b' and 'a' can't overlap (restrict){{$}}
-      // CHECK: profitability : CPU_PARALLEL if (m >= {{[0-9]+}}){{$}}
+      // CHECK: profitability : GPU_OFFLOAD{{$}}
+      // CHECK: - data/iteration: 16 B across 2 region(s): b (map(from: b[0:m]), 8 B/elem), a (map(to: a[0:m]), 8 B/elem){{$}}
+      // CHECK: - map guard: m >= 1{{$}}
       // CHECK: - data region (line {{[0-9]+}}): not hoisted: a GPU loop in it runs only under a condition{{$}}
       // CHECK: - data region (line {{[0-9]+}}): not hoisted: a GPU loop in it runs only under a condition{{$}}
       for (int i = 0; i < m; i++)
@@ -992,7 +1013,7 @@ void under_if(double *restrict a, double *restrict b, int n, int m,
 
 // A typedef in the run would end with the new { }: refused.
 double typedef_run(double *restrict a, double *restrict b, int n) {
-  // CHECK: hoist.c:[[#LOOP48:@LINE+14]]:3{{$}}
+  // CHECK: hoist.c:[[#LOOP48:@LINE+16]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
@@ -1004,12 +1025,14 @@ double typedef_run(double *restrict a, double *restrict b, int n) {
   // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
   // CHECK: alias      : 'b' and 'a' can't overlap (restrict){{$}}
-  // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
+  // CHECK: profitability : GPU_OFFLOAD{{$}}
+  // CHECK: - data/iteration: 16 B across 2 region(s): b (map(from: b[0:n]), 8 B/elem), a (map(to: a[0:n]), 8 B/elem){{$}}
+  // CHECK: - map guard: n >= 1{{$}}
   // CHECK: - data region (line {{[0-9]+}}): not hoisted: it declares a type or tag, which the new { } would hide from what follows{{$}}
   for (int i = 0; i < n; i++)
     b[i] = relax(a[i]);
   typedef double real;
-  // CHECK: hoist.c:[[#LOOP49:@LINE+14]]:3{{$}}
+  // CHECK: hoist.c:[[#LOOP49:@LINE+16]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
@@ -1021,7 +1044,9 @@ double typedef_run(double *restrict a, double *restrict b, int n) {
   // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
   // CHECK: alias      : 'a' and 'b' can't overlap (restrict){{$}}
-  // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
+  // CHECK: profitability : GPU_OFFLOAD{{$}}
+  // CHECK: - data/iteration: 16 B across 2 region(s): a (map(from: a[0:n]), 8 B/elem), b (map(to: b[0:n]), 8 B/elem){{$}}
+  // CHECK: - map guard: n >= 1{{$}}
   // CHECK: - data region (line {{[0-9]+}}): not hoisted: it declares a type or tag, which the new { } would hide from what follows{{$}}
   for (int i = 0; i < n; i++)
     a[i] = relax(b[i]);
@@ -1065,7 +1090,7 @@ void hinted(double *restrict a, double *restrict b, int n, int steps) {
     // CHECK: profitability : GPU_OFFLOAD{{$}}
     // CHECK: - data/iteration: 16 B across 2 region(s): b (map(from: b[0:n]), 8 B/elem), a (map(to: a[0:n]), 8 B/elem){{$}}
     // CHECK: - map guard: n >= 1{{$}}
-    // CHECK: - data region (line {{[0-9]+}}): resident in target data if(n >= 1 && n >= 8192); GPU_OFFLOAD there: resident pricing (no transfer) makes it the cheapest{{$}}
+    // CHECK: - data region (line {{[0-9]+}}): resident in target data if(n >= 1){{$}}
     for (int i = 0; i < n; i++)
       b[i] = relax(a[i]);
     // CHECK: hoist.c:[[#LOOP52:@LINE+15]]:5{{$}}
@@ -1082,7 +1107,7 @@ void hinted(double *restrict a, double *restrict b, int n, int steps) {
     // CHECK: profitability : GPU_OFFLOAD{{$}}
     // CHECK: - data/iteration: 16 B across 2 region(s): a (map(from: a[0:n]), 8 B/elem), b (map(to: b[0:n]), 8 B/elem){{$}}
     // CHECK: - map guard: n >= 1{{$}}
-    // CHECK: - data region (line {{[0-9]+}}): resident in target data if(n >= 1 && n >= 8192); GPU_OFFLOAD there: resident pricing (no transfer) makes it the cheapest{{$}}
+    // CHECK: - data region (line {{[0-9]+}}): resident in target data if(n >= 1){{$}}
     for (int i = 0; i < n; i++)
       a[i] = b[i];
   }

@@ -90,7 +90,16 @@
 //     PCIe-attached GPU, not measurements of any particular machine. The
 //     command-line overrides are the honest mitigation: the claim this pass
 //     makes is "the decision follows from these stated parameters", never
-//     "these parameters describe your hardware".
+//     "these parameters describe your hardware". Phase 2.3: -machine loads
+//     numbers measured by eval/calibrate/ on a real machine.
+//   - Startup costs (the runtime's, the device's) are paid once per
+//     process, so they are priced only when the file defines main: each is
+//     split across the constructs main() can reach, and across the runs of
+//     each that constant trip counts around it show. It is an estimate,
+//     not a bound: runs from calls in other loops and symbolic trips aren't
+//     seen (the charge is too high), and a construct whose guard is false
+//     may not pay (platform-dependent; the charge is too low). Counts are
+//     taken before hoisting.
 
 #ifndef P05_ANALYSIS_PROFITABILITY_H
 #define P05_ANALYSIS_PROFITABILITY_H
@@ -105,6 +114,7 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/Support/CommandLine.h"
+#include "llvm/Support/Error.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <cstdint>
@@ -195,11 +205,30 @@ struct MachineModel {
 
   /// Cost of spinning up an OpenMP thread team.
   double ThreadStartUs = 5.0;
+
+  /// Phase 2.3: one-time costs a process pays at its first construct of
+  /// each kind -- the OpenMP runtime's start for a host `parallel`, the
+  /// device's (context, image load) for a `target`. 0 means not modelled,
+  /// which is what the built-in defaults say; a -machine file supplies the
+  /// measured values. See ProfitabilityAnalyzer::setStartupCharge.
+  double CpuInitUs = 0.0;
+  double GpuInitUs = 0.0;
+
+  /// False for a machine file with no "gpu" section (a host without a
+  /// device): the cost model never chooses GPU offload.
+  bool HasGpu = true;
+
+  /// The -machine file's "name" and path, for the report; empty for the
+  /// built-in defaults.
+  std::string Name, Source;
 };
 
-/// Reads the command-line overrides into a MachineModel. Call after
-/// CommonOptionsParser has parsed argv.
-MachineModel machineModelFromFlags();
+/// Reads the MachineModel: the built-in defaults, then the -machine JSON
+/// file (eval/calibrate/README.md has its format), then every machine flag
+/// given explicitly on the command line. Call after CommonOptionsParser has
+/// parsed argv. Fails on an unreadable file, an unknown key, or a section
+/// missing one of its fields.
+llvm::Expected<MachineModel> machineModelFromFlags();
 
 /// Modelled time on each target, in microseconds, plus the intermediate
 /// quantities the report needs to explain where those times came from.
@@ -339,12 +368,31 @@ public:
   /// callee) by its trip count. Only used when a RegionPlan is given.
   void setLoops(const std::vector<LoopInfo> &All);
 
-  /// Phase 2.2: the gated verdict for a loop whose data already sits on the
-  /// device (inside a hoisted `target data` region): the transfer term is
-  /// dropped. No policy is applied.
+  /// Phase 2.2/2.3: the gated verdict for a loop inside a hoisted `target
+  /// data` region, its transfer term scaled by TransferScale: its share of
+  /// the region's transfer per run of this loop, relative to what its own
+  /// map() clauses would move (Hoisting.h says how the share is computed).
+  /// 0 prices no transfer at all (the optimistic bound hoisting uses to
+  /// find candidates). No policy is applied.
   ProfitabilityVerdict priceResident(const LoopInfo &LI,
                                      const LoopSafety &Safety,
-                                     const RegionPlan &Plan);
+                                     const RegionPlan &Plan,
+                                     double TransferScale);
+
+  /// Phase 2.3: the startup costs (MachineModel::CpuInitUs/GpuInitUs) this
+  /// loop is charged per run, should it run on the host's threads or on
+  /// the device. Set by the driver only when the whole program is visible
+  /// (the file defines main): each cost is split across the constructs
+  /// that pay it. Added to the fixed costs (thread start, kernel launch).
+  struct StartupCharge {
+    double CpuUs = 0.0, GpuUs = 0.0;
+    std::string Note; ///< report line saying where the numbers came from
+  };
+  void setStartupCharge(const clang::ForStmt *Loop, StartupCharge C);
+
+  /// Phase 2.3 review: this loop gets no pragma, Why says so (see
+  /// declineNestedConstructs). Kept across repricing.
+  void declineNested(const clang::ForStmt *Loop, std::string Why);
 
   /// Intensity above which offload beats a fully threaded host, for this
   /// machine model, in the large-loop limit where launch cost vanishes.
@@ -372,13 +420,62 @@ private:
   clang::ASTContext &Ctx;
   MachineModel Machine;
   Policy PolicyMode;
-  /// priceResident in progress: price no host<->device transfer.
-  bool Resident = false;
+  /// priceResident in progress: the factor on host<->device transfer.
+  double TransferScale = 1.0;
+  llvm::DenseMap<const clang::ForStmt *, StartupCharge> Startup;
+  llvm::DenseMap<const clang::ForStmt *, std::string> Nested;
   llvm::DenseMap<const clang::FunctionDecl *, double> OpCache;
   llvm::DenseMap<const clang::ForStmt *, const LoopInfo *> LoopOf;
   llvm::DenseMap<const clang::FunctionDecl *, double> FnOps;
   llvm::DenseSet<const clang::FunctionDecl *> Counting;
 };
+
+/// The function a statement is in (canonical), or null.
+const clang::FunctionDecl *functionOf(clang::ASTContext &Ctx,
+                                      const clang::Stmt *S);
+
+/// Every function (canonical) a call in Loop may reach: its callees and
+/// what they reach in turn.
+llvm::DenseSet<const clang::FunctionDecl *>
+reachableFrom(CallResolver &Resolver, const LoopInfo &Loop);
+
+/// Which loops the rewriter annotates: 0 none, 1 CPU, 2 GPU. Outermost
+/// annotated loops written in the main file only.
+std::vector<int> constructKinds(const clang::SourceManager &SM,
+                                const std::vector<LoopInfo> &Loops,
+                                const std::vector<ProfitabilityVerdict> &Vs);
+
+/// Phase 2.3 review: a `target`/`teams` construct may not run inside
+/// another construct (a teams region inside a host `parallel` aborts the
+/// runtime when an outer if(target:) is false). A loop that would be
+/// annotated while a function it calls has a GPU loop of its own is
+/// declined instead: the callee keeps its pragma, which serves every
+/// caller. Repeated until nothing changes; a decline is never undone. A
+/// CPU `parallel for` reached from another construct is left alone
+/// (nested parallelism is allowed).
+void declineNestedConstructs(
+    ProfitabilityAnalyzer &Profit, clang::ASTContext &Ctx,
+    CallResolver &Resolver, const std::vector<LoopInfo> &Loops,
+    const std::vector<LoopSafety> &Safety,
+    const std::vector<std::optional<RegionPlan>> &Plans,
+    std::vector<ProfitabilityVerdict> &Verdicts);
+
+/// Phase 2.3: prices the machine's startup costs into the verdicts, when
+/// the file defines main (else returns a line saying they are not priced;
+/// empty when the machine has none). A construct is a loop the rewriter
+/// annotates: GPU, or CPU the model endorses, with no annotated loop
+/// around it. Each startup cost is split evenly across the constructs that
+/// would pay it (the loop itself counted in; only loops main() can reach),
+/// then across its runs that
+/// constant trip counts of loops around it show; every loop is repriced
+/// with its charge until no target changes.
+std::string chargeStartup(ProfitabilityAnalyzer &Profit,
+                          const MachineModel &Machine, clang::ASTContext &Ctx,
+                          CallResolver &Resolver,
+                          const std::vector<LoopInfo> &Loops,
+                          const std::vector<LoopSafety> &Safety,
+                          const std::vector<std::optional<RegionPlan>> &Plans,
+                          std::vector<ProfitabilityVerdict> &Verdicts);
 
 /// Human-readable report: the gate cascade, then the decision. Lives here
 /// rather than in the driver, matching printLoopReport / printCallChains /

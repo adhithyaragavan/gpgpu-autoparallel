@@ -102,6 +102,9 @@ public:
     if (PolicyMode == p05::Policy::Naive)
       llvm::outs() << "policy: naive (offload every SAFE loop; cost model "
                       "computed but not consulted)\n";
+    if (!Machine.Source.empty())
+      llvm::outs() << "machine: " << Machine.Name << " (" << Machine.Source
+                   << ")\n";
     llvm::outs() << "\n";
     // Every loop's accesses and safety first: whether a loop can collapse
     // with its child depends on the child's verdict (Phase 2.1).
@@ -135,6 +138,16 @@ public:
                                                       Plan ? &*Plan : nullptr));
       AllPlans.push_back(std::move(Plan));
     }
+    // Phase 2.3: once-per-process startup costs, split across the
+    // constructs that pay them (before hoisting, which prices with them).
+    p05::declineNestedConstructs(Profitability, Context, Resolver, Loops,
+                                 AllSafety, AllPlans, AllVerdicts);
+    const std::string Startup =
+        p05::chargeStartup(Profitability, Machine, Context, Resolver, Loops,
+                           AllSafety, AllPlans, AllVerdicts);
+    // Startup charges can move targets: check nesting again.
+    p05::declineNestedConstructs(Profitability, Context, Resolver, Loops,
+                                 AllSafety, AllPlans, AllVerdicts);
     std::vector<p05::DataRegion> Hoisted;
     if (RangeMaps && p05::hoistModeFromFlags() == p05::HoistMode::On) {
       p05::HoistPlanner Hoist(
@@ -145,6 +158,8 @@ public:
       Hoisted = Hoist.plan(AllSafety, AllPlans, AllVerdicts);
     }
 
+    if (!Startup.empty())
+      llvm::outs() << Startup << "\n\n";
     for (const p05::LoopInfo &LI : Loops) {
       const size_t K = &LI - Loops.data();
       p05::printLoopReport(llvm::outs(), LI, Loops);
@@ -249,7 +264,11 @@ int main(int argc, const char **argv) {
 
   ClangTool Tool(OptionsParser.getCompilations(), Sources);
 
-  LoopAnalysisActionFactory Factory(p05::machineModelFromFlags(),
-                                    p05::policyFromFlags());
+  llvm::Expected<p05::MachineModel> Machine = p05::machineModelFromFlags();
+  if (!Machine) {
+    llvm::errs() << "p05tool: " << llvm::toString(Machine.takeError()) << "\n";
+    return 1;
+  }
+  LoopAnalysisActionFactory Factory(*Machine, p05::policyFromFlags());
   return Tool.run(&Factory);
 }

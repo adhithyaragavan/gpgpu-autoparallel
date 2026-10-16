@@ -15,6 +15,8 @@
 # map() section that misses an element, or a `from` over an element the loop
 # doesn't write, shows up as a mismatch too.
 # P05_FLAGS adds tool flags (e.g. -maps=bound, to see the old sections fail).
+# POLICY overrides the policy (e.g. POLICY=gated OFFLOAD=1 runs the cost
+# model's own choices, guards and data regions included).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 FIXTURE=${1:-tests/dependence.c}
@@ -25,13 +27,14 @@ RUNS=${RUNS:-20}
 SYSROOT=()
 [[ "$(uname)" == Darwin ]] && SYSROOT=(-isysroot "$(xcrun --show-sdk-path)")
 OMPFLAGS=(-fopenmp)
-POLICY=all-cpu
+DEFAULT_POLICY=all-cpu
 if [[ "${OFFLOAD:-0}" == 1 ]]; then
   [[ "$(uname)" == Linux ]] || { echo "OFFLOAD=1 needs Linux (host-offload plugin)"; exit 2; }
   OMPFLAGS+=(-fopenmp-targets="$(uname -m)-unknown-linux-gnu")
-  POLICY=naive
+  DEFAULT_POLICY=naive
   export OMP_TARGET_OFFLOAD=MANDATORY
 fi
+POLICY=${POLICY:-$DEFAULT_POLICY}
 [[ "$(uname)" == Darwin ]] && OMPFLAGS+=(-L/opt/homebrew/opt/libomp/lib -L/opt/homebrew/opt/llvm/lib -Wl,-rpath,/opt/homebrew/opt/llvm/lib)
 
 WORK=$(mktemp -d)

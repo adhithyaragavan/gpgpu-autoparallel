@@ -10,8 +10,8 @@
 //
 // One condition C guards everything: the region's `target data if(C)`, and
 // `if(target: C)` on every GPU loop in it. C is the conjunction of the
-// loops' map guards and their cost guards priced without transfer
-// (ProfitabilityAnalyzer::priceResident). C names only variables R never
+// loops' map guards and their cost guards priced with their share of the
+// region's transfer (ProfitabilityAnalyzer::priceResident, below). C names only variables R never
 // changes, so it has one value for the whole region: when true every loop
 // runs on the device with resident data; when false nothing is mapped and
 // every loop runs on the host, on host data. No loop can run on the host
@@ -43,9 +43,21 @@
 //   - R has no return or goto and no call that may not return (exit,
 //     longjmp, noreturn); a run of statements has no break/continue leaving
 //     it and declares only variables, none used after it (it gets { });
-//   - the GPU loops run at least twice per entry, and one of them chose the
-//     GPU on its own or with resident pricing (under -policy naive any GPU
-//     loop will do). Written bases map tofrom, never `from`.
+//   - the GPU loops run at least twice per entry. Written bases map tofrom,
+//     never `from`.
+//
+// Then (Phase 2.3, not under -policy naive) whether the region pays. It
+// copies, per entry, each base once in and (written) once out, plus each
+// `target update` section each time it runs; its loops run so many times.
+// Run counts multiply the constant trip counts of the loops between a
+// statement and R; a symbolic one is a t, and a ratio of two such sums is
+// taken at whichever of t = 1 and t -> infinity gives more. Sections are
+// taken to be alike in size, so loop K is priced with its own transfer
+// times (copies per kernel run) / (its own map sections). R is refused when
+// its copies per entry exceed the loops' own maps', when a loop that chose
+// the GPU on its own no longer does at its share, or when no loop chooses
+// the GPU at its share. Candidates are found with no transfer at all (the
+// optimistic bound), so no region is missed.
 //
 // The largest candidate is tried first: each function's top-level run of
 // statements, then each enclosing loop, recursing inward on failure.

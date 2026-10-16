@@ -1,0 +1,52 @@
+# Phase 2.3: -machine files (Profitability.cpp, machineModelFromFlags).
+#
+# A file with no "gpu" section: offload is never chosen. gpu_offload_case in
+# profitability_cases.c is GPU_OFFLOAD with the defaults.
+RUN: %p05 -machine=%S/Inputs/nogpu.json %S/profitability_cases.c -- %cflags | FileCheck %s --check-prefix=NOGPU --implicit-check-not=GPU_OFFLOAD
+NOGPU: machine: test-nogpu ({{.*}}nogpu.json)
+NOGPU: no GPU on this machine (test-nogpu): offload is not a choice
+# Symbolic loops (startup.c's heavy_gpu) and hoisting (amortize.c) too.
+RUN: %p05 -machine=%S/Inputs/nogpu.json %S/startup.c -- %cflags | FileCheck %s --check-prefix=NOGPU --implicit-check-not=GPU_OFFLOAD
+RUN: %p05 -machine=%S/Inputs/nogpu.json %S/amortize.c -- %cflags | FileCheck %s --check-prefix=NOGPU --implicit-check-not=GPU_OFFLOAD
+#
+# Values come from the file: nogpu.json's thread start is 7 us.
+RUN: %p05 -machine=%S/Inputs/nogpu.json %S/startup.c -- %cflags | FileCheck %s --check-prefix=VALUES
+VALUES: thread-start=7.000 us
+#
+# A startup charge moves a symbolic loop's threading guard too: cpu_n in
+# startup.c is threaded above 4096 elements without it, 65536 with it.
+RUN: %p05 %S/startup.c -- %cflags | FileCheck %s --check-prefix=NOCHARGE
+NOCHARGE: cpu-vs-seq: threading pays off when (n >= 4096)
+RUN: %p05 -machine=%S/Inputs/startup.json %S/startup.c -- %cflags | FileCheck %s --check-prefix=CHARGE
+CHARGE: cpu-vs-seq: threading pays off when (n >= 65536)
+#
+# Startup costs in a file without main(): reported, not priced.
+RUN: %p05 -machine=%S/Inputs/startup.json %S/profitability_cases.c -- %cflags | FileCheck %s --check-prefix=NOMAIN
+NOMAIN: startup costs (runtime 400.000 us, device 100000.000 us) not priced: no main() in this file
+NOMAIN-NOT: startup (main()
+#
+# An explicit flag beats the file: 1000 us of thread start.
+RUN: %p05 -machine=%S/Inputs/nogpu.json -thread-start-us=1000 %S/profitability_cases.c -- %cflags | FileCheck %s --check-prefix=FLAG
+FLAG: thread-start=1000.000 us
+#
+# Bad files are errors, not defaults.
+RUN: not %p05 -machine=%S/Inputs/bad_key.json %S/profitability_cases.c -- %cflags 2>&1 | FileCheck %s --check-prefix=BADKEY
+BADKEY: p05tool: -machine={{.*}}bad_key.json: unknown key "thread_start" in "cpu"
+RUN: not %p05 -machine=%S/Inputs/missing.json %S/profitability_cases.c -- %cflags 2>&1 | FileCheck %s --check-prefix=MISSING
+MISSING: "cpu" needs a number "thread_start_us"
+RUN: not %p05 -machine=%S/Inputs/bad_cores.json %S/profitability_cases.c -- %cflags 2>&1 | FileCheck %s --check-prefix=CORES
+CORES: "cpu.cores" must be a positive integer
+RUN: not %p05 -machine=%S/Inputs/no_such_file.json %S/profitability_cases.c -- %cflags 2>&1 | FileCheck %s --check-prefix=NOFILE
+NOFILE: p05tool: -machine={{.*}}no_such_file.json: {{.*}}
+#
+# The committed machine files load.
+RUN: %p05 -machine=%S/../machine/m4.json %S/profitability_cases.c -- %cflags | FileCheck %s --check-prefix=M4
+M4: machine: m4 ({{.*}}m4.json)
+#
+# Rates must be positive, the single-core share in (0, 1].
+RUN: not %p05 -machine=%S/Inputs/zero_rate.json %S/profitability_cases.c -- %cflags 2>&1 | FileCheck %s --check-prefix=ZERO
+ZERO: "cpu.throughput_gflops" must be positive
+RUN: not %p05 -machine=%S/Inputs/bad_share.json %S/profitability_cases.c -- %cflags 2>&1 | FileCheck %s --check-prefix=SHARE
+SHARE: "cpu.single_core_dram_share" must be in (0, 1]
+RUN: %p05 -machine=%S/../machine/colab-t4.json %S/profitability_cases.c -- %cflags | FileCheck %s --check-prefix=T4
+T4: machine: colab-t4 ({{.*}}colab-t4.json)
