@@ -25,7 +25,7 @@ void s_temp(long *b, const long *a, int n) {
   // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
   // CHECK: scalars    : private(t){{$}}
   // CHECK: alias      : 'a' and 'b' may overlap: checked at run time{{$}}
-  // CHECK: alias guard: ((__INTPTR_TYPE__)a + 8 * ((__INTPTR_TYPE__)(n - 1) + 1) <= (__INTPTR_TYPE__)b + 0 || (__INTPTR_TYPE__)b + 8 * ((__INTPTR_TYPE__)(n - 1) + 1) <= (__INTPTR_TYPE__)a + 0){{$}}
+  // CHECK: alias guard: ((__INTPTR_TYPE__)a + 8 * (((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)b + 0 || (__INTPTR_TYPE__)b + 8 * (((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)a + 0){{$}}
   // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
   for (int i = 0; i < n; i++) {
     t = a[i] * 3;
@@ -36,7 +36,7 @@ void s_temp(long *b, const long *a, int n) {
 // PolyBench style: counters declared at the top. Outer loop SAFE, private(j).
 void s_polybench(long *b, const long *a, int n) {
   int i, j;
-  // CHECK: scalars.c:[[#LOOP1:@LINE+14]]:3{{$}}
+  // CHECK: scalars.c:[[#LOOP1:@LINE+15]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 1 child loop(s), perfect nest{{$}}
@@ -48,7 +48,8 @@ void s_polybench(long *b, const long *a, int n) {
   // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
   // CHECK: scalars    : private(j){{$}}
   // CHECK: alias      : 'b' and 'a' may overlap: checked at run time{{$}}
-  // CHECK: alias guard: ((__INTPTR_TYPE__)b + 8 * (((__INTPTR_TYPE__)(n - 1)) * (__INTPTR_TYPE__)n + (__INTPTR_TYPE__)(n - 1) + 1) <= (__INTPTR_TYPE__)a + 8 * ((0) * (__INTPTR_TYPE__)n + 0) || (__INTPTR_TYPE__)a + 8 * (((__INTPTR_TYPE__)(n - 1)) * (__INTPTR_TYPE__)n + (__INTPTR_TYPE__)(n - 1) + 1) <= (__INTPTR_TYPE__)b + 8 * ((0) * (__INTPTR_TYPE__)n + 0)){{$}}
+  // CHECK: alias guard: ((__INTPTR_TYPE__)b + 8 * ((((__INTPTR_TYPE__)n - 1)) * (__INTPTR_TYPE__)n + ((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)a + 8 * ((0) * (__INTPTR_TYPE__)n + 0) || (__INTPTR_TYPE__)a + 8 * ((((__INTPTR_TYPE__)n - 1)) * (__INTPTR_TYPE__)n + ((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)b + 8 * ((0) * (__INTPTR_TYPE__)n + 0)){{$}}
+  // CHECK: collapse   : no, the inner loop needs its own run-time alias check{{$}}
   // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
   for (i = 0; i < n; i++)
     // CHECK: scalars.c:[[#LOOP2:@LINE+13]]:5{{$}}
@@ -62,7 +63,7 @@ void s_polybench(long *b, const long *a, int n) {
     // CHECK-NEXT: safety     : SAFE{{$}}
     // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
     // CHECK: alias      : 'b' and 'a' may overlap: checked at run time{{$}}
-    // CHECK: alias guard: ((__INTPTR_TYPE__)b + 8 * (((__INTPTR_TYPE__)(i)) * (__INTPTR_TYPE__)n + (__INTPTR_TYPE__)(n - 1) + 1) <= (__INTPTR_TYPE__)a + 8 * (((__INTPTR_TYPE__)(i)) * (__INTPTR_TYPE__)n + 0) || (__INTPTR_TYPE__)a + 8 * (((__INTPTR_TYPE__)(i)) * (__INTPTR_TYPE__)n + (__INTPTR_TYPE__)(n - 1) + 1) <= (__INTPTR_TYPE__)b + 8 * (((__INTPTR_TYPE__)(i)) * (__INTPTR_TYPE__)n + 0)){{$}}
+    // CHECK: alias guard: ((__INTPTR_TYPE__)b + 8 * (((__INTPTR_TYPE__)i) * (__INTPTR_TYPE__)n + ((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)a + 8 * (((__INTPTR_TYPE__)i) * (__INTPTR_TYPE__)n + 0) || (__INTPTR_TYPE__)a + 8 * (((__INTPTR_TYPE__)i) * (__INTPTR_TYPE__)n + ((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)b + 8 * (((__INTPTR_TYPE__)i) * (__INTPTR_TYPE__)n + 0)){{$}}
     // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
     for (j = 0; j < n; j++)
       b[i * n + j] = a[i * n + j] + j;
@@ -193,7 +194,7 @@ long s_min(const long *a, int n) {
 // SAFE, reduction(+: s) under a condition and inside an inner loop
 long s_nested_sum(const long *a, int n) {
   long s = 0;
-  // CHECK: scalars.c:[[#LOOP9:@LINE+12]]:3{{$}}
+  // CHECK: scalars.c:[[#LOOP9:@LINE+14]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 1 child loop(s), perfect nest{{$}}
@@ -204,9 +205,11 @@ long s_nested_sum(const long *a, int n) {
   // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: deps       : 0 pair(s), 0 independent{{$}}
   // CHECK: scalars    : reduction(+: s){{$}}
+  // CHECK: collapse   : 2 (with 'j'){{$}}
   // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
+  // CHECK: - GPU offload declined: no map() section: can't map a[i * n + j]: it may not run on every iteration (or a loop around it may stop early), so the ends of its range aren't surely touched -> CPU_PARALLEL, which needs no map{{$}}
   for (int i = 0; i < n; i++)
-    // CHECK: scalars.c:[[#LOOP10:@LINE+12]]:5{{$}}
+    // CHECK: scalars.c:[[#LOOP10:@LINE+13]]:5{{$}}
     // CHECK: kind       : VARIABLE_BOUND{{$}}
     // CHECK: trip count : <not statically known>{{$}}
     // CHECK: nest       : depth 1, parent [[#LOOP9]]:3, 0 child loop(s){{$}}
@@ -218,6 +221,7 @@ long s_nested_sum(const long *a, int n) {
     // CHECK: deps       : 0 pair(s), 0 independent{{$}}
     // CHECK: scalars    : reduction(+: s){{$}}
     // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
+    // CHECK: - GPU offload declined: no map() section: can't map a[i * n + j]: it may not run on every iteration (or a loop around it may stop early), so the ends of its range aren't surely touched -> CPU_PARALLEL, which needs no map{{$}}
     for (int j = 0; j < n; j++)
       if (a[i * n + j] % 2)
         s += a[i * n + j];
@@ -241,7 +245,7 @@ long s_last(long *b, const long *a, int n) {
   // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
   // CHECK: scalars    : lastprivate(x){{$}}
   // CHECK: alias      : 'a' and 'b' may overlap: checked at run time{{$}}
-  // CHECK: alias guard: ((__INTPTR_TYPE__)a + 8 * ((__INTPTR_TYPE__)(n - 1) + 1) <= (__INTPTR_TYPE__)b + 0 || (__INTPTR_TYPE__)b + 8 * ((__INTPTR_TYPE__)(n - 1) + 1) <= (__INTPTR_TYPE__)a + 0){{$}}
+  // CHECK: alias guard: ((__INTPTR_TYPE__)a + 8 * (((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)b + 0 || (__INTPTR_TYPE__)b + 8 * (((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)a + 0){{$}}
   // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
   for (int i = 0; i < n; i++) {
     x = a[i] * 2;
@@ -253,7 +257,7 @@ long s_last(long *b, const long *a, int n) {
 // SAFE, lastprivate(j): the inner counter is read after the outer loop
 int s_last_inner_iv(long *b, int n) {
   int j = -1;
-  // CHECK: scalars.c:[[#LOOP12:@LINE+11]]:3{{$}}
+  // CHECK: scalars.c:[[#LOOP12:@LINE+12]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 1 child loop(s), perfect nest{{$}}
@@ -263,6 +267,7 @@ int s_last_inner_iv(long *b, int n) {
   // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: deps       : 1 pair(s), 1 independent (1 Banerjee){{$}}
   // CHECK: scalars    : lastprivate(j){{$}}
+  // CHECK: collapse   : no, 'j' is read after the loop{{$}}
   // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
   for (int i = 0; i < n; i++)
     // CHECK: scalars.c:[[#LOOP13:@LINE+11]]:5{{$}}

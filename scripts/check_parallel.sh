@@ -7,6 +7,14 @@
 #
 #   scripts/check_parallel.sh [fixture] [driver]
 # defaults: tests/dependence.c eval/runtime/dependence_main.c
+#
+# OFFLOAD=1 (Linux, needs liboffload): rewrite with -policy naive instead, so
+# every SAFE loop the map() sections allow goes to a target region, and run
+# those on the host device (-fopenmp-targets=<host>-unknown-linux-gnu,
+# OMP_TARGET_OFFLOAD=MANDATORY). That device has memory of its own, so a
+# map() section that misses an element, or a `from` over an element the loop
+# doesn't write, shows up as a mismatch too.
+# P05_FLAGS adds tool flags (e.g. -maps=bound, to see the old sections fail).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 FIXTURE=${1:-tests/dependence.c}
@@ -17,6 +25,13 @@ RUNS=${RUNS:-20}
 SYSROOT=()
 [[ "$(uname)" == Darwin ]] && SYSROOT=(-isysroot "$(xcrun --show-sdk-path)")
 OMPFLAGS=(-fopenmp)
+POLICY=all-cpu
+if [[ "${OFFLOAD:-0}" == 1 ]]; then
+  [[ "$(uname)" == Linux ]] || { echo "OFFLOAD=1 needs Linux (host-offload plugin)"; exit 2; }
+  OMPFLAGS+=(-fopenmp-targets="$(uname -m)-unknown-linux-gnu")
+  POLICY=naive
+  export OMP_TARGET_OFFLOAD=MANDATORY
+fi
 [[ "$(uname)" == Darwin ]] && OMPFLAGS+=(-L/opt/homebrew/opt/libomp/lib -L/opt/homebrew/opt/llvm/lib -Wl,-rpath,/opt/homebrew/opt/llvm/lib)
 
 WORK=$(mktemp -d)
@@ -25,9 +40,10 @@ base=$(basename "$FIXTURE" .c)
 # Strip the FileCheck lines (they are comments, but keep the copy clean).
 grep -v -E '^\s*// (CHECK|CHECK-NEXT|RUN):' "$FIXTURE" > "$WORK/$base.c"
 
-"$TOOL" -rewrite -policy all-cpu "$WORK/$base.c" -- "${SYSROOT[@]}" > "$WORK/report.txt"
+"$TOOL" -rewrite -policy "$POLICY" ${P05_FLAGS:-} "$WORK/$base.c" -- "${SYSROOT[@]}" > "$WORK/report.txt"
 pragmas=$(grep -c '#pragma omp' "$WORK/$base.omp.c" || true)
-echo "rewrote $FIXTURE: $pragmas pragma(s) forced on (every SAFE, non-nested loop)"
+targets=$(grep -c '#pragma omp target teams' "$WORK/$base.omp.c" || true)
+echo "rewrote $FIXTURE (-policy $POLICY): $pragmas pragma(s), $targets target region(s)"
 
 # Both optimization levels: at -O2 a race on a scalar the compiler keeps in a
 # register is invisible (a missing private() goes unseen); at -O0 every

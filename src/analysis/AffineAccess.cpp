@@ -254,6 +254,21 @@ struct IVBinding {
   const LoopInfo *Loop;
 };
 
+/// Does S contain a statement that leaves or skips part of a loop around it
+/// (break, continue, goto, return)? Conservative: one belonging to a nested
+/// loop or switch counts too.
+bool hasJump(const Stmt *S) {
+  if (!S)
+    return false;
+  if (isa<BreakStmt>(S) || isa<ContinueStmt>(S) || isa<GotoStmt>(S) ||
+      isa<IndirectGotoStmt>(S) || isa<ReturnStmt>(S))
+    return true;
+  for (const Stmt *C : S->children())
+    if (hasJump(C))
+      return true;
+  return false;
+}
+
 /// Everything the affine builder needs about the loop being analyzed.
 struct Context {
   ASTContext &Ctx;
@@ -975,6 +990,8 @@ private:
       else if (L.CmpOp == BO_GE)
         R.Lo = Bound;
     }
+    R.Exact = R.Lo && R.Hi && L.Step && (*L.Step == 1 || *L.Step == -1) &&
+              !hasJump(L.Loop->getBody());
     Out.Ranges[V] = R;
   }
 

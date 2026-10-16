@@ -5,6 +5,7 @@
 #include "llvm/Support/Format.h"
 
 #include <algorithm>
+#include <functional>
 #include <cmath>
 #include <limits>
 
@@ -341,8 +342,91 @@ double ProfitabilityAnalyzer::breakEvenIntensity() const {
   return (1.0 / Machine.PcieBandwidthGBs) / Denom;
 }
 
+void ProfitabilityAnalyzer::setLoops(const std::vector<LoopInfo> &All) {
+  for (const LoopInfo &L : All)
+    LoopOf[L.Loop] = &L;
+}
+
+namespace {
+
+/// Phase 2.1 op counter: OpCountVisitor's operations, a constant-trip loop's
+/// body (with its condition and increment) times its trip count, and each
+/// call's callee counted where it is called.
+class ScaledOpCounter : public RecursiveASTVisitor<ScaledOpCounter> {
+public:
+  using FnOps = std::function<double(const FunctionDecl *)>;
+  ScaledOpCounter(
+      const llvm::DenseMap<const ForStmt *, const LoopInfo *> &LoopOf,
+      FnOps Ops, double &Own, double &Calls)
+      : LoopOf(LoopOf), Ops(std::move(Ops)), Own(Own), Calls(Calls) {}
+
+  bool TraverseForStmt(ForStmt *FS) {
+    auto It = LoopOf.find(FS);
+    if (It == LoopOf.end() || !It->second->TripCount ||
+        *It->second->TripCount <= 0)
+      return RecursiveASTVisitor::TraverseForStmt(FS);
+    const double Trip = static_cast<double>(*It->second->TripCount);
+    TraverseStmt(FS->getInit());
+    double O = 0.0, C = 0.0;
+    ScaledOpCounter Inner(LoopOf, Ops, O, C);
+    Inner.TraverseStmt(FS->getCond());
+    Inner.TraverseStmt(FS->getInc());
+    Inner.TraverseStmt(FS->getBody());
+    Own += O * Trip;
+    Calls += C * Trip;
+    return true;
+  }
+  bool VisitBinaryOperator(BinaryOperator *BO) {
+    double N = 0.0;
+    OpCountVisitor(N).VisitBinaryOperator(BO);
+    Own += N;
+    return true;
+  }
+  bool VisitUnaryOperator(UnaryOperator *UO) {
+    double N = 0.0;
+    OpCountVisitor(N).VisitUnaryOperator(UO);
+    Own += N;
+    return true;
+  }
+  bool VisitCallExpr(CallExpr *CE) {
+    if (const FunctionDecl *F = CE->getDirectCallee())
+      Calls += Ops(F);
+    return true;
+  }
+
+private:
+  const llvm::DenseMap<const ForStmt *, const LoopInfo *> &LoopOf;
+  FnOps Ops;
+  double &Own, &Calls;
+};
+
+} // namespace
+
+void ProfitabilityAnalyzer::countOps(const Stmt *S, double &Own,
+                                     double &Calls) {
+  ScaledOpCounter C(
+      LoopOf, [this](const FunctionDecl *F) { return functionOps(F); }, Own,
+      Calls);
+  C.TraverseStmt(const_cast<Stmt *>(S));
+}
+
+double ProfitabilityAnalyzer::functionOps(const FunctionDecl *FD) {
+  FD = FD->getCanonicalDecl();
+  if (auto It = FnOps.find(FD); It != FnOps.end())
+    return It->second;
+  const FunctionDecl *Def = FD->getDefinition();
+  // Recursion makes a loop UNKNOWN before it is priced; count it once.
+  if (!Def || !Def->getBody() || !Counting.insert(FD).second)
+    return 0.0;
+  double Own = 0.0, Calls = 0.0;
+  countOps(Def->getBody(), Own, Calls);
+  Counting.erase(FD);
+  return FnOps.try_emplace(FD, Own + Calls).first->second;
+}
+
 ProfitabilityVerdict
-ProfitabilityAnalyzer::priceLoop(const LoopInfo &LI, const LoopSafety &Safety) {
+ProfitabilityAnalyzer::priceLoop(const LoopInfo &LI, const LoopSafety &Safety,
+                                 const RegionPlan *Plan) {
   ProfitabilityVerdict V;
 
   // Profitability never overrides safety: an UNSAFE or UNKNOWN loop is not
@@ -361,6 +445,9 @@ ProfitabilityAnalyzer::priceLoop(const LoopInfo &LI, const LoopSafety &Safety) {
   V.TripCount = LI.TripCount;
 
   // --- Ops: body + every direct and transitive callee -----------------------
+  if (Plan) {
+    countOps(LI.Loop->getBody(), V.OpsInBody, V.OpsInCallees);
+  } else {
   double BodyOps = 0.0;
   OpCountVisitor BodyVisitor(BodyOps);
   BodyVisitor.TraverseStmt(const_cast<Stmt *>(LI.Loop->getBody()));
@@ -375,11 +462,17 @@ ProfitabilityAnalyzer::priceLoop(const LoopInfo &LI, const LoopSafety &Safety) {
       if (RC.HasVisibleBody)
         V.OpsInCallees += getOpCount(RC.Callee);
   }
+  }
   double OpsPerIter = V.OpsInBody + V.OpsInCallees;
 
   // --- Data: which arrays, how big, which direction --------------------------
-  RegionVisitor RV(Ctx, V.Regions);
-  RV.TraverseStmt(const_cast<Stmt *>(LI.Loop->getBody()));
+  if (Plan) {
+    V.Regions = Plan->Regions;
+    V.RangeMaps = true;
+  } else {
+    RegionVisitor RV(Ctx, V.Regions);
+    RV.TraverseStmt(const_cast<Stmt *>(LI.Loop->getBody()));
+  }
 
   // Mapped-region extent, per element type in map(kind: base[0:extent]) —
   // always the loop's own bound text, never the trip count: the map always
@@ -397,12 +490,23 @@ ProfitabilityAnalyzer::priceLoop(const LoopInfo &LI, const LoopSafety &Safety) {
                             ? std::to_string(*LI.ConstBound + (Inclusive ? 1 : 0))
                             : (Inclusive ? "(" + LI.BoundText + ") + 1"
                                         : LI.BoundText);
-  for (ArrayRegion &R : V.Regions)
-    R.ExtentText = Extent;
+  if (!Plan)
+    for (ArrayRegion &R : V.Regions)
+      R.ExtentText = Extent;
 
+  // Bytes per iteration: one unit per region and direction, or (Phase 2.1)
+  // the section's units spread over a known trip count.
   double BytesPerIter = 0.0;
-  for (const ArrayRegion &R : V.Regions)
-    BytesPerIter += (R.Read ? R.ElemBytes : 0) + (R.Written ? R.ElemBytes : 0);
+  for (const ArrayRegion &R : V.Regions) {
+    double Units = 1.0;
+    if (Plan && R.ConstUnits && LI.TripCount && *LI.TripCount > 0)
+      // Not floored at one unit: an inner loop touches one element of its
+      // row (one unit) per run, not per iteration.
+      Units = static_cast<double>(*R.ConstUnits) /
+              static_cast<double>(*LI.TripCount);
+    BytesPerIter += ((R.Read ? R.ElemBytes : 0) + (R.Written ? R.ElemBytes : 0)) *
+                    Units;
+  }
 
   V.Costs.BreakEvenIntensity = breakEvenIntensity();
   V.Costs.Intensity = BytesPerIter > 0.0 ? OpsPerIter / BytesPerIter
@@ -419,8 +523,7 @@ ProfitabilityAnalyzer::priceLoop(const LoopInfo &LI, const LoopSafety &Safety) {
         RegionsText += ", ";
       const ArrayRegion &R = V.Regions[I];
       RegionsText += R.Base->getNameAsString() + " (map(" +
-                     R.mapKind().str() + ": " + R.Base->getNameAsString() +
-                     "[0:" + R.ExtentText + "]), " +
+                     R.mapKind().str() + ": " + R.listItem() + "), " +
                      std::to_string(R.ElemBytes) + " B/elem)";
     }
     V.Reasons.push_back("data/iteration: " + fmtNum(BytesPerIter) +
@@ -490,6 +593,23 @@ ProfitabilityAnalyzer::priceLoop(const LoopInfo &LI, const LoopSafety &Safety) {
     V.Costs.Flops = OpsPerIter * static_cast<double>(N);
     V.Costs.TouchedBytes = BytesPerIter * static_cast<double>(N);
     V.Costs.TransferBytes = BytesPerIter * static_cast<double>(Span);
+    // Phase 2.1: the sections' own sizes, when constant (a descending loop's
+    // bound is not its span, so this replaces Span there too).
+    if (Plan) {
+      bool AllKnown = true;
+      double Bytes = 0.0;
+      for (const ArrayRegion &R : V.Regions) {
+        if (!R.ConstUnits) {
+          AllKnown = false;
+          break;
+        }
+        const llvm::StringRef K = R.mapKind();
+        Bytes += static_cast<double>(*R.ConstUnits) * R.ElemBytes *
+                 (K == "tofrom" ? 2 : 1);
+      }
+      V.Costs.TransferBytes =
+          AllKnown ? Bytes : BytesPerIter * static_cast<double>(N);
+    }
 
     V.Costs.SeqUs =
         std::max(V.Costs.Flops * usPerFlop(Machine.CpuThroughputGFs),
@@ -658,11 +778,26 @@ ProfitabilityAnalyzer::priceLoop(const LoopInfo &LI, const LoopSafety &Safety) {
 }
 
 ProfitabilityVerdict
-ProfitabilityAnalyzer::analyzeLoop(const LoopInfo &LI, const LoopSafety &Safety) {
-  ProfitabilityVerdict V = priceLoop(LI, Safety);
+ProfitabilityAnalyzer::analyzeLoop(const LoopInfo &LI, const LoopSafety &Safety,
+                                   const RegionPlan *Plan) {
+  ProfitabilityVerdict V = priceLoop(LI, Safety, Plan);
   applyPolicy(V);
   V.ScalarClauses = Safety.ScalarClauses;
   V.AliasGuard = Safety.AliasGuard;
+  if (Plan) {
+    V.Collapse2 = Safety.Collapse2;
+    V.MapGuard = Plan->MapGuard;
+    for (const clang::VarDecl *S : Safety.HostScalars)
+      V.ScalarMaps += " map(tofrom: " + S->getNameAsString() + ")";
+    // Reported next to the sections it protects.
+    if (!V.MapGuard.empty() && Safety.Verdict == SafetyVerdict::Safe) {
+      auto It = llvm::find_if(V.Reasons, [](const std::string &R) {
+        return llvm::StringRef(R).starts_with("data/iteration: ");
+      });
+      V.Reasons.insert(It == V.Reasons.end() ? It : It + 1,
+                       "map guard: " + V.MapGuard);
+    }
+  }
 
   // Phase 1.6: a false if(target:) still runs teams/parallel on the host,
   // and overlapping arrays can't be mapped as separate regions, so a loop
@@ -691,7 +826,30 @@ ProfitabilityAnalyzer::analyzeLoop(const LoopInfo &LI, const LoopSafety &Safety)
   // under either policy — until Phase 2.1 sizes regions from the affine
   // ranges. Host threading needs no map, so it stays available whenever the
   // cost model says threading beats sequential.
-  if (V.Target == OffloadTarget::GpuOffload && !Safety.GpuMappable) {
+  // Phase 2.1 (Plan): every base needs a section RegionPlanner could prove,
+  // and no callee may reach memory a map() can't name.
+  const bool Mappable =
+      Plan ? Plan->Mappable && Safety.CalleesMappable : Safety.GpuMappable;
+  if (V.Target == OffloadTarget::GpuOffload && !Mappable && Plan) {
+    std::string Why = Plan->Why.empty()
+                          ? std::string("a callee reaches a global, or "
+                                        "memory through a pointer that "
+                                        "wasn't composed into the loop")
+                          : Plan->Why.front();
+    V.GuardExpr.reset();
+    if (V.CpuBeatsSeq) {
+      V.Target = OffloadTarget::CpuParallel;
+      V.Reasons.push_back("GPU offload declined: no map() section: " + Why +
+                          " -> CPU_PARALLEL, which needs no map");
+    } else {
+      V.Target = OffloadTarget::Sequential;
+      V.CpuGuardExpr.reset();
+      V.Reasons.push_back("GPU offload declined: no map() section: " + Why +
+                          ", and threading does not beat sequential -> "
+                          "SEQUENTIAL");
+    }
+  }
+  if (V.Target == OffloadTarget::GpuOffload && !Mappable) {
     V.GuardExpr.reset();
     if (V.CpuBeatsSeq) {
       V.Target = OffloadTarget::CpuParallel;
@@ -742,7 +900,7 @@ void ProfitabilityAnalyzer::applyPolicy(ProfitabilityVerdict &V) {
   // a valid pragma, so leave it declined rather than emit map(kind: base[0:])
   // with a blank extent.
   for (const ArrayRegion &R : V.Regions) {
-    if (R.ExtentText.empty()) {
+    if (R.ExtentText.empty() && R.SectionText.empty()) {
       V.Reasons.push_back(
           "naive policy: declined -- no printable map() extent for this "
           "loop (see the SEQUENTIAL reason above), same as the gated policy");

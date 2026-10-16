@@ -161,6 +161,9 @@ def main(paths):
             guard = field("alias guard")
             if guard:
                 c.append("alias guard: " + lit(guard) + A)
+            coll = field("collapse")
+            if coll:
+                c.append("collapse   : " + lit(coll) + A)
             prof = field("profitability")
             c.append("profitability : " + re.sub(r">= \d+\)", ">= {{[0-9]+}})", prof) + A)
             # For a GPU target the map() clauses are part of the verdict.
@@ -168,6 +171,9 @@ def main(paths):
                 dl = next((l.strip() for l in L if "data/iteration:" in l), None)
                 if dl:
                     c.append(lit(dl) + A)
+                mg = next((l.strip() for l in L if "- map guard:" in l), None)
+                if mg:
+                    c.append(lit(mg) + A)
             # An interlock decision is part of the verdict: pin it when present.
             decl = next((l.strip() for l in L if "GPU offload declined" in l), None)
             if decl:

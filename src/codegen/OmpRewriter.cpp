@@ -57,15 +57,21 @@ bool startsOwnLine(const SourceManager &SM, SourceLocation Loc) {
 /// the if() rather than bare.
 std::string buildGpuPragma(const ProfitabilityVerdict &V) {
   std::string Pragma = "#pragma omp target teams distribute parallel for";
-  if (V.GuardExpr)
-    Pragma += " if(target: " + *V.GuardExpr + ")";
+  if (V.Collapse2)
+    Pragma += " collapse(2)";
+  // Phase 2.1: the map sections' run-time conditions are a safety
+  // condition, conjoined with the cost model's guard, never replaced by it.
+  std::string Cond = V.GuardExpr ? *V.GuardExpr : std::string();
+  if (!V.MapGuard.empty())
+    Cond = Cond.empty() ? V.MapGuard : "(" + Cond + ") && " + V.MapGuard;
+  if (!Cond.empty())
+    Pragma += " if(target: " + Cond + ")";
   for (const ArrayRegion &R : V.Regions) {
     if (!R.Base)
       continue;
-    Pragma += " map(" + R.mapKind().str() + ": " +
-              R.Base->getNameAsString() + "[0:" + R.ExtentText + "])";
+    Pragma += " map(" + R.mapKind().str() + ": " + R.listItem() + ")";
   }
-  return Pragma + V.ScalarClauses;
+  return Pragma + V.ScalarMaps + V.ScalarClauses;
 }
 
 /// #pragma omp parallel for [if(parallel: ...)] [private/lastprivate/
@@ -153,7 +159,8 @@ void OmpRewriter::rewriteLoop(const LoopInfo &LI,
     // whose data-mapping is wrong — but only when the verdict's own numbers
     // still endorse host threading as a target; otherwise there is nothing
     // sound left to emit.
-    if (LI.CmpOp == BO_GT || LI.CmpOp == BO_GE) {
+    // Phase 2.1: sections from the ranges map a descending loop correctly.
+    if (!V.RangeMaps && (LI.CmpOp == BO_GT || LI.CmpOp == BO_GE)) {
       if (!V.CpuBeatsSeq) {
         skip("loop counts down; the mapped-region model assumes an "
             "ascending loop, and host threading doesn't beat sequential "

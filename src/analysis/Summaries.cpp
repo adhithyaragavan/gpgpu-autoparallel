@@ -182,6 +182,7 @@ substituteRanges(const FunctionSummary &S, const FunctionDecl *Def,
         if (substitute(E, Def, CS, OnlyParams, Why))
           *To = std::move(E);
       }
+    N.Exact = R.Exact && N.Lo && N.Hi;
     Out[V] = std::move(N);
   }
   return Out;
@@ -194,6 +195,8 @@ void mergeRange(llvm::DenseMap<const VarDecl *, IVRange> &Into,
   auto [It, New] = Into.try_emplace(V, R);
   if (!New && !(sameExpr(It->second.Lo, R.Lo) && sameExpr(It->second.Hi, R.Hi)))
     It->second = IVRange();
+  else if (!New)
+    It->second.Exact = It->second.Exact && R.Exact;
 }
 
 /// `&a[X * N]` passed for p, and the callee touches p[e]: a[X][e] in rows of
@@ -244,6 +247,7 @@ ArrayAccess composeAccess(const ArrayAccess &X, const FunctionDecl *Def,
                           const RangeMap &Outer, bool OnlyParams) {
   ArrayAccess Y = X;
   Y.E = CS.Call;
+  Y.Within.push_back(X.E);
   Y.Text = Def->getNameAsString() + "(): " + X.Text;
   Y.InnerIVs = CS.InnerIVs;
   Y.InnerIVs.insert(Y.InnerIVs.end(), X.InnerIVs.begin(), X.InnerIVs.end());

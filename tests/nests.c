@@ -9,7 +9,7 @@
 // --- Perfect two-level nest -------------------------------------------------
 void perfect2(double *a, int n, int m) {
   // depth 0, 1 child, perfect nest (body is exactly the inner for). ivs: i
-  // CHECK: nests.c:[[#LOOP0:@LINE+10]]:3{{$}}
+  // CHECK: nests.c:[[#LOOP0:@LINE+11]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 1 child loop(s), perfect nest{{$}}
@@ -18,6 +18,7 @@ void perfect2(double *a, int n, int m) {
   // CHECK-NEXT: W a[i * m + j] : [i][j] delinearized, dims [?][m]{{$}}
   // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
+  // CHECK: collapse   : 2 (with 'j'){{$}}
   // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
   for (int i = 0; i < n; i++)
     // depth 1, parent = outer, 0 children, not perfect, rectangular. ivs: i, j
@@ -38,7 +39,7 @@ void perfect2(double *a, int n, int m) {
 // --- Perfect three-level nest, braced bodies --------------------------------
 void perfect3(double *a, int n) {
   // depth 0, 1 child, perfect (a compound body whose only statement is a for)
-  // CHECK: nests.c:[[#LOOP2:@LINE+10]]:3{{$}}
+  // CHECK: nests.c:[[#LOOP2:@LINE+11]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 1 child loop(s), perfect nest{{$}}
@@ -47,10 +48,11 @@ void perfect3(double *a, int n) {
   // CHECK-NEXT: W a[(i * n + j) * n + k] : [i][j][k] delinearized, dims [?][n][n]{{$}}
   // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
+  // CHECK: collapse   : 2 (with 'j'){{$}}
   // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
   for (int i = 0; i < n; i++) {
     // depth 1, 1 child, perfect. ivs: i, j
-    // CHECK: nests.c:[[#LOOP3:@LINE+10]]:5{{$}}
+    // CHECK: nests.c:[[#LOOP3:@LINE+11]]:5{{$}}
     // CHECK: kind       : VARIABLE_BOUND{{$}}
     // CHECK: trip count : <not statically known>{{$}}
     // CHECK: nest       : depth 1, parent [[#LOOP2]]:3, 1 child loop(s), perfect nest{{$}}
@@ -59,6 +61,7 @@ void perfect3(double *a, int n) {
     // CHECK-NEXT: W a[(i * n + j) * n + k] : [i][j][k] delinearized, dims [?][n][n]{{$}}
     // CHECK-NEXT: safety     : SAFE{{$}}
     // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
+    // CHECK: collapse   : 2 (with 'k'){{$}}
     // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
     for (int j = 0; j < n; j++) {
       // depth 2, parent = the j loop, 0 children. ivs: i, j, k
@@ -93,7 +96,7 @@ void imperfect(double *a, double *rowsum, int n) {
   // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: deps       : 2 pair(s), 2 independent (2 SIV){{$}}
   // CHECK: alias      : 'rowsum' and 'a' may overlap: checked at run time{{$}}
-  // CHECK: alias guard: ((__INTPTR_TYPE__)rowsum + 8 * ((__INTPTR_TYPE__)(n - 1) + 1) <= (__INTPTR_TYPE__)a + 8 * ((0) * (__INTPTR_TYPE__)n + 0) || (__INTPTR_TYPE__)a + 8 * (((__INTPTR_TYPE__)(n - 1)) * (__INTPTR_TYPE__)n + (__INTPTR_TYPE__)(n - 1) + 1) <= (__INTPTR_TYPE__)rowsum + 0){{$}}
+  // CHECK: alias guard: ((__INTPTR_TYPE__)rowsum + 8 * (((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)a + 8 * ((0) * (__INTPTR_TYPE__)n + 0) || (__INTPTR_TYPE__)a + 8 * ((((__INTPTR_TYPE__)n - 1)) * (__INTPTR_TYPE__)n + ((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)rowsum + 0){{$}}
   // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
   for (int i = 0; i < n; i++) {
     rowsum[i] = 0.0;
@@ -220,7 +223,7 @@ void siblings(double *a, double *b, int n) {
   // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: deps       : 2 pair(s), 2 independent (2 SIV){{$}}
   // CHECK: alias      : 'a' and 'b' may overlap: checked at run time{{$}}
-  // CHECK: alias guard: ((__INTPTR_TYPE__)a + 8 * (((__INTPTR_TYPE__)(n - 1)) * (__INTPTR_TYPE__)n + (__INTPTR_TYPE__)(n - 1) + 1) <= (__INTPTR_TYPE__)b + 8 * ((0) * (__INTPTR_TYPE__)n + 0) || (__INTPTR_TYPE__)b + 8 * (((__INTPTR_TYPE__)(n - 1)) * (__INTPTR_TYPE__)n + (__INTPTR_TYPE__)(n - 1) + 1) <= (__INTPTR_TYPE__)a + 8 * ((0) * (__INTPTR_TYPE__)n + 0)){{$}}
+  // CHECK: alias guard: ((__INTPTR_TYPE__)a + 8 * ((((__INTPTR_TYPE__)n - 1)) * (__INTPTR_TYPE__)n + ((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)b + 8 * ((0) * (__INTPTR_TYPE__)n + 0) || (__INTPTR_TYPE__)b + 8 * ((((__INTPTR_TYPE__)n - 1)) * (__INTPTR_TYPE__)n + ((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)a + 8 * ((0) * (__INTPTR_TYPE__)n + 0)){{$}}
   // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
   for (int i = 0; i < n; i++) {
     // depth 1, parent = outer
@@ -327,7 +330,7 @@ void inside_do(double *a, int n, int steps) {
 
 void for_while_for(double *a, int n, int steps) {
   // depth 0, 1 child, NOT perfect (its body is a while, not a for), not inside while/do
-  // CHECK: nests.c:[[#LOOP20:@LINE+10]]:3{{$}}
+  // CHECK: nests.c:[[#LOOP20:@LINE+11]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 1 child loop(s){{$}}
@@ -337,6 +340,7 @@ void for_while_for(double *a, int n, int steps) {
   // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
   // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
+  // CHECK: - GPU offload declined: no map() section: can't map a[i * n + j]: it may not run on every iteration (or a loop around it may stop early), so the ends of its range aren't surely touched -> CPU_PARALLEL, which needs no map{{$}}
   for (int i = 0; i < n; i++) {
     int s = steps;
     while (s-- > 0) {
@@ -584,7 +588,7 @@ void rec_unrec_rec(double *a, int n) {
 // `#pragma clang loop` wraps the inner loop in an AttributedStmt: still perfect.
 void pragma_body(double *a, int n) {
   // depth 0, 1 child, PERFECT (looks through the pragma's attribute wrapper)
-  // CHECK: nests.c:[[#LOOP35:@LINE+10]]:3{{$}}
+  // CHECK: nests.c:[[#LOOP35:@LINE+11]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 1 child loop(s), perfect nest{{$}}
@@ -593,6 +597,7 @@ void pragma_body(double *a, int n) {
   // CHECK-NEXT: W a[i * n + j] : [i][j] delinearized, dims [?][n]{{$}}
   // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
+  // CHECK: collapse   : 2 (with 'j'){{$}}
   // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
   for (int i = 0; i < n; i++) {
 #pragma clang loop unroll(disable)
@@ -615,7 +620,7 @@ void pragma_body(double *a, int n) {
 // Doubled braces are still a single statement: perfect.
 void double_braces(double *a, int n) {
   // depth 0, 1 child, PERFECT
-  // CHECK: nests.c:[[#LOOP37:@LINE+10]]:3{{$}}
+  // CHECK: nests.c:[[#LOOP37:@LINE+11]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 1 child loop(s), perfect nest{{$}}
@@ -624,6 +629,7 @@ void double_braces(double *a, int n) {
   // CHECK-NEXT: W a[i * n + j] : [i][j] delinearized, dims [?][n]{{$}}
   // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
+  // CHECK: collapse   : 2 (with 'j'){{$}}
   // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
   for (int i = 0; i < n; i++) {
     {
@@ -679,7 +685,7 @@ void labelled_inner(double *a, int n) {
 // triangular (the review's false positive).
 void sizeof_bound(double (*m)[4], int n) {
   // depth 0, 1 child, perfect
-  // CHECK: nests.c:[[#LOOP41:@LINE+10]]:3{{$}}
+  // CHECK: nests.c:[[#LOOP41:@LINE+11]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 1 child loop(s), perfect nest{{$}}
@@ -688,6 +694,7 @@ void sizeof_bound(double (*m)[4], int n) {
   // CHECK-NEXT: W m[i][j] : [i][j]{{$}}
   // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
+  // CHECK: collapse   : 2 (with 'j'){{$}}
   // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
   for (int i = 0; i < n; i++)
     // CONSTANT_BOUND, trip 4, NOT triangular

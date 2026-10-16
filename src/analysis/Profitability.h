@@ -97,11 +97,13 @@
 
 #include "analysis/CallResolver.h"
 #include "analysis/LoopInfo.h"
+#include "analysis/DataRegions.h"
 #include "analysis/SafetyAnalysis.h"
 
 #include "clang/AST/ASTContext.h"
 #include "clang/AST/Decl.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -199,36 +201,6 @@ struct MachineModel {
 /// CommonOptionsParser has parsed argv.
 MachineModel machineModelFromFlags();
 
-/// One array or pointer the loop touches, with everything codegen needs to
-/// emit a map clause for it.
-///
-/// Built here rather than in Week 3's codegen because the profitability model
-/// has to know the data volume anyway, and the volume and the map clause are
-/// the same fact asked two ways: Read && Written is map(tofrom:), read-only is
-/// map(to:), write-only is map(from:), and ExtentText is the array-section
-/// length. Days 14-16 inherit their map clauses from this instead of walking
-/// the body a second time to rediscover them.
-struct ArrayRegion {
-  const clang::ValueDecl *Base = nullptr;
-  bool Read = false;
-  bool Written = false;
-
-  /// Size of one element, from the AST type (pointee for a pointer, element
-  /// type for an array).
-  uint64_t ElemBytes = 0;
-
-  /// Length of the mapped section, as source text: "65536", "n". Always
-  /// starting from index 0 — see the limitations note in the header.
-  std::string ExtentText;
-
-  /// The OpenMP map kind this region implies: "to", "from", or "tofrom".
-  llvm::StringRef mapKind() const {
-    if (Read && Written)
-      return "tofrom";
-    return Written ? "from" : "to";
-  }
-};
-
 /// Modelled time on each target, in microseconds, plus the intermediate
 /// quantities the report needs to explain where those times came from.
 struct CostEstimate {
@@ -263,10 +235,25 @@ struct ProfitabilityVerdict {
   /// verdict), e.g. " private(j) reduction(+: sum)".
   std::string ScalarClauses;
 
+  /// Phase 2.1: the GPU pragma collapses this loop with its child
+  /// (LoopSafety::Collapse2). The CPU pragma doesn't: host threads already
+  /// outnumber few outer iterations rarely, and collapsing can cost the
+  /// inner loop its vectorization.
+  bool Collapse2 = false;
+
   /// Phase 1.6: run-time no-overlap checks the loop's safety depends on
   /// (LoopSafety::AliasGuard). Conjoined into every parallel pragma's if(),
   /// under every policy; a loop that has one is never GPU-offloaded.
   std::string AliasGuard;
+
+  /// Phase 2.1: run-time conditions the map() sections need (RegionPlan::
+  /// MapGuard), conjoined into the GPU pragma's if(target:) under every
+  /// policy; and map(tofrom:) clauses for lastprivate/reduction scalars.
+  std::string MapGuard;
+  std::string ScalarMaps;
+  /// Regions came from RegionPlanner (sections from the ranges, so a
+  /// descending loop is mapped correctly).
+  bool RangeMaps = false;
 
   /// False when the loop never reached the cost model — an unsafe or
   /// unverifiable loop is not "modelled and found unprofitable", it is not
@@ -339,7 +326,18 @@ public:
   /// (applyPolicy) -- under Naive this overrides Target on top of a verdict
   /// that was still fully computed, so the report always shows the cascade
   /// a naive policy is ignoring, not just its outcome.
-  ProfitabilityVerdict analyzeLoop(const LoopInfo &LI, const LoopSafety &Safety);
+  ///
+  /// Plan (Phase 2.1, -maps=ranges): map sections from RegionPlanner, which
+  /// also switches on range-based transfer pricing and op counts that
+  /// multiply by constant inner trip counts (see setLoops). Null keeps the
+  /// pre-2.1 model (-maps=bound).
+  ProfitabilityVerdict analyzeLoop(const LoopInfo &LI, const LoopSafety &Safety,
+                                   const RegionPlan *Plan = nullptr);
+
+  /// Phase 2.1: every loop in the translation unit, so op counts can
+  /// multiply a constant-trip inner loop's body (in the loop or in a
+  /// callee) by its trip count. Only used when a RegionPlan is given.
+  void setLoops(const std::vector<LoopInfo> &All);
 
   /// Intensity above which offload beats a fully threaded host, for this
   /// machine model, in the large-loop limit where launch cost vanishes.
@@ -349,7 +347,14 @@ private:
   /// The Days 11-13 cost model, unchanged by Day 21: computes the gated
   /// verdict exactly as before. analyzeLoop calls this first regardless of
   /// PolicyMode.
-  ProfitabilityVerdict priceLoop(const LoopInfo &LI, const LoopSafety &Safety);
+  ProfitabilityVerdict priceLoop(const LoopInfo &LI, const LoopSafety &Safety,
+                                 const RegionPlan *Plan);
+
+  /// Phase 2.1 op count of S: own operations, and callees' (counted at each
+  /// call, transitively), each multiplied by the constant trip counts of the
+  /// loops around it.
+  void countOps(const clang::Stmt *S, double &Own, double &Calls);
+  double functionOps(const clang::FunctionDecl *FD);
 
   /// Day 21: overrides V.Target in place when PolicyMode is Naive. A no-op
   /// under Gated. See the Policy enum's comment for what Naive means and
@@ -361,6 +366,9 @@ private:
   MachineModel Machine;
   Policy PolicyMode;
   llvm::DenseMap<const clang::FunctionDecl *, double> OpCache;
+  llvm::DenseMap<const clang::ForStmt *, const LoopInfo *> LoopOf;
+  llvm::DenseMap<const clang::FunctionDecl *, double> FnOps;
+  llvm::DenseSet<const clang::FunctionDecl *> Counting;
 };
 
 /// Human-readable report: the gate cascade, then the decision. Lives here

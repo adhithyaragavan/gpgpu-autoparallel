@@ -65,7 +65,7 @@ void gpu_offload_case(double *out, const double *in) {
 // path: this loop is worth a GPU only above a threshold the cost model
 // solves for (not one that was picked), not unconditionally.
 void gpu_conditional_case(double *out, const double *in, int n) {
-  // CHECK: profitability_cases.c:[[#LOOP1:@LINE+14]]:3{{$}}
+  // CHECK: profitability_cases.c:[[#LOOP1:@LINE+15]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
@@ -79,6 +79,7 @@ void gpu_conditional_case(double *out, const double *in, int n) {
   // CHECK: alias      : 'out' and 'in' can't overlap (every call passes disjoint objects){{$}}
   // CHECK: profitability : GPU_OFFLOAD if (n >= {{[0-9]+}}){{$}}
   // CHECK: - data/iteration: 16 B across 2 region(s): out (map(from: out[0:n]), 8 B/elem), in (map(to: in[0:n]), 8 B/elem){{$}}
+  // CHECK: - map guard: n >= 1{{$}}
   for (int i = 0; i < n; i++) {
     out[i] = heavy_kernel(in[i]);
   }
@@ -259,7 +260,7 @@ void gpu_offload_descending_case(double *out, const double *in) {
   // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
   // CHECK: alias      : 'out' and 'in' can't overlap (every call passes disjoint objects){{$}}
   // CHECK: profitability : GPU_OFFLOAD{{$}}
-  // CHECK: - data/iteration: 16 B across 2 region(s): out (map(from: out[0:0]), 8 B/elem), in (map(to: in[0:0]), 8 B/elem){{$}}
+  // CHECK: - data/iteration: 16 B across 2 region(s): out (map(from: out[0:65536]), 8 B/elem), in (map(to: in[0:65536]), 8 B/elem){{$}}
   for (int i = 65535; i >= 0; i--) {
     out[i] = heavy_kernel(in[i]);
   }

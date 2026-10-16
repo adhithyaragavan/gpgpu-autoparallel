@@ -1,4 +1,5 @@
 #include "analysis/AliasAnalysis.h"
+#include "analysis/SourceText.h"
 
 #include "analysis/Profitability.h" // optionCategory()
 
@@ -36,7 +37,6 @@ bool wholeProgramFromFlags() { return FlagWholeProgram; }
 namespace {
 
 constexpr unsigned MaxCallerDepth = 3;
-const char *const IntPtr = "__INTPTR_TYPE__";
 
 const VarDecl *canon(const ValueDecl *V) {
   const auto *VD = dyn_cast_or_null<VarDecl>(V);
@@ -143,28 +143,6 @@ std::optional<ArgObj> argRoot(const Expr *E) {
       return argRoot(BO->getRHS());
   }
   return std::nullopt;
-}
-
-std::string asIntPtr(const AffineExpr &E) {
-  if (E.isConstant())
-    return std::to_string(E.Const);
-  return "(" + std::string(IntPtr) + ")(" + E.str() + ")";
-}
-
-std::string scaled(const std::string &X, int64_t Size) {
-  return Size == 1 ? X : std::to_string(Size) + " * " + X;
-}
-
-std::string fold(const std::vector<std::string> &Xs, bool Min) {
-  std::string R = Xs.front();
-  for (size_t K = 1; K < Xs.size(); ++K)
-    R = "(" + R + (Min ? " < " : " > ") + Xs[K] + " ? " + R + " : " + Xs[K] +
-        ")";
-  return R;
-}
-
-bool isAllDigits(llvm::StringRef S) {
-  return !S.empty() && llvm::all_of(S, [](char C) { return isdigit(C); });
 }
 
 } // namespace
@@ -473,7 +451,7 @@ AliasAnalyzer::runtimeCheck(const FunctionDecl *F, SourceLocation At,
         for (size_t D = 1; D < Los.size(); ++D) {
           std::string E;
           if (X.Delinearized && D - 1 < X.RowLengths.size())
-            E = "(" + std::string(IntPtr) + ")" +
+            E = "(" + std::string(IntPtrType) + ")" +
                 X.RowLengths[D - 1]->getNameAsString();
           else if (D < X.DimExtents.size() && isAllDigits(X.DimExtents[D]))
             E = X.DimExtents[D];
@@ -562,55 +540,8 @@ AliasAnalyzer::runtimeCheck(const FunctionDecl *F, SourceLocation At,
   // declaration it stands for: nothing else in F (a variable, enumerator,
   // typedef or function declared anywhere in it, in any block) may share
   // its name, and a global must already be declared at the loop.
-  llvm::StringMap<std::vector<const NamedDecl *>> InF;
-  if (const FunctionDecl *Def = F->getDefinition()) {
-    for (const ParmVarDecl *P : Def->parameters())
-      InF[P->getName()].push_back(P);
-    struct N : RecursiveASTVisitor<N> {
-      llvm::StringMap<std::vector<const NamedDecl *>> *Out;
-      bool VisitNamedDecl(NamedDecl *D) {
-        // Tags and labels live in their own namespaces.
-        if (!isa<TagDecl>(D) && !isa<LabelDecl>(D) && D->getIdentifier())
-          (*Out)[D->getName()].push_back(D);
-        return true;
-      }
-    } Vis;
-    Vis.Out = &InF;
-    if (Def->getBody())
-      Vis.TraverseStmt(Def->getBody());
-  }
-  const SourceManager &SM = Ctx.getSourceManager();
-  auto Nameable = [&](const ValueDecl *D) -> bool {
-    const auto *VD = canon(D);
-    if (!VD || !VD->getIdentifier()) {
-      Why = "the check would need a name for " + Quoted(D);
-      return false;
-    }
-    auto It = InF.find(VD->getName());
-    if (It != InF.end())
-      for (const NamedDecl *Other : It->second)
-        if (Other->getCanonicalDecl() != VD) {
-          Why = Quoted(D) + " is shadowed in '" + F->getNameAsString() +
-                "', so the check can't name it";
-          return false;
-        }
-    if (VD->isFileVarDecl()) {
-      bool Before = false;
-      for (const VarDecl *R : VD->redecls())
-        Before |= SM.isBeforeInTranslationUnit(R->getLocation(), At);
-      if (!Before) {
-        Why = "global " + Quoted(D) + " is declared after the loop";
-        return false;
-      }
-      return true;
-    }
-    // Otherwise it must be F's own parameter or local (declared in F).
-    if (It == InF.end()) {
-      Why = Quoted(D) + " is not visible in '" + F->getNameAsString() + "'";
-      return false;
-    }
-    return true;
-  };
+  const NameScope Names(Ctx, F, At);
+  auto Nameable = [&](const ValueDecl *D) { return Names.nameable(D, Why); };
   // Every name in A's and B's accesses: subscripts' symbols and enclosing
   // loops' variables (what bounds leave behind), and row lengths.
   llvm::SmallPtrSet<const VarDecl *, 8> UsedIVs;
@@ -650,7 +581,7 @@ AliasAnalyzer::runtimeCheck(const FunctionDecl *F, SourceLocation At,
     }
     if (!Nameable(V))
       return false;
-    Out = "(" + std::string(IntPtr) + ")" +
+    Out = "(" + std::string(IntPtrType) + ")" +
           (isa<ParmVarDecl>(VD) || VD->getType()->isArrayType() ? "" : "&") +
           VD->getNameAsString();
     return true;

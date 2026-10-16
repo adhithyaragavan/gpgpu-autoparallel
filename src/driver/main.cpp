@@ -12,6 +12,7 @@
 
 #include "analysis/AffineAccess.h"
 #include "analysis/CallResolver.h"
+#include "analysis/DataRegions.h"
 #include "analysis/LoopAnalysis.h"
 #include "analysis/Profitability.h"
 #include "analysis/SafetyAnalysis.h"
@@ -81,6 +82,10 @@ public:
         p05::ipaModeFromFlags() == p05::IpaMode::Summaries;
     p05::ProfitabilityAnalyzer Profitability(Resolver, Context, Machine,
                                              PolicyMode);
+    const bool RangeMaps = p05::mapModeFromFlags() == p05::MapMode::Ranges;
+    p05::RegionPlanner Regions(Context, Collector.getLoops());
+    if (RangeMaps)
+      Profitability.setLoops(Collector.getLoops());
 
     Rewriter Rewrite(Context.getSourceManager(), Context.getLangOpts());
     p05::OmpRewriter OmpCodegen(Rewrite, Resolver);
@@ -95,20 +100,36 @@ public:
       llvm::outs() << "policy: naive (offload every SAFE loop; cost model "
                       "computed but not consulted)\n";
     llvm::outs() << "\n";
+    // Every loop's accesses and safety first: whether a loop can collapse
+    // with its child depends on the child's verdict (Phase 2.1).
+    std::vector<p05::LoopAccesses> AllAccesses;
+    std::vector<p05::LoopSafety> AllSafety;
     for (const p05::LoopInfo &LI : Loops) {
-      p05::printLoopReport(llvm::outs(), LI, Loops);
-      p05::printCallChains(llvm::outs(), LI, Resolver);
       p05::LoopAccesses Accesses = Affine.analyzeLoop(&LI - Loops.data());
       p05::CallEffects CallFx;
       if (UseSummaries)
         CallFx = Summaries.composeCalls(Accesses);
+      AllSafety.push_back(Safety.analyzeLoop(LI, Accesses,
+                                             Scalars.analyzeLoop(LI),
+                                             UseSummaries ? &CallFx : nullptr));
+      AllAccesses.push_back(std::move(Accesses));
+    }
+    if (RangeMaps)
+      p05::markCollapsible(Loops, AllAccesses, AllSafety);
+
+    for (const p05::LoopInfo &LI : Loops) {
+      const size_t K = &LI - Loops.data();
+      const p05::LoopAccesses &Accesses = AllAccesses[K];
+      const p05::LoopSafety &SafetyVerdict = AllSafety[K];
+      p05::printLoopReport(llvm::outs(), LI, Loops);
+      p05::printCallChains(llvm::outs(), LI, Resolver);
       p05::printAccessReport(llvm::outs(), Accesses);
-      p05::LoopSafety SafetyVerdict =
-          Safety.analyzeLoop(LI, Accesses, Scalars.analyzeLoop(LI),
-                             UseSummaries ? &CallFx : nullptr);
       p05::printSafetyReport(llvm::outs(), SafetyVerdict);
-      p05::ProfitabilityVerdict ProfitVerdict =
-          Profitability.analyzeLoop(LI, SafetyVerdict);
+      std::optional<p05::RegionPlan> Plan;
+      if (RangeMaps)
+        Plan = Regions.plan(LI, Accesses, Alias.enclosingFunction(LI.Loop));
+      p05::ProfitabilityVerdict ProfitVerdict = Profitability.analyzeLoop(
+          LI, SafetyVerdict, Plan ? &*Plan : nullptr);
       p05::printProfitabilityReport(llvm::outs(), ProfitVerdict);
 
       if (RewriteFlag)

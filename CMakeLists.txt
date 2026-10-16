@@ -25,6 +25,8 @@ add_executable(p05tool
   src/analysis/ScalarAnalysis.cpp
   src/analysis/Summaries.cpp
   src/analysis/AliasAnalysis.cpp
+  src/analysis/SourceText.cpp
+  src/analysis/DataRegions.cpp
   src/codegen/OmpRewriter.cpp
 )
 

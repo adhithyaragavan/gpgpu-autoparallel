@@ -144,7 +144,41 @@ struct LoopSafety {
   /// false, profitability must not choose GPU offload (see Profitability.cpp)
   /// until Phase 2.1 sizes map regions from the affine ranges.
   bool GpuMappable = true;
+
+  /// Phase 2.1 (-maps=ranges): no callee reaches memory a map() clause can't
+  /// name (a global, which would need its own declare target), and callees'
+  /// accesses through pointer arguments were composed into the loop's (so
+  /// RegionPlanner sees them). The rest of mappability is RegionPlan's.
+  bool CalleesMappable = true;
+
+  /// Phase 2.1: lastprivate and reduction scalars, which a GPU region must
+  /// copy back (map(tofrom: ...)).
+  std::vector<const clang::VarDecl *> HostScalars;
+
+  /// Phase 2.1: this loop and its only child form a nest the GPU pragma can
+  /// collapse(2) (see markCollapsible). CollapseNote says which variable,
+  /// or why not; empty when the loop isn't a SAFE perfect nest.
+  bool Collapse2 = false;
+  std::string CollapseNote;
 };
+
+/// Phase 2.1: sets Collapse2 on each SAFE loop whose iterations and its
+/// child's can be handed out as one space. Needs every loop's verdict, so it
+/// runs after analyzeLoop has seen them all. Requires:
+///   - a perfect two-level nest (LoopInfo::PerfectlyNested, one child), both
+///     loops recognized, with different induction variables;
+///   - the child SAFE on its own, with no run-time alias check: the outer
+///     verdict rules out dependences between different outer iterations,
+///     the child's between iterations of one outer iteration;
+///   - a rectangular child: its range is exact (step +-1, no break,
+///     continue, goto or return) with bounds that don't mention the outer
+///     variable and are fixed while the nest runs (AffineAccess's symbols);
+///   - the child's variable not lastprivate in the outer loop: what a
+///     collapsed loop leaves in an inner variable after the loop is not
+///     something to rely on.
+void markCollapsible(const std::vector<LoopInfo> &Loops,
+                     const std::vector<LoopAccesses> &Accesses,
+                     std::vector<LoopSafety> &Safety);
 
 /// Computes and memoizes FunctionEffects, and aggregates them (together with
 /// CallResolver's reachability facts and a walk of the loop's own body) into

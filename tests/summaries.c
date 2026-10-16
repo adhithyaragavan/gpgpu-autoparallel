@@ -31,7 +31,7 @@ void s_elem(long *a, const long *b, int n) {
   // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
   // CHECK: alias      : 'b' and 'a' may overlap: checked at run time{{$}}
-  // CHECK: alias guard: ((__INTPTR_TYPE__)b + 8 * ((__INTPTR_TYPE__)(n - 1) + 1) <= (__INTPTR_TYPE__)a + 0 || (__INTPTR_TYPE__)a + 8 * ((__INTPTR_TYPE__)(n - 1) + 1) <= (__INTPTR_TYPE__)b + 0){{$}}
+  // CHECK: alias guard: ((__INTPTR_TYPE__)b + 8 * (((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)a + 0 || (__INTPTR_TYPE__)a + 8 * (((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)b + 0){{$}}
   // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
   for (int i = 0; i < n; i++)
     set0(&a[i], b[i]);
@@ -75,7 +75,7 @@ void s_index(long *a, const long *b, int n) {
   // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
   // CHECK: alias      : 'b' and 'a' may overlap: checked at run time{{$}}
-  // CHECK: alias guard: ((__INTPTR_TYPE__)b + 8 * ((__INTPTR_TYPE__)(n - 1) + 1) <= (__INTPTR_TYPE__)a + 0 || (__INTPTR_TYPE__)a + 8 * ((__INTPTR_TYPE__)(n - 1) + 1) <= (__INTPTR_TYPE__)b + 0){{$}}
+  // CHECK: alias guard: ((__INTPTR_TYPE__)b + 8 * (((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)a + 0 || (__INTPTR_TYPE__)a + 8 * (((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)b + 0){{$}}
   // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
   for (int i = 0; i < n; i++)
     put(a, i, b[i] + 1);
@@ -116,7 +116,7 @@ void s_two_calls(long *a, const long *b, int n) {
   // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: deps       : 3 pair(s), 3 independent (1 GCD, 2 SIV){{$}}
   // CHECK: alias      : 'b' and 'a' may overlap: checked at run time{{$}}
-  // CHECK: alias guard: ((__INTPTR_TYPE__)b + 8 * ((__INTPTR_TYPE__)(n - 1) + 1) <= (__INTPTR_TYPE__)a + 0 || (__INTPTR_TYPE__)a + 8 * ((__INTPTR_TYPE__)(2*n - 1) + 1) <= (__INTPTR_TYPE__)b + 0){{$}}
+  // CHECK: alias guard: ((__INTPTR_TYPE__)b + 8 * (((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)a + 0 || (__INTPTR_TYPE__)a + 8 * ((2 * (__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)b + 0){{$}}
   // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
   for (int i = 0; i < n; i++) {
     put(a, 2 * i, b[i]);
@@ -161,8 +161,8 @@ void s_inner_call(long *a, int n) {
   // CHECK-NEXT: W put(): p[k] : [4*i + k] of 'a'{{$}}
   // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: deps       : 1 pair(s), 1 independent (1 Banerjee){{$}}
+  // CHECK: collapse   : 2 (with 'k'){{$}}
   // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
-  // CHECK: - GPU offload declined: map() regions are only sized correctly when every access is exactly base[i] (range-based maps are Phase 2.1) -> CPU_PARALLEL, which needs no map{{$}}
   for (int i = 0; i < n; i++)
     // CHECK: summaries.c:[[#LOOP7:@LINE+11]]:5{{$}}
     // CHECK: kind       : CONSTANT_BOUND{{$}}
@@ -248,7 +248,7 @@ void u_rows_overrun(long *a, int n, int m) {
 
 // SAFE: the caller's inner loop picks the column: a[i][j].
 void s_rows_inner_col(long *a, int n, int m) {
-  // CHECK: summaries.c:[[#LOOP12:@LINE+11]]:3{{$}}
+  // CHECK: summaries.c:[[#LOOP12:@LINE+12]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 1 child loop(s), perfect nest{{$}}
@@ -258,6 +258,7 @@ void s_rows_inner_col(long *a, int n, int m) {
   // CHECK-NEXT: W put(): p[k] : [i][j] of 'a' delinearized, dims [?][m]{{$}}
   // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
+  // CHECK: collapse   : 2 (with 'j'){{$}}
   // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
   for (int i = 0; i < n; i++)
     // CHECK: summaries.c:[[#LOOP13:@LINE+11]]:5{{$}}
@@ -295,7 +296,7 @@ void s_transitive(long *a, const long *b, int n) {
   // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
   // CHECK: alias      : 'b' and 'a' may overlap: checked at run time{{$}}
-  // CHECK: alias guard: ((__INTPTR_TYPE__)b + 8 * ((__INTPTR_TYPE__)(n - 2) + 1) <= (__INTPTR_TYPE__)a + 8 || (__INTPTR_TYPE__)a + 8 * ((__INTPTR_TYPE__)(n - 1) + 1) <= (__INTPTR_TYPE__)b + 0){{$}}
+  // CHECK: alias guard: ((__INTPTR_TYPE__)b + 8 * (((__INTPTR_TYPE__)n - 2) + 1) <= (__INTPTR_TYPE__)a + 8 || (__INTPTR_TYPE__)a + 8 * (((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)b + 0){{$}}
   // CHECK: profitability : CPU_PARALLEL if (n - 1 >= {{[0-9]+}}){{$}}
   for (int i = 0; i < n - 1; i++)
     bump_next(&a[i], b[i]);
@@ -340,7 +341,7 @@ void s_global_elem(const long *b, int n) {
   // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
   // CHECK: alias      : 'b' and 'g_tab' may overlap: checked at run time{{$}}
-  // CHECK: alias guard: ((__INTPTR_TYPE__)b + 8 * ((__INTPTR_TYPE__)(n - 1) + 1) <= (__INTPTR_TYPE__)g_tab + 0 || (__INTPTR_TYPE__)g_tab + 8 * ((__INTPTR_TYPE__)(n - 1) + 1) <= (__INTPTR_TYPE__)b + 0){{$}}
+  // CHECK: alias guard: ((__INTPTR_TYPE__)b + 8 * (((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)g_tab + 0 || (__INTPTR_TYPE__)g_tab + 8 * (((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)b + 0){{$}}
   // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
   for (int i = 0; i < n; i++)
     g_put(i, b[i]);
@@ -391,7 +392,7 @@ void u_global_scalar(long *a, int n) {
 
 // SAFE: t is declared in the loop, so every iteration has its own.
 void s_addr_private(long *a, const long *b, int n) {
-  // CHECK: summaries.c:[[#LOOP19:@LINE+15]]:3{{$}}
+  // CHECK: summaries.c:[[#LOOP19:@LINE+16]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
@@ -404,8 +405,9 @@ void s_addr_private(long *a, const long *b, int n) {
   // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: deps       : 1 pair(s), 1 independent (1 SIV); 1 on loop-private arrays skipped{{$}}
   // CHECK: alias      : 'b' and 'a' may overlap: checked at run time{{$}}
-  // CHECK: alias guard: ((__INTPTR_TYPE__)b + 8 * ((__INTPTR_TYPE__)(n - 1) + 1) <= (__INTPTR_TYPE__)a + 0 || (__INTPTR_TYPE__)a + 8 * ((__INTPTR_TYPE__)(n - 1) + 1) <= (__INTPTR_TYPE__)b + 0){{$}}
+  // CHECK: alias guard: ((__INTPTR_TYPE__)b + 8 * (((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)a + 0 || (__INTPTR_TYPE__)a + 8 * (((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)b + 0){{$}}
   // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
+  // CHECK: - GPU offload declined: pointer disjointness is only checked at run time -> CPU_PARALLEL, guarded by the check{{$}}
   for (int i = 0; i < n; i++) {
     long t = 0;
     bump(&t, b[i]);
@@ -456,7 +458,7 @@ static void scratch(long *p, int k) {
 
 // SAFE: tmp is scratch's own on every call.
 void s_callee_local(long *a, int n) {
-  // CHECK: summaries.c:[[#LOOP22:@LINE+13]]:3{{$}}
+  // CHECK: summaries.c:[[#LOOP22:@LINE+12]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
@@ -468,7 +470,6 @@ void s_callee_local(long *a, int n) {
   // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: deps       : 2 pair(s), 2 independent (2 SIV){{$}}
   // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
-  // CHECK: - GPU offload declined: map() regions are only sized correctly when every access is exactly base[i] (range-based maps are Phase 2.1) -> CPU_PARALLEL, which needs no map{{$}}
   for (int i = 0; i < n; i++)
     scratch(a, i);
 }

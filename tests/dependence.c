@@ -15,7 +15,7 @@
 // Outer i: SAFE (rows distinct, delinearized [i][j] vs [j][i] on different
 // arrays; only b is written). Inner j: SAFE.
 void transpose(double *b, const double *a, int n) {
-  // CHECK: dependence.c:[[#LOOP0:@LINE+13]]:3{{$}}
+  // CHECK: dependence.c:[[#LOOP0:@LINE+14]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 1 child loop(s), perfect nest{{$}}
@@ -26,7 +26,8 @@ void transpose(double *b, const double *a, int n) {
   // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
   // CHECK: alias      : 'b' and 'a' may overlap: checked at run time{{$}}
-  // CHECK: alias guard: ((__INTPTR_TYPE__)b + 8 * (((__INTPTR_TYPE__)(n - 1)) * (__INTPTR_TYPE__)n + (__INTPTR_TYPE__)(n - 1) + 1) <= (__INTPTR_TYPE__)a + 8 * ((0) * (__INTPTR_TYPE__)n + 0) || (__INTPTR_TYPE__)a + 8 * (((__INTPTR_TYPE__)(n - 1)) * (__INTPTR_TYPE__)n + (__INTPTR_TYPE__)(n - 1) + 1) <= (__INTPTR_TYPE__)b + 8 * ((0) * (__INTPTR_TYPE__)n + 0)){{$}}
+  // CHECK: alias guard: ((__INTPTR_TYPE__)b + 8 * ((((__INTPTR_TYPE__)n - 1)) * (__INTPTR_TYPE__)n + ((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)a + 8 * ((0) * (__INTPTR_TYPE__)n + 0) || (__INTPTR_TYPE__)a + 8 * ((((__INTPTR_TYPE__)n - 1)) * (__INTPTR_TYPE__)n + ((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)b + 8 * ((0) * (__INTPTR_TYPE__)n + 0)){{$}}
+  // CHECK: collapse   : no, the inner loop needs its own run-time alias check{{$}}
   // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
   for (int i = 0; i < n; i++)
     // CHECK: dependence.c:[[#LOOP1:@LINE+13]]:5{{$}}
@@ -40,7 +41,7 @@ void transpose(double *b, const double *a, int n) {
     // CHECK-NEXT: safety     : SAFE{{$}}
     // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
     // CHECK: alias      : 'b' and 'a' may overlap: checked at run time{{$}}
-    // CHECK: alias guard: ((__INTPTR_TYPE__)b + 8 * (((__INTPTR_TYPE__)(n - 1)) * (__INTPTR_TYPE__)n + (__INTPTR_TYPE__)(i) + 1) <= (__INTPTR_TYPE__)a + 8 * (((__INTPTR_TYPE__)(i)) * (__INTPTR_TYPE__)n + 0) || (__INTPTR_TYPE__)a + 8 * (((__INTPTR_TYPE__)(i)) * (__INTPTR_TYPE__)n + (__INTPTR_TYPE__)(n - 1) + 1) <= (__INTPTR_TYPE__)b + 8 * ((0) * (__INTPTR_TYPE__)n + (__INTPTR_TYPE__)(i))){{$}}
+    // CHECK: alias guard: ((__INTPTR_TYPE__)b + 8 * ((((__INTPTR_TYPE__)n - 1)) * (__INTPTR_TYPE__)n + (__INTPTR_TYPE__)i + 1) <= (__INTPTR_TYPE__)a + 8 * (((__INTPTR_TYPE__)i) * (__INTPTR_TYPE__)n + 0) || (__INTPTR_TYPE__)a + 8 * (((__INTPTR_TYPE__)i) * (__INTPTR_TYPE__)n + ((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)b + 8 * ((0) * (__INTPTR_TYPE__)n + (__INTPTR_TYPE__)i)){{$}}
     // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
     for (int j = 0; j < n; j++)
       b[j * n + i] = a[i * n + j];
@@ -62,7 +63,7 @@ void matvec(double *y, const double *m, const double *x, int n) {
   // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
   // CHECK: alias      : 'm' and 'y' may overlap: checked at run time{{$}}
   // CHECK: alias      : 'x' and 'y' may overlap: checked at run time{{$}}
-  // CHECK: alias guard: ((__INTPTR_TYPE__)m + 8 * (((__INTPTR_TYPE__)(n - 1)) * (__INTPTR_TYPE__)n + (__INTPTR_TYPE__)(n - 1) + 1) <= (__INTPTR_TYPE__)y + 0 || (__INTPTR_TYPE__)y + 8 * ((__INTPTR_TYPE__)(n - 1) + 1) <= (__INTPTR_TYPE__)m + 8 * ((0) * (__INTPTR_TYPE__)n + 0)) && ((__INTPTR_TYPE__)x + 8 * ((__INTPTR_TYPE__)(n - 1) + 1) <= (__INTPTR_TYPE__)y + 0 || (__INTPTR_TYPE__)y + 8 * ((__INTPTR_TYPE__)(n - 1) + 1) <= (__INTPTR_TYPE__)x + 0){{$}}
+  // CHECK: alias guard: ((__INTPTR_TYPE__)m + 8 * ((((__INTPTR_TYPE__)n - 1)) * (__INTPTR_TYPE__)n + ((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)y + 0 || (__INTPTR_TYPE__)y + 8 * (((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)m + 8 * ((0) * (__INTPTR_TYPE__)n + 0)) && ((__INTPTR_TYPE__)x + 8 * (((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)y + 0 || (__INTPTR_TYPE__)y + 8 * (((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)x + 0){{$}}
   // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
   for (int i = 0; i < n; i++) {
     double acc = 0.0;
@@ -120,7 +121,7 @@ void even_odd(double *a, int n) {
 
 // SAFE by the step: i is always even, so a[i] and a[i + 1] never meet.
 void stride_two(double *a, int n) {
-  // CHECK: dependence.c:[[#LOOP6:@LINE+11]]:3{{$}}
+  // CHECK: dependence.c:[[#LOOP6:@LINE+12]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
@@ -131,6 +132,7 @@ void stride_two(double *a, int n) {
   // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: deps       : 2 pair(s), 2 independent (2 SIV){{$}}
   // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
+  // CHECK: - GPU offload declined: no map() section: can't map 'a': no access to it runs on every iteration, so the ends of its range aren't surely touched -> CPU_PARALLEL, which needs no map{{$}}
   for (int i = 0; i < n; i += 2)
     a[i] = a[i + 1] - 1.0;
 }
@@ -154,7 +156,7 @@ void distance_beyond_span(double *a) {
 
 // Outer i: SAFE (rows). Inner j: UNSAFE (a[i][j] reads a[i][j - 1], distance 1).
 void row_prefix(double *a, int n) {
-  // CHECK: dependence.c:[[#LOOP8:@LINE+12]]:3{{$}}
+  // CHECK: dependence.c:[[#LOOP8:@LINE+13]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 1 child loop(s), perfect nest{{$}}
@@ -165,6 +167,7 @@ void row_prefix(double *a, int n) {
   // CHECK-NEXT: R a[i * n + j] : [i][j] delinearized, dims [?][n]{{$}}
   // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: deps       : 3 pair(s), 3 independent (3 SIV){{$}}
+  // CHECK: collapse   : no, the inner loop is not SAFE on its own{{$}}
   // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
   for (int i = 0; i < n; i++)
     // CHECK: dependence.c:[[#LOOP9:@LINE+13]]:5{{$}}
@@ -219,7 +222,7 @@ void column_prefix(double *a, int n) {
 
 // Three dimensions, all loops SAFE.
 void scale3(double *c, const double *a, int n) {
-  // CHECK: dependence.c:[[#LOOP12:@LINE+13]]:3{{$}}
+  // CHECK: dependence.c:[[#LOOP12:@LINE+14]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 1 child loop(s), perfect nest{{$}}
@@ -230,10 +233,11 @@ void scale3(double *c, const double *a, int n) {
   // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
   // CHECK: alias      : 'c' and 'a' may overlap: checked at run time{{$}}
-  // CHECK: alias guard: ((__INTPTR_TYPE__)c + 8 * ((((__INTPTR_TYPE__)(n - 1)) * (__INTPTR_TYPE__)n + (__INTPTR_TYPE__)(n - 1)) * (__INTPTR_TYPE__)n + (__INTPTR_TYPE__)(n - 1) + 1) <= (__INTPTR_TYPE__)a + 8 * (((0) * (__INTPTR_TYPE__)n + 0) * (__INTPTR_TYPE__)n + 0) || (__INTPTR_TYPE__)a + 8 * ((((__INTPTR_TYPE__)(n - 1)) * (__INTPTR_TYPE__)n + (__INTPTR_TYPE__)(n - 1)) * (__INTPTR_TYPE__)n + (__INTPTR_TYPE__)(n - 1) + 1) <= (__INTPTR_TYPE__)c + 8 * (((0) * (__INTPTR_TYPE__)n + 0) * (__INTPTR_TYPE__)n + 0)){{$}}
+  // CHECK: alias guard: ((__INTPTR_TYPE__)c + 8 * (((((__INTPTR_TYPE__)n - 1)) * (__INTPTR_TYPE__)n + ((__INTPTR_TYPE__)n - 1)) * (__INTPTR_TYPE__)n + ((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)a + 8 * (((0) * (__INTPTR_TYPE__)n + 0) * (__INTPTR_TYPE__)n + 0) || (__INTPTR_TYPE__)a + 8 * (((((__INTPTR_TYPE__)n - 1)) * (__INTPTR_TYPE__)n + ((__INTPTR_TYPE__)n - 1)) * (__INTPTR_TYPE__)n + ((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)c + 8 * (((0) * (__INTPTR_TYPE__)n + 0) * (__INTPTR_TYPE__)n + 0)){{$}}
+  // CHECK: collapse   : no, the inner loop needs its own run-time alias check{{$}}
   // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
   for (int i = 0; i < n; i++)
-    // CHECK: dependence.c:[[#LOOP13:@LINE+13]]:5{{$}}
+    // CHECK: dependence.c:[[#LOOP13:@LINE+14]]:5{{$}}
     // CHECK: kind       : VARIABLE_BOUND{{$}}
     // CHECK: trip count : <not statically known>{{$}}
     // CHECK: nest       : depth 1, parent [[#LOOP12]]:3, 1 child loop(s), perfect nest{{$}}
@@ -244,7 +248,8 @@ void scale3(double *c, const double *a, int n) {
     // CHECK-NEXT: safety     : SAFE{{$}}
     // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
     // CHECK: alias      : 'c' and 'a' may overlap: checked at run time{{$}}
-    // CHECK: alias guard: ((__INTPTR_TYPE__)c + 8 * ((((__INTPTR_TYPE__)(i)) * (__INTPTR_TYPE__)n + (__INTPTR_TYPE__)(n - 1)) * (__INTPTR_TYPE__)n + (__INTPTR_TYPE__)(n - 1) + 1) <= (__INTPTR_TYPE__)a + 8 * ((((__INTPTR_TYPE__)(i)) * (__INTPTR_TYPE__)n + 0) * (__INTPTR_TYPE__)n + 0) || (__INTPTR_TYPE__)a + 8 * ((((__INTPTR_TYPE__)(i)) * (__INTPTR_TYPE__)n + (__INTPTR_TYPE__)(n - 1)) * (__INTPTR_TYPE__)n + (__INTPTR_TYPE__)(n - 1) + 1) <= (__INTPTR_TYPE__)c + 8 * ((((__INTPTR_TYPE__)(i)) * (__INTPTR_TYPE__)n + 0) * (__INTPTR_TYPE__)n + 0)){{$}}
+    // CHECK: alias guard: ((__INTPTR_TYPE__)c + 8 * ((((__INTPTR_TYPE__)i) * (__INTPTR_TYPE__)n + ((__INTPTR_TYPE__)n - 1)) * (__INTPTR_TYPE__)n + ((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)a + 8 * ((((__INTPTR_TYPE__)i) * (__INTPTR_TYPE__)n + 0) * (__INTPTR_TYPE__)n + 0) || (__INTPTR_TYPE__)a + 8 * ((((__INTPTR_TYPE__)i) * (__INTPTR_TYPE__)n + ((__INTPTR_TYPE__)n - 1)) * (__INTPTR_TYPE__)n + ((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)c + 8 * ((((__INTPTR_TYPE__)i) * (__INTPTR_TYPE__)n + 0) * (__INTPTR_TYPE__)n + 0)){{$}}
+    // CHECK: collapse   : no, the inner loop needs its own run-time alias check{{$}}
     // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
     for (int j = 0; j < n; j++)
       // CHECK: dependence.c:[[#LOOP14:@LINE+13]]:7{{$}}
@@ -258,7 +263,7 @@ void scale3(double *c, const double *a, int n) {
       // CHECK-NEXT: safety     : SAFE{{$}}
       // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
       // CHECK: alias      : 'c' and 'a' may overlap: checked at run time{{$}}
-      // CHECK: alias guard: ((__INTPTR_TYPE__)c + 8 * ((((__INTPTR_TYPE__)(i)) * (__INTPTR_TYPE__)n + (__INTPTR_TYPE__)(j)) * (__INTPTR_TYPE__)n + (__INTPTR_TYPE__)(n - 1) + 1) <= (__INTPTR_TYPE__)a + 8 * ((((__INTPTR_TYPE__)(i)) * (__INTPTR_TYPE__)n + (__INTPTR_TYPE__)(j)) * (__INTPTR_TYPE__)n + 0) || (__INTPTR_TYPE__)a + 8 * ((((__INTPTR_TYPE__)(i)) * (__INTPTR_TYPE__)n + (__INTPTR_TYPE__)(j)) * (__INTPTR_TYPE__)n + (__INTPTR_TYPE__)(n - 1) + 1) <= (__INTPTR_TYPE__)c + 8 * ((((__INTPTR_TYPE__)(i)) * (__INTPTR_TYPE__)n + (__INTPTR_TYPE__)(j)) * (__INTPTR_TYPE__)n + 0)){{$}}
+      // CHECK: alias guard: ((__INTPTR_TYPE__)c + 8 * ((((__INTPTR_TYPE__)i) * (__INTPTR_TYPE__)n + (__INTPTR_TYPE__)j) * (__INTPTR_TYPE__)n + ((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)a + 8 * ((((__INTPTR_TYPE__)i) * (__INTPTR_TYPE__)n + (__INTPTR_TYPE__)j) * (__INTPTR_TYPE__)n + 0) || (__INTPTR_TYPE__)a + 8 * ((((__INTPTR_TYPE__)i) * (__INTPTR_TYPE__)n + (__INTPTR_TYPE__)j) * (__INTPTR_TYPE__)n + ((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)c + 8 * ((((__INTPTR_TYPE__)i) * (__INTPTR_TYPE__)n + (__INTPTR_TYPE__)j) * (__INTPTR_TYPE__)n + 0)){{$}}
       // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
       for (int k = 0; k < n; k++)
         c[(i * n + j) * n + k] = 2.0 * a[(i * n + j) * n + k] + i - k;
@@ -267,7 +272,7 @@ void scale3(double *c, const double *a, int n) {
 // Static 2-D array, read and written in place: both loops SAFE.
 double grid2[64][64];
 void scale_grid(void) {
-  // CHECK: dependence.c:[[#LOOP15:@LINE+11]]:3{{$}}
+  // CHECK: dependence.c:[[#LOOP15:@LINE+12]]:3{{$}}
   // CHECK: kind       : CONSTANT_BOUND{{$}}
   // CHECK: trip count : 64{{$}}
   // CHECK: nest       : depth 0, 1 child loop(s), perfect nest{{$}}
@@ -277,7 +282,8 @@ void scale_grid(void) {
   // CHECK-NEXT: R grid2[i][j] : [i][j]{{$}}
   // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: deps       : 2 pair(s), 2 independent (2 SIV){{$}}
-  // CHECK: profitability : SEQUENTIAL{{$}}
+  // CHECK: collapse   : 2 (with 'j'){{$}}
+  // CHECK: profitability : CPU_PARALLEL{{$}}
   for (int i = 0; i < 64; i++)
     // CHECK: dependence.c:[[#LOOP16:@LINE+11]]:5{{$}}
     // CHECK: kind       : CONSTANT_BOUND{{$}}
@@ -395,7 +401,7 @@ void same_row_each_time(double *a, const double *b, int n) {
     // CHECK-NEXT: safety     : SAFE{{$}}
     // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
     // CHECK: alias      : 'a' and 'b' may overlap: checked at run time{{$}}
-    // CHECK: alias guard: ((__INTPTR_TYPE__)a + 8 * ((__INTPTR_TYPE__)(n - 1) + 1) <= (__INTPTR_TYPE__)b + 8 * (((__INTPTR_TYPE__)(i)) * (__INTPTR_TYPE__)n + 0) || (__INTPTR_TYPE__)b + 8 * (((__INTPTR_TYPE__)(i)) * (__INTPTR_TYPE__)n + (__INTPTR_TYPE__)(n - 1) + 1) <= (__INTPTR_TYPE__)a + 0){{$}}
+    // CHECK: alias guard: ((__INTPTR_TYPE__)a + 8 * (((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)b + 8 * (((__INTPTR_TYPE__)i) * (__INTPTR_TYPE__)n + 0) || (__INTPTR_TYPE__)b + 8 * (((__INTPTR_TYPE__)i) * (__INTPTR_TYPE__)n + ((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)a + 0){{$}}
     // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
     for (int j = 0; j < n; j++)
       a[j] = b[i * n + j];

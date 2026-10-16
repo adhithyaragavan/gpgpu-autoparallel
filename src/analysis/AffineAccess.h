@@ -155,6 +155,12 @@ struct ArrayAccess {
   /// Base is a local pointer set outside the loop to something this analysis
   /// could not resolve: it may point into any other array.
   bool BaseMayAlias = false;
+
+  /// Phase 2.1: for an access composed from a callee's summary (E is then
+  /// the call in the analyzed code), the expressions it came from, deepest
+  /// first: the access in the deepest callee, then each call on the way back
+  /// up. Empty for the analyzed code's own accesses.
+  std::vector<const clang::Expr *> Within;
 };
 
 /// Inclusive range of an induction variable, as affine bounds. Each bound may
@@ -165,6 +171,11 @@ struct ArrayAccess {
 /// side (could not be expressed, or `!=` loops).
 struct IVRange {
   std::optional<AffineExpr> Lo, Hi;
+  /// Phase 2.1: the variable takes every integer in [Lo, Hi] on each run of
+  /// its loop (step +1 or -1, and nothing in the loop's body can leave it or
+  /// skip ahead: no break, continue, goto or return), so both ends are
+  /// actually reached whenever Lo <= Hi.
+  bool Exact = false;
 };
 
 /// One argument of a call, in the same affine terms as the accesses around

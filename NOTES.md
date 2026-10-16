@@ -2271,3 +2271,134 @@ is differential-tested only on its own valid runs.
 - A static-local buffer can't be named in a guard.
 - `long (*a)[m]` VLA rows aren't linearized.
 - A callee loop bound by a global is unbounded.
+
+### 2026-10-16 — Phase 2.1: map() sections from the subscripts' ranges, collapse(2), scalar maps
+
+**Decision:** New `src/analysis/DataRegions.{h,cpp}` (`RegionPlanner`) sizes every GPU `map()` from
+the index ranges the loop's accesses actually reach. The Phase 1.3 interlock (GPU only for loops
+whose accesses are all `base[i]`) is lifted: a loop goes to the GPU when every base gets a section
+and no callee reaches memory a `map()` can't name. `src/analysis/SourceText.{h,cpp}` holds the
+expression printing and the "can this name be written before the loop" check, moved out of
+AliasAnalysis (byte-identical refactor).
+
+**A latent bug this fixes.** The old regions mapped a never-read array `from` even when the loop
+writes only some of its elements (`if (c[i]) y[i] = v`). On a device with its own memory that
+copies uninitialized device memory over every element the loop left alone. It never showed because
+every run so far was host-only. Confirmed: hand-editing the new `tofrom` back to `from` in
+`tests/maps.c` (`cond_write_g`) gives a mismatch on the host-offload device. The descending-loop bug
+from the Phase 0 review is fixed too: `benchmarks/loop_shapes.c`'s countdown maps `out[0:65536]`,
+not `out[0:0]`, and the degrade-to-CPU path only remains under `-maps=bound`.
+
+**How a section is built** (header comment of `DataRegions.h` has the full rule):
+- Each subscript's smallest and largest value over the loop's and inner loops' ranges
+  (`subscriptBounds`, as for the Phase 1.6 overlap checks), on the outermost dimension.
+- **Object** (array with constant extents): clamped to `[0, extent)`, no further conditions.
+- **Pointer** (`p[lo:len]`, a linear `a[lo:len]` for delinearized `a[i*n + j]`, or `m[lo:len][0:M]`
+  for a pointer to rows): mapping copies every element of the section, so both ends must be
+  elements the program surely touches. Only *exact* accesses define them: on every iteration (no
+  `if`, `?:`, `&&`/`||`, `switch` on the way; callees without early exits) with every loop variable
+  stepping ±1 over its whole range (`IVRange::Exact`). Every other access must lie inside, by a
+  constant offset. The ends are reached only if the loops run, and the lowest index must be >= 0:
+  those conditions are the **map guard**, conjoined into `if(target:)` under every policy (false
+  runs the region on the host, where nothing is copied).
+- **Direction:** `to` if never written; `from` only if never read and one exact plain write spans
+  the whole section; otherwise `tofrom`.
+- Reduction and lastprivate scalars get `map(tofrom: s)`, so reductions can now go to the GPU.
+
+**collapse(2)** (`markCollapsible`, GPU pragma only): a perfect two-level nest, both loops
+recognized and SAFE on their own (the outer verdict excludes dependences between outer iterations,
+the inner one those within one), the inner range exact and rectangular with bounds fixed during the
+nest (AffineAccess's symbols), no inner run-time alias check, and the inner variable not
+lastprivate. The CPU pragma doesn't collapse: it can cost the inner loop its vectorization, and the
+model has no term for parallel width. The driver now computes every loop's safety before reporting
+any, since the outer loop's decision needs the inner verdict.
+
+**Cost model:** constant-trip inner loops' operations are multiplied by their trip count, and
+callees are counted at their call sites (memoized, recursion-guarded); `compute_heavy`-style helpers
+are no longer 4 ops. Bytes per iteration and transfer size come from the section sizes when they are
+constant (fixes the descending pricing). Per-iteration units are no longer floored at one: an inner
+loop over `g[i][j]` touches one row per run, not per iteration (that floor briefly flipped
+`dependence.c`'s inner `grid2` loop to CPU_PARALLEL for the wrong reason).
+
+**Fixture changes** (all of the allowed Phase 2 kinds; safety verdicts unchanged):
+- `collapse :` lines and `map guard:` lines added (the generator now pins both).
+- Loops the interlock declined now show their section and go GPU where the model says so
+  (`interlock.c` shifted/delinearized/2-D cases), or a sharper decline reason (`a[i * 8]` passed on,
+  a VLA row, a conditional access, index -4 below the pointer, a callee reaching a global).
+- `dependence.c` `scale_grid` outer loop: SEQUENTIAL → CPU_PARALLEL, from the inner-trip costing
+  (192 ops per row, not 3).
+- `loop_shapes.c` countdown: `out[0:0]`/`in[0:0]` → `[0:65536]`.
+
+**New fixture `tests/maps.c`** + `eval/runtime/maps_main.c`: conditional writes (pointer: no GPU;
+global: `tofrom`), full / strided / shifted writes, a conditional shifted read (declined), a
+countdown, a clamped global part, rows, delinearized, inner dependence / triangle / `j` read after
+(no collapse), one column of each row (`tofrom`), integer reduction, lastprivate, and a callee
+writing a row through `&a[i*m]`. The driver fills every output with random values first and runs
+each symbolic loop with n = 5000, 1 and 0 (guard false).
+
+**Separate-memory runtime check:** `OFFLOAD=1 scripts/check_parallel.sh` rewrites with `-policy
+naive` and builds with `-fopenmp-targets=<host>-unknown-linux-gnu`, run with
+`OMP_TARGET_OFFLOAD=MANDATORY`. LLVM's host plugin gives target regions memory of their own, so a
+short section or a wrong `from` changes the output (confirmed by hand mutations: `from` for
+`tofrom` mismatches; a section one short corrupts the heap). Linux only (`liboffload-22-dev`); CI
+runs it on all five runtime fixtures, and `eval/docker/Dockerfile` runs it on a Mac.
+
+**Bug found on the way:** a loop whose whole body is one call without braces (`for (...) f(...);`)
+never counted the call as unconditional (the parent walk started above its stop node), so every
+callee access was declined. Fixed in `Unconditional`.
+
+**Evidence:**
+- 14 lit tests pass; `check_parallel.sh` passes on all five runtime fixtures (CPU, 10 runs, -O2
+  and -O0) and with `OFFLOAD=1` (47 target regions on the host device, 18 of them in maps.c).
+- Fuzz seeds 1–15 clean.
+- NVPTX device compile (`--offload-device-only -S`) of every fixture and benchmark rewritten with
+  `-policy naive`: about 100 target regions, all compile.
+- `-maps=bound` is identical to `eeb8734` on 22 files under four flag sets, except for where the
+  casts sit in run-time check text (the review fix below changes Phase 1.6's guards too).
+- GPU-eligible loops across fixtures and benchmarks (`-policy naive`): 36 → 122.
+
+**Precision limits, not fixed:**
+- A pointer written or read only under a condition gets no section (common: `if (x[i] > 0) y[i] =`).
+  Declared array sizes (Phase 2.5 item 3) would bound it.
+- Strides other than ±1 are not exact, so `a[2*i]` written with `i += 2` is declined.
+- An inner loop's per-iteration bytes, when its section isn't constant, are charged a whole row.
+- Object sections with symbolic ends carry `?:` clamps; correct, but long.
+
+### 2026-10-16 — Phase 2.1 adversarial review: four wrong sections, fixed
+
+**Decision:** A fresh-context review wrote about 30 adversarial probes and ran them on the host-offload
+device (Docker, `OMP_TARGET_OFFLOAD=MANDATORY`) against sequential builds. It found four bugs, each
+a wrong result or a crash:
+1. **`from` over an Object when the covering write's inner loop runs zero times.** In
+   `for (i < n) for (j < m) g[i] = ...`, the section `g[0:n]` doesn't depend on j, so `m = 0`
+   copied device garbage over `g[0..n)`. The planner only required the loops around an end-defining
+   access to run for *pointer* layouts. Now a write that proves `from` puts the analyzed loop and
+   every loop around it into the map guard (`n >= 1 && m >= 1`), for every layout. A loop with a
+   constant empty range now declines instead of being skipped.
+2. **Unsigned arithmetic in sections and guards.** `asIntPtr` cast the finished expression,
+   `(intptr)(n - k)`, so the subtraction happened in `unsigned` and wrapped for `n < k`: the guard
+   came out true and the section was ~2^32 elements (abort). Now each variable is cast before any
+   arithmetic, `((intptr)n - (intptr)k)`. The same function prints Phase 1.6's overlap checks, so
+   they change text too (fixture lines changed only in cast placement).
+3. **Unsigned clamps on an Object.** `(lo < 0 ? 0 : lo)` and `hi - lo + 1` stayed unsigned: a
+   zero-trip loop over an unsigned `n` mapped all of `G` `from`. A bare variable is now written as
+   itself only when it is a signed integer; otherwise it is cast.
+4. **`_Generic`'s controlling expression counted as evaluated.** `b[i + 1000]` inside it widened
+   `b`'s section past the object (SIGSEGV against a guard page). `Unconditional` now accepts only the
+   selected association of a `_Generic` and the chosen side of `__builtin_choose_expr`.
+
+Also: the `map guard:` report line is now printed only for SAFE loops.
+
+All four are pinned in `tests/maps.c` (`cover_inner`, `unsigned_ptr`, `unsigned_obj`, `generic`), and
+the driver runs them with the failing arguments (`m = 0`, `n < k`, `n = 0`). Dropping `m >= 1` from
+`cover_inner`'s guard by hand gives a mismatch. All 22 runnable review probes now match the sequential
+build.
+
+**Not fixed (noted):**
+- A descending loop with a symbolic bound is still priced with the bound as its trip count. That is
+  the Phase 0 issue; it now reaches the GPU path, where the map guard keeps it correct. The cost
+  guard (`lo >= 256`) is meaningless there. This belongs to the Phase 2.3 calibration work.
+- Guards can be redundant (`lo >= 0 && lo >= -1`), and with unsigned symbols some are constant.
+- Object and Rows sections rely on C's rule that a subscript stays inside its own dimension, as
+  the dependence test does.
+

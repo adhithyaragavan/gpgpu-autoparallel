@@ -774,14 +774,69 @@ LoopSafety SafetyAnalyzer::analyzeLoop(const LoopInfo &LI,
     Safety.Reasons.push_back(R);
   }
   Safety.ScalarClauses = Scalars.clauseText();
-  // Memory a callee reaches through a pointer argument or a global is not in
-  // any map() clause this pass can size.
+  // Memory a callee reaches through a global, or through a pointer whose
+  // accesses were not composed into the loop's, is not in any map() clause
+  // this pass can size.
+  Safety.CalleesMappable =
+      !CalleeUsesGlobals &&
+      (Precise || (!PassesPointer && !CalleeThroughPointer));
   // A lastprivate or reduction scalar needs its own map() on a device.
+  for (const ScalarClause &C : Scalars.Clauses)
+    if (C.K != ScalarClause::Private)
+      Safety.HostScalars.push_back(C.Var);
   Safety.GpuMappable = Dep.GpuMappable && !PassesPointer &&
                        !CalleeUsesGlobals && !CalleeThroughPointer &&
                        !Scalars.needsHost();
 
   return Safety;
+}
+
+void markCollapsible(const std::vector<LoopInfo> &Loops,
+                     const std::vector<LoopAccesses> &Accesses,
+                     std::vector<LoopSafety> &Safety) {
+  for (size_t K = 0; K < Loops.size(); ++K) {
+    const LoopInfo &Outer = Loops[K];
+    LoopSafety &S = Safety[K];
+    if (S.Verdict != SafetyVerdict::Safe || !Outer.PerfectlyNested ||
+        Outer.Children.size() != 1)
+      continue;
+    const LoopInfo &Inner = Loops[Outer.Children.front()];
+    const LoopSafety &IS = Safety[Outer.Children.front()];
+    auto No = [&](const std::string &Why) { S.CollapseNote = "no, " + Why; };
+    if (Outer.Kind == LoopKind::Unrecognized ||
+        Inner.Kind == LoopKind::Unrecognized || !Inner.InductionVar) {
+      No("the inner loop is not a counted loop");
+      continue;
+    }
+    const VarDecl *J = Inner.InductionVar->getCanonicalDecl();
+    if (J == Outer.InductionVar->getCanonicalDecl()) {
+      No("both loops use the same variable");
+      continue;
+    }
+    if (IS.Verdict != SafetyVerdict::Safe) {
+      No("the inner loop is not SAFE on its own");
+      continue;
+    }
+    if (!IS.AliasGuard.empty()) {
+      No("the inner loop needs its own run-time alias check");
+      continue;
+    }
+    auto R = Accesses[K].Ranges.find(J);
+    if (Inner.BoundsDependOnOuterIV || R == Accesses[K].Ranges.end() ||
+        !R->second.Exact || !R->second.Lo->IVTerms.empty() ||
+        !R->second.Hi->IVTerms.empty()) {
+      No("the inner loop's range is not a fixed, exact rectangle");
+      continue;
+    }
+    if (llvm::any_of(S.HostScalars, [&](const VarDecl *V) {
+          return V->getCanonicalDecl() == J;
+        })) {
+      No("'" + J->getNameAsString() + "' is read after the loop");
+      continue;
+    }
+    S.Collapse2 = true;
+    S.CollapseNote = "2 (with '" + J->getNameAsString() + "')";
+  }
 }
 
 void printSafetyReport(llvm::raw_ostream &OS, const LoopSafety &Safety) {
@@ -796,6 +851,8 @@ void printSafetyReport(llvm::raw_ostream &OS, const LoopSafety &Safety) {
     OS << "  alias      : " << N << "\n";
   if (Safety.Verdict == SafetyVerdict::Safe && !Safety.AliasGuard.empty())
     OS << "  alias guard: " << Safety.AliasGuard << "\n";
+  if (!Safety.CollapseNote.empty())
+    OS << "  collapse   : " << Safety.CollapseNote << "\n";
   OS << "\n";
 }
 

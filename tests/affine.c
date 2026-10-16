@@ -26,7 +26,7 @@ void shifts(double *a, const double *b, int n) {
   // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
   // CHECK: alias      : 'a' and 'b' may overlap: checked at run time{{$}}
-  // CHECK: alias guard: ((__INTPTR_TYPE__)a + 8 * ((__INTPTR_TYPE__)(n - 1) + 1) <= (__INTPTR_TYPE__)b + 8 || (__INTPTR_TYPE__)b + (8 * ((__INTPTR_TYPE__)(n) + 1) > 8 * ((__INTPTR_TYPE__)(2*n - 5) + 1) ? 8 * ((__INTPTR_TYPE__)(n) + 1) : 8 * ((__INTPTR_TYPE__)(2*n - 5) + 1)) <= (__INTPTR_TYPE__)a + 16){{$}}
+  // CHECK: alias guard: ((__INTPTR_TYPE__)a + 8 * (((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)b + 8 || (__INTPTR_TYPE__)b + (8 * ((__INTPTR_TYPE__)n + 1) > 8 * ((2 * (__INTPTR_TYPE__)n - 5) + 1) ? 8 * ((__INTPTR_TYPE__)n + 1) : 8 * ((2 * (__INTPTR_TYPE__)n - 5) + 1)) <= (__INTPTR_TYPE__)a + 16){{$}}
   // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
   for (int i = 2; i < n; i++)
     a[i] = b[i + 1] + b[2 * i - 3];
@@ -72,7 +72,7 @@ void folded_constant(double *a, int n) {
 // W m[i][j] : [i][j]  (static 2D array: one subscript per dimension)
 double grid[64][64];
 void static_2d(void) {
-  // CHECK: affine.c:[[#LOOP3:@LINE+10]]:3{{$}}
+  // CHECK: affine.c:[[#LOOP3:@LINE+11]]:3{{$}}
   // CHECK: kind       : CONSTANT_BOUND{{$}}
   // CHECK: trip count : 64{{$}}
   // CHECK: nest       : depth 0, 1 child loop(s), perfect nest{{$}}
@@ -81,6 +81,7 @@ void static_2d(void) {
   // CHECK-NEXT: W grid[i][j] : [i][j]{{$}}
   // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
+  // CHECK: collapse   : 2 (with 'j'){{$}}
   // CHECK: profitability : SEQUENTIAL{{$}}
   for (int i = 0; i < 64; i++)
     // CHECK: affine.c:[[#LOOP4:@LINE+10]]:5{{$}}
@@ -99,7 +100,7 @@ void static_2d(void) {
 
 // W m[i][j] : [i][j]  (pointer to rows of 4)
 void row_pointer(double (*m)[4], int n) {
-  // CHECK: affine.c:[[#LOOP5:@LINE+10]]:3{{$}}
+  // CHECK: affine.c:[[#LOOP5:@LINE+11]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 1 child loop(s), perfect nest{{$}}
@@ -108,6 +109,7 @@ void row_pointer(double (*m)[4], int n) {
   // CHECK-NEXT: W m[i][j] : [i][j]{{$}}
   // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
+  // CHECK: collapse   : 2 (with 'j'){{$}}
   // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
   for (int i = 0; i < n; i++)
     // CHECK: affine.c:[[#LOOP6:@LINE+10]]:5{{$}}
@@ -126,7 +128,7 @@ void row_pointer(double (*m)[4], int n) {
 
 // W m[i][j] : [i][j]  (VLA parameter)
 void vla_2d(int n, int k, double m[n][k]) {
-  // CHECK: affine.c:[[#LOOP7:@LINE+11]]:3{{$}}
+  // CHECK: affine.c:[[#LOOP7:@LINE+12]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 1 child loop(s), perfect nest{{$}}
@@ -135,8 +137,9 @@ void vla_2d(int n, int k, double m[n][k]) {
   // CHECK-NEXT: W m[i][j] : [i][j]{{$}}
   // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
+  // CHECK: collapse   : 2 (with 'j'){{$}}
   // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
-  // CHECK: - GPU offload declined: map() regions are only sized correctly when every access is exactly base[i] (range-based maps are Phase 2.1) -> CPU_PARALLEL, which needs no map{{$}}
+  // CHECK: - GPU offload declined: no map() section: 'm' points to arrays of non-constant size -> CPU_PARALLEL, which needs no map{{$}}
   for (int i = 0; i < n; i++)
     // CHECK: affine.c:[[#LOOP8:@LINE+10]]:5{{$}}
     // CHECK: kind       : VARIABLE_BOUND{{$}}
@@ -208,7 +211,7 @@ void pass_row(double m[8][8]) {
 // W a[i * n + j] : [i][j] delinearized, dims [?][n]
 // (j runs exactly 0..n-1, so 0 <= j < n)
 void linear_2d(double *a, int n) {
-  // CHECK: affine.c:[[#LOOP12:@LINE+10]]:3{{$}}
+  // CHECK: affine.c:[[#LOOP12:@LINE+11]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 1 child loop(s), perfect nest{{$}}
@@ -217,6 +220,7 @@ void linear_2d(double *a, int n) {
   // CHECK-NEXT: W a[i * n + j] : [i][j] delinearized, dims [?][n]{{$}}
   // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
+  // CHECK: collapse   : 2 (with 'j'){{$}}
   // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
   for (int i = 0; i < n; i++)
     // CHECK: affine.c:[[#LOOP13:@LINE+10]]:5{{$}}
@@ -235,7 +239,7 @@ void linear_2d(double *a, int n) {
 
 // Column-major: W a[j * n + i] : [j][i] delinearized, dims [?][n]
 void column_major(double *a, int n) {
-  // CHECK: affine.c:[[#LOOP14:@LINE+10]]:3{{$}}
+  // CHECK: affine.c:[[#LOOP14:@LINE+11]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 1 child loop(s), perfect nest{{$}}
@@ -244,6 +248,7 @@ void column_major(double *a, int n) {
   // CHECK-NEXT: W a[j * n + i] : [j][i] delinearized, dims [?][n]{{$}}
   // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
+  // CHECK: collapse   : 2 (with 'i'){{$}}
   // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
   for (int j = 0; j < n; j++)
     // CHECK: affine.c:[[#LOOP15:@LINE+10]]:5{{$}}
@@ -293,7 +298,7 @@ void wrong_bound(double *a, int n, int m) {
 // NOT delinearizable: j starts at 1.
 // W a[i * n + j] : non-affine
 void wrong_start(double *a, int n) {
-  // CHECK: affine.c:[[#LOOP18:@LINE+10]]:3{{$}}
+  // CHECK: affine.c:[[#LOOP18:@LINE+11]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 1 child loop(s), perfect nest{{$}}
@@ -302,6 +307,7 @@ void wrong_start(double *a, int n) {
   // CHECK-NEXT: W a[i * n + j] : [i][j] delinearized, dims [?][n]{{$}}
   // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
+  // CHECK: collapse   : 2 (with 'j'){{$}}
   // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
   for (int i = 0; i < n; i++)
     // CHECK: affine.c:[[#LOOP19:@LINE+10]]:5{{$}}
@@ -1030,7 +1036,7 @@ void r6_body_pointer(int *a, int n) {
 
 // [R6'] Row pointer into a 1-D array. Outer loop: W row[j] : [8*i + j] of 'a'.
 void r6_row_pointer(double *a, int n) {
-  // CHECK: affine.c:[[#LOOP58:@LINE+11]]:3{{$}}
+  // CHECK: affine.c:[[#LOOP58:@LINE+12]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 1 child loop(s){{$}}
@@ -1041,6 +1047,7 @@ void r6_row_pointer(double *a, int n) {
   // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: deps       : 2 pair(s), 2 independent (2 Banerjee){{$}}
   // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
+  // CHECK: - GPU offload declined: no map() section: the address of a[i * 8] is passed on -> CPU_PARALLEL, which needs no map{{$}}
   for (int i = 0; i < n; i++) {
     double *row = &a[i * 8];
     // CHECK: affine.c:[[#LOOP59:@LINE+10]]:5{{$}}
