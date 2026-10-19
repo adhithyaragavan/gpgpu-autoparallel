@@ -73,6 +73,7 @@ struct SummaryReason {
   const clang::FunctionDecl *Where = nullptr;
   std::string Text;
   bool Unsafe = false; ///< else UNKNOWN
+  RejectCategory Cat = RejectCategory::Other;
 };
 
 struct FunctionSummary {
@@ -87,7 +88,7 @@ struct FunctionSummary {
 
 /// What composing a loop's calls found, besides the accesses it appended.
 struct CallEffects {
-  std::vector<std::string> UnsafeReasons, UnknownReasons;
+  std::vector<Reason> UnsafeReasons, UnknownReasons;
   /// Loop callees whose summary is incomplete.
   std::vector<const clang::FunctionDecl *> Incomplete;
 };

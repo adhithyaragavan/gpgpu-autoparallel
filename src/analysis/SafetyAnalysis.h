@@ -111,7 +111,7 @@ struct FunctionEffects {
   /// One entry per flagged write site, in source order, e.g. "writes through
   /// pointer parameter 'out'" or "writes global 'call_count'". Empty when
   /// none of the flags above are set.
-  std::vector<std::string> Reasons;
+  std::vector<Reason> Reasons;
 
   bool hasHazard() const {
     return WritesGlobal || WritesThroughPointerParam || HasUnknownWrite;
@@ -121,8 +121,10 @@ struct FunctionEffects {
 struct LoopSafety {
   SafetyVerdict Verdict = SafetyVerdict::Safe;
 
-  /// Populated whenever Verdict != Safe; empty when Verdict == Safe.
-  std::vector<std::string> Reasons;
+  /// Populated whenever Verdict != Safe; empty when Verdict == Safe. Each
+  /// has its category and, where one is proven to help, a hint
+  /// (Rejection.h).
+  std::vector<Reason> Reasons;
 
   /// OpenMP data-sharing clauses for the scalars the loop writes, e.g.
   /// " private(j) reduction(+: sum)" (Phase 1.4); empty if none.

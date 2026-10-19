@@ -68,6 +68,7 @@
 #define P05_ANALYSIS_AFFINEACCESS_H
 
 #include "analysis/LoopInfo.h"
+#include "analysis/Rejection.h"
 
 #include "clang/AST/ASTContext.h"
 #include "clang/AST/Decl.h"
@@ -155,6 +156,13 @@ struct ArrayAccess {
   /// Base is a local pointer set outside the loop to something this analysis
   /// could not resolve: it may point into any other array.
   bool BaseMayAlias = false;
+
+  /// Phase 2.5: a subscript is non-affine because it loads a value, and
+  /// whether that value can change between iterations (`a[idx[i]]`, or
+  /// `k = idx[i]; a[k]`: an indirect subscript) or not (`a[i * m->stride]`).
+  /// None when not known: no load, or an access composed from a callee.
+  enum class SubscriptLoad { None, Invariant, Varying };
+  SubscriptLoad Load = SubscriptLoad::None;
 
   /// Phase 2.1: for an access composed from a callee's summary (E is then
   /// the call in the analyzed code), the expressions it came from, deepest
@@ -262,6 +270,13 @@ private:
 };
 
 void printAccessReport(llvm::raw_ostream &OS, const LoopAccesses &A);
+
+/// Phase 2.5: the rejection category of a non-affine access (Rejection.h),
+/// from the reason this file wrote for it: an unnamed base, a subscript that
+/// reads a value that changes with the loop (also through a substituted
+/// local, `k = idx[i]`; for an access composed from a callee, any load), a
+/// modified induction variable, or any other non-affine subscript.
+RejectCategory nonAffineCategory(const ArrayAccess &X);
 
 } // namespace p05
 

@@ -83,6 +83,15 @@ public:
   /// The function whose body contains S.
   const clang::FunctionDecl *enclosingFunction(const clang::Stmt *S);
 
+  /// Phase 2.5: for a pair proof() leaves Unproven, a hint that makes it
+  /// Restrict: the qualifier on A or B, whichever is a pointer parameter of
+  /// F (proofAt reaches the restrict test whenever neither base is Other,
+  /// and Distinct and Types don't look at the pointer's own qualifiers).
+  /// Nullopt when neither can take it, or its declarator is in a macro.
+  std::optional<Hint> restrictHint(const clang::FunctionDecl *F,
+                                   const clang::ValueDecl *A,
+                                   const clang::ValueDecl *B);
+
 private:
   enum class Role { PtrParam, Object, Other };
   Role role(const clang::FunctionDecl *F, const clang::ValueDecl *V);

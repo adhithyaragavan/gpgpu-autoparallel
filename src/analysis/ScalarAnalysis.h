@@ -41,6 +41,7 @@
 #define P05_ANALYSIS_SCALARANALYSIS_H
 
 #include "analysis/LoopInfo.h"
+#include "analysis/Rejection.h"
 
 #include "clang/AST/ASTContext.h"
 #include "clang/AST/Decl.h"
@@ -70,9 +71,9 @@ struct LoopScalars {
   std::vector<ScalarClause> Clauses;
   /// A scalar that carries a value across iterations (or can't be copied
   /// per thread): the loop is UNSAFE.
-  std::vector<std::string> UnsafeReasons;
+  std::vector<Reason> UnsafeReasons;
   /// Couldn't be decided: the loop is UNKNOWN.
-  std::vector<std::string> UnknownReasons;
+  std::vector<Reason> UnknownReasons;
 
   /// The OpenMP clauses, e.g. " private(j, t) reduction(+: sum)"; empty when
   /// there are none. Leading space included, ready to append to a pragma.

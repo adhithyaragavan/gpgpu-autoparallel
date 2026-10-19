@@ -60,4 +60,9 @@ jobs:
           scripts/check_parallel.sh tests/alias.c eval/runtime/alias_main.c
 
       - name: Address-logging fuzzer (no false SAFE; parallel output identical)
-        run: CC="/usr/lib/llvm-$LLVM_VERSION/bin/clang" python3 eval/fuzz/fuzz.py --seed 1 --files 15
+        run: CC="/usr/lib/llvm-$LLVM_VERSION/bin/clang" python3 eval/fuzz/fuzz.py --seed 1 --files 15 --keep build/fuzz
+
+      - name: Every fixing hint makes its loop SAFE (fixtures, benchmarks, fuzzer programs)
+        run: |
+          python3 scripts/check_hints.py tests/*.c benchmarks/*.c build/fuzz/seed*/prog.c --
+          python3 scripts/check_hints.py --flags=-ipa=coarse tests/*.c benchmarks/*.c --

@@ -1,0 +1,40 @@
+# Phase 2.5 item 1: hints are claims, so check them (tests/hints.c pins the
+# report lines themselves).
+#
+# 1. Every loop the report calls fixable becomes SAFE once its hints are
+#    applied (scripts/check_hints.py edits a copy and re-runs the tool).
+RUN: python3 %S/../scripts/check_hints.py --tool %p05 %S/hints.c -- %cflags | FileCheck --check-prefix=VERIFY %s
+VERIFY-NOT: FAIL
+VERIFY: hints.c: 45 loop(s), 34 rejected, 11 fixable by hints, 11 verified fixed, 0 unverified
+
+#    Under C89 `restrict` is not a keyword: the hint inserts `__restrict`.
+RUN: python3 %S/../scripts/check_hints.py --tool %p05 %S/Inputs/hints_c89.c -- -std=c89 %cflags | FileCheck --check-prefix=C89 %s
+C89-NOT: FAIL
+C89: hints_c89.c: 2 loop(s), 1 rejected, 1 fixable by hints, 1 verified fixed, 0 unverified
+RUN: rm -f %t.c89.jsonl
+RUN: %p05 -reasons=%t.c89.jsonl %S/Inputs/hints_c89.c -- -std=c89 %cflags > /dev/null
+RUN: FileCheck --check-prefix=C89JSON %s < %t.c89.jsonl
+C89JSON: "insert":"__restrict "
+
+#    A #line directive doesn't hide the loop (records name the real file).
+RUN: python3 %S/../scripts/check_hints.py --tool %p05 %S/Inputs/hints_line.c -- %cflags | FileCheck --check-prefix=LINE %s
+LINE-NOT: FAIL
+LINE: hints_line.c: 2 loop(s), 1 rejected, 1 fixable by hints, 1 verified fixed, 0 unverified
+
+# 2. -hints=off keeps the categories and drops every hint line.
+RUN: %p05 -hints=off %S/hints.c -- %cflags | FileCheck --check-prefix=OFF %s
+OFF: rejected   : pointer-overlap
+OFF-NOT: {{^  hints? +:}}
+
+# 3. The JSON record: no hint where none can be proven (declarators from a
+#    macro; a reassigned parameter), and the machine-readable edits where
+#    one is (keys print in sorted order, so "hint" would sit between
+#    "category" and "text").
+RUN: rm -f %t.jsonl
+RUN: %p05 -reasons=%t.jsonl %S/hints.c -- %cflags > /dev/null
+RUN: FileCheck --check-prefix=JSON %s < %t.jsonl
+JSON: "fixable":true,"function":"r_pointer",{{.*}}"hint":{"edits":[{"file":"{{.*}}hints.c","insert":"restrict ","offset":{{[0-9]+}}}],"fixes":true,
+JSON: "fixable":false,"function":"r_macro",{{.*}}"reasons":[{"category":"pointer-overlap","text":"{{[^"]*}}"}]
+JSON: "fixable":false,"function":"r_reassigned",{{.*}}"reasons":[{"category":"pointer-overlap","text":"{{[^"]*}}"}]
+JSON: "fixable":true,"function":"r_two_fixes",{{.*}}"edits":[{"flag":"-fp-reductions"}],"fixes":true
+JSON: "fixable":false,"function":"r_opaque",{{.*}}"hint":{"edits":[],"fixes":false,

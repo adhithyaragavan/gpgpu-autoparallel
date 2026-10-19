@@ -28,6 +28,7 @@ add_executable(p05tool
   src/analysis/SourceText.cpp
   src/analysis/DataRegions.cpp
   src/analysis/Hoisting.cpp
+  src/analysis/Rejection.cpp
   src/codegen/OmpRewriter.cpp
 )
 

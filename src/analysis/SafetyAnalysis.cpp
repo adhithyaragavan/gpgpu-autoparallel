@@ -124,15 +124,15 @@ public:
   // and inline asm write memory without an assignment this pass sees.
   bool VisitCallExpr(CallExpr *CE) {
     if (!CE->getDirectCallee())
-      unknown("calls through a function pointer");
+      unknown("calls through a function pointer", RejectCategory::IndirectCall);
     return true;
   }
   bool VisitAtomicExpr(AtomicExpr *) {
-    unknown("uses an atomic builtin");
+    unknown("uses an atomic builtin", RejectCategory::AtomicOrAsm);
     return true;
   }
   bool VisitAsmStmt(AsmStmt *) {
-    unknown("contains inline asm");
+    unknown("contains inline asm", RejectCategory::AtomicOrAsm);
     return true;
   }
   bool VisitDeclRefExpr(DeclRefExpr *DRE) {
@@ -146,11 +146,12 @@ public:
   }
 
 private:
-  void unknown(const std::string &What) {
+  void unknown(const std::string &What, RejectCategory Cat) {
     Effects.HasUnknownWrite = true;
     Effects.AccessesThroughPointer = true;
-    if (!llvm::is_contained(Effects.Reasons, What))
-      Effects.Reasons.push_back(What);
+    if (llvm::none_of(Effects.Reasons,
+                      [&](const Reason &R) { return R.Text == What; }))
+      Effects.Reasons.push_back({Cat, What});
   }
   void recordWrite(const Expr *Target) {
     bool CrossedIndirection = false;
@@ -158,7 +159,8 @@ private:
     if (!Root) {
       Effects.HasUnknownWrite = true;
       Effects.Reasons.push_back(
-          "writes to a target this analysis cannot resolve to a variable");
+          {RejectCategory::CalleeSideEffect,
+           "writes to a target this analysis cannot resolve to a variable"});
       return;
     }
 
@@ -170,8 +172,9 @@ private:
     if (const auto *PVD = dyn_cast<ParmVarDecl>(Root)) {
       if (CrossedIndirection) {
         Effects.WritesThroughPointerParam = true;
-        Effects.Reasons.push_back("writes through pointer parameter '" +
-                                   PVD->getNameAsString() + "'");
+        Effects.Reasons.push_back({RejectCategory::CalleeSideEffect,
+                                   "writes through pointer parameter '" +
+                                       PVD->getNameAsString() + "'"});
       }
       // `p = other;` with no indirection: rebinds this function's own copy
       // of the pointer, invisible to the caller. Not a side effect.
@@ -192,9 +195,10 @@ private:
             !VD->getType()->getPointeeOrArrayElementType()->isPointerType() &&
             !VD->getType()->getPointeeOrArrayElementType()->isRecordType())) {
         Effects.HasUnknownWrite = true;
-        Effects.Reasons.push_back("writes through local '" +
-                                   VD->getNameAsString() +
-                                   "', which may point to the caller's memory");
+        Effects.Reasons.push_back(
+            {RejectCategory::CalleeSideEffect,
+             "writes through local '" + VD->getNameAsString() +
+                 "', which may point to the caller's memory"});
         return;
       }
       if (VD->hasGlobalStorage()) {
@@ -203,8 +207,9 @@ private:
         // real hazard for the loop that (transitively) calls this function —
         // not just "globals" in the narrow syntactic sense.
         Effects.WritesGlobal = true;
-        Effects.Reasons.push_back("writes global '" + VD->getNameAsString() +
-                                   "'");
+        Effects.Reasons.push_back({RejectCategory::CalleeSideEffect,
+                                   "writes global '" + VD->getNameAsString() +
+                                       "'"});
       }
       // An ordinary local: mutating it is invisible outside this call, so it
       // is not a side effect for this analysis's purposes.
@@ -259,7 +264,8 @@ private:
     bool CrossedIndirection = false;
     const ValueDecl *Root = unwrapWriteTarget(Target, CrossedIndirection);
     if (!Root) {
-      flag("writes to a target this analysis cannot resolve to a variable",
+      flag(RejectCategory::Other,
+           "writes to a target this analysis cannot resolve to a variable",
            SafetyVerdict::Unknown);
       return;
     }
@@ -270,7 +276,8 @@ private:
       return;
 
     if (refersToVar(Target, InductionVar)) {
-      flag("loop body reassigns the induction variable '" +
+      flag(RejectCategory::LoopShape,
+           "loop body reassigns the induction variable '" +
            InductionVar->getNameAsString() + "'");
       return;
     }
@@ -284,16 +291,18 @@ private:
       return;
     if (const auto *VD = dyn_cast<VarDecl>(Root)) {
       if (!LocalVars.count(VD)) {
-        flag("loop-carried dependence: writes to part of '" +
+        flag(RejectCategory::ScalarDependence,
+             "loop-carried dependence: writes to part of '" +
              VD->getNameAsString() +
              "', which is not declared inside the loop body");
       }
     }
   }
 
-  void flag(std::string Reason, SafetyVerdict Severity = SafetyVerdict::Unsafe) {
+  void flag(RejectCategory Cat, std::string Text,
+            SafetyVerdict Severity = SafetyVerdict::Unsafe) {
     escalate(Safety.Verdict, Severity);
-    Safety.Reasons.push_back(std::move(Reason));
+    Safety.Reasons.push_back({Cat, std::move(Text)});
   }
 
   const VarDecl *InductionVar;
@@ -398,11 +407,12 @@ class BodyHazardVisitor : public RecursiveASTVisitor<BodyHazardVisitor> {
   using Base = RecursiveASTVisitor<BodyHazardVisitor>;
 
 public:
-  std::vector<std::string> Found;
+  std::vector<Reason> Found;
   unsigned BreakTargets = 0;
-  void note(const std::string &S) {
-    if (!llvm::is_contained(Found, S))
-      Found.push_back(S);
+  void note(const std::string &S,
+            RejectCategory Cat = RejectCategory::EarlyExit) {
+    if (llvm::none_of(Found, [&](const Reason &R) { return R.Text == S; }))
+      Found.push_back({Cat, S});
   }
   bool TraverseForStmt(ForStmt *S, DataRecursionQueue * = nullptr) {
     ++BreakTargets;
@@ -446,14 +456,27 @@ public:
     return true;
   }
   bool VisitAtomicExpr(AtomicExpr *) {
-    note("loop body uses an atomic builtin");
+    note("loop body uses an atomic builtin", RejectCategory::AtomicOrAsm);
     return true;
   }
   bool VisitAsmStmt(AsmStmt *) {
-    note("loop body contains inline asm");
+    note("loop body contains inline asm", RejectCategory::AtomicOrAsm);
     return true;
   }
 };
+
+/// Reason for a callee without a visible body. Making the body visible only
+/// lets the analysis see what the callee does, so the hint enables analysis
+/// rather than fixing the loop.
+Reason opaque(const FunctionDecl *F, std::string Text) {
+  Reason R(RejectCategory::OpaqueCallee, std::move(Text));
+  R.Fix = Hint{"make the definition of '" + F->getNameAsString() +
+                   "' visible in this translation unit so its effects can be "
+                   "analyzed",
+               false,
+               {}};
+  return R;
+}
 
 /// Every call expression in a statement (inner loops included).
 class CallCollector : public RecursiveASTVisitor<CallCollector> {
@@ -502,23 +525,26 @@ LoopSafety SafetyAnalyzer::analyzeLoop(const LoopInfo &LI,
   // explicitly instead of producing a verdict built on facts we don't have.
   if (LI.Kind == LoopKind::Unrecognized) {
     Safety.Verdict = SafetyVerdict::Unknown;
-    Safety.Reasons.push_back("loop shape not recognized (" +
-                              LI.UnrecognizedReason +
-                              "); safety not evaluated");
+    Safety.Reasons.push_back({RejectCategory::LoopShape,
+                              "loop shape not recognized (" +
+                                  LI.UnrecognizedReason +
+                                  "); safety not evaluated"});
     return Safety;
   }
 
   if (LI.HasIndirectCall) {
     escalate(Safety.Verdict, SafetyVerdict::Unknown);
     Safety.Reasons.push_back(
-        "loop body contains an indirect call that cannot be resolved");
+        {RejectCategory::IndirectCall,
+         "loop body contains an indirect call that cannot be resolved"});
   }
 
   for (const FunctionDecl *Callee : LI.Callees) {
     if (!Callee->hasBody()) {
       escalate(Safety.Verdict, SafetyVerdict::Unknown);
-      Safety.Reasons.push_back("'" + Callee->getNameAsString() +
-                                "' has no visible body in this TU");
+      Safety.Reasons.push_back(opaque(Callee, "'" + Callee->getNameAsString() +
+                                                  "' has no visible body in "
+                                                  "this TU"));
       continue;
     }
 
@@ -528,23 +554,26 @@ LoopSafety SafetyAnalyzer::analyzeLoop(const LoopInfo &LI,
         escalate(Safety.Verdict, SafetyVerdict::Unsafe);
       if (Effects.HasUnknownWrite)
         escalate(Safety.Verdict, SafetyVerdict::Unknown);
-      for (const std::string &Reason : Effects.Reasons)
-        Safety.Reasons.push_back("'" + Callee->getNameAsString() + "' " +
-                                  Reason);
+      for (const Reason &R : Effects.Reasons)
+        Safety.Reasons.push_back(
+            {R.Cat, "'" + Callee->getNameAsString() + "' " + R.Text});
     }
 
     CallChainSummary Summary = Resolver.getReachable(Callee);
     if (Summary.HasRecursion) {
       escalate(Safety.Verdict, SafetyVerdict::Unknown);
-      Safety.Reasons.push_back("'" + Callee->getNameAsString() +
-                                "' recurses; call chain cannot be bounded");
+      Safety.Reasons.push_back({RejectCategory::Recursion,
+                                "'" + Callee->getNameAsString() +
+                                    "' recurses; call chain cannot be "
+                                    "bounded"});
     }
     for (const ResolvedCallee &RC : Summary.Reachable) {
       if (!RC.HasVisibleBody) {
         escalate(Safety.Verdict, SafetyVerdict::Unknown);
-        Safety.Reasons.push_back(
-            "'" + Callee->getNameAsString() + "' reaches '" +
-            RC.Callee->getNameAsString() + "', which has no visible body");
+        Safety.Reasons.push_back(opaque(
+            RC.Callee, "'" + Callee->getNameAsString() + "' reaches '" +
+                           RC.Callee->getNameAsString() +
+                           "', which has no visible body"));
         continue;
       }
       if (Precise)
@@ -554,20 +583,20 @@ LoopSafety SafetyAnalyzer::analyzeLoop(const LoopInfo &LI,
         escalate(Safety.Verdict, SafetyVerdict::Unsafe);
       if (ReachEffects.HasUnknownWrite)
         escalate(Safety.Verdict, SafetyVerdict::Unknown);
-      for (const std::string &Reason : ReachEffects.Reasons)
-        Safety.Reasons.push_back("'" + Callee->getNameAsString() +
-                                  "' transitively reaches '" +
-                                  RC.Callee->getNameAsString() + "', which " +
-                                  Reason);
+      for (const Reason &R : ReachEffects.Reasons)
+        Safety.Reasons.push_back({R.Cat, "'" + Callee->getNameAsString() +
+                                             "' transitively reaches '" +
+                                             RC.Callee->getNameAsString() +
+                                             "', which " + R.Text});
     }
   }
 
   if (Precise) {
-    for (const std::string &R : Calls->UnsafeReasons) {
+    for (const Reason &R : Calls->UnsafeReasons) {
       escalate(Safety.Verdict, SafetyVerdict::Unsafe);
       Safety.Reasons.push_back(R);
     }
-    for (const std::string &R : Calls->UnknownReasons) {
+    for (const Reason &R : Calls->UnknownReasons) {
       escalate(Safety.Verdict, SafetyVerdict::Unknown);
       Safety.Reasons.push_back(R);
     }
@@ -577,8 +606,9 @@ LoopSafety SafetyAnalyzer::analyzeLoop(const LoopInfo &LI,
       escalate(Safety.Verdict, SafetyVerdict::Unknown);
       const CallChainSummary CS = Resolver.getReachable(F);
       if (!CS.HasOpaqueCallee && !CS.HasRecursion)
-        Safety.Reasons.push_back("'" + F->getNameAsString() +
-                                 "' could not be fully summarized");
+        Safety.Reasons.push_back({RejectCategory::OpaqueCallee,
+                                  "'" + F->getNameAsString() +
+                                      "' could not be fully summarized"});
     }
   }
 
@@ -623,9 +653,11 @@ LoopSafety SafetyAnalyzer::analyzeLoop(const LoopInfo &LI,
                                 : WrittenBases.count(G) || WritesMayAlias;
         if (Hazard) {
           escalate(Safety.Verdict, SafetyVerdict::Unknown);
-          Safety.Reasons.push_back("'" + F->getNameAsString() +
-                                   "' uses global '" + G->getNameAsString() +
-                                   "', which the loop writes");
+          Safety.Reasons.push_back({RejectCategory::CalleeSideEffect,
+                                    "'" + F->getNameAsString() +
+                                        "' uses global '" +
+                                        G->getNameAsString() +
+                                        "', which the loop writes"});
         }
       }
     });
@@ -661,12 +693,13 @@ LoopSafety SafetyAnalyzer::analyzeLoop(const LoopInfo &LI,
       if (Hazard) {
         escalate(Safety.Verdict, SafetyVerdict::Unknown);
         Safety.Reasons.push_back(
-            "'" + F->getNameAsString() + "' accesses memory through an "
-            "argument" +
-            (Named ? " into '" + Root->getNameAsString() + "'"
-                   : std::string(" that may point anywhere")) +
-            ", and the loop writes " +
-            (Named ? std::string("it") : std::string("memory")));
+            {RejectCategory::CalleeSideEffect,
+             "'" + F->getNameAsString() + "' accesses memory through an "
+             "argument" +
+                 (Named ? " into '" + Root->getNameAsString() + "'"
+                        : std::string(" that may point anywhere")) +
+                 ", and the loop writes " +
+                 (Named ? std::string("it") : std::string("memory"))});
       }
     }
   }
@@ -674,7 +707,7 @@ LoopSafety SafetyAnalyzer::analyzeLoop(const LoopInfo &LI,
   // Early exits and invisible memory effects in the body itself.
   BodyHazardVisitor BH;
   BH.TraverseStmt(const_cast<Stmt *>(LI.Loop->getBody()));
-  for (const std::string &R : BH.Found) {
+  for (const Reason &R : BH.Found) {
     escalate(Safety.Verdict, SafetyVerdict::Unknown);
     Safety.Reasons.push_back(R);
   }
@@ -733,7 +766,7 @@ LoopSafety SafetyAnalyzer::analyzeLoop(const LoopInfo &LI,
     escalate(Safety.Verdict, SafetyVerdict::Unsafe);
   else if (Dep.Outcome == DepOutcome::Unknown)
     escalate(Safety.Verdict, SafetyVerdict::Unknown);
-  for (std::string &R : Dep.Reasons)
+  for (Reason &R : Dep.Reasons)
     Safety.Reasons.push_back(std::move(R));
   Safety.DependenceSummary = dependenceSummary(Dep);
 
@@ -756,20 +789,23 @@ LoopSafety SafetyAnalyzer::analyzeLoop(const LoopInfo &LI,
       continue;
     }
     escalate(Safety.Verdict, SafetyVerdict::Unknown);
-    Safety.Reasons.push_back(Pair + " may overlap (not restrict, and not "
-                             "every call is known to pass disjoint "
-                             "objects), and no run-time check is possible: " +
-                             Why);
+    Reason R(RejectCategory::PointerOverlap,
+             Pair + " may overlap (not restrict, and not every call is known "
+                    "to pass disjoint objects), and no run-time check is "
+                    "possible: " +
+                 Why);
+    R.Fix = Alias->restrictHint(Fn, P.A, P.B);
+    Safety.Reasons.push_back(std::move(R));
   }
   for (const std::string &C : Checks)
     Safety.AliasGuard += (Safety.AliasGuard.empty() ? "" : " && ") + C;
 
   // Scalars the loop writes by name (ScalarAnalysis.h).
-  for (const std::string &R : Scalars.UnsafeReasons) {
+  for (const Reason &R : Scalars.UnsafeReasons) {
     escalate(Safety.Verdict, SafetyVerdict::Unsafe);
     Safety.Reasons.push_back(R);
   }
-  for (const std::string &R : Scalars.UnknownReasons) {
+  for (const Reason &R : Scalars.UnknownReasons) {
     escalate(Safety.Verdict, SafetyVerdict::Unknown);
     Safety.Reasons.push_back(R);
   }
@@ -841,8 +877,9 @@ void markCollapsible(const std::vector<LoopInfo> &Loops,
 
 void printSafetyReport(llvm::raw_ostream &OS, const LoopSafety &Safety) {
   OS << "  safety     : " << toString(Safety.Verdict) << "\n";
-  for (const std::string &Reason : Safety.Reasons)
-    OS << "    - " << Reason << "\n";
+  for (const Reason &R : Safety.Reasons)
+    OS << "    - " << R.Text << "\n";
+  printRejection(OS, Safety.Reasons);
   if (!Safety.DependenceSummary.empty())
     OS << "  deps       : " << Safety.DependenceSummary << "\n";
   if (Safety.Verdict == SafetyVerdict::Safe && !Safety.ScalarClauses.empty())

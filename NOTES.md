@@ -2866,3 +2866,115 @@ gated policy.
     calls each at 1–3 steps.
 - **Not fixed:** one t still stands for every loop of unknown trip count (a pricing
   approximation; no failing shape found).
+
+### 2026-10-19 — Phase 2.5 item 1: rejection taxonomy and verified hints
+
+**Decision:** Every reason a rejected loop records now carries a fixed category
+(`src/analysis/Rejection.h`, 18 categories). Where the analysis can guarantee that a source
+change (or a flag) removes the reason, the reason also carries a hint with machine-readable
+edits. The report gains `rejected :` and `hint :` lines under the existing reason lines. Reason
+texts, their order and every verdict are byte-identical to before: a full-report diff over all
+fixtures and benchmarks, under the default, `-ipa=coarse`, `-alias=assume` and
+`-fp-reductions`, shows only the added lines.
+
+**Categories are set where a reason is produced, not parsed from its text.** One exception: a
+non-affine access's category comes from the reason AffineAccess wrote for it
+(`nonAffineCategory`, next to the code that writes those strings). An unnamed base is
+`unknown-base`. `indirect-subscript` means a subscript built from a loaded value that can change
+between iterations (the load names an induction variable or a variable declared in the loop).
+`AffineBuilder` records this as `ArrayAccess::Load`. It covers `a[idx[i]]`,
+`k = idx[i]; a[k]` and `a[idx[i] & 7]`, but not `a[i * m->stride]`, which is an invariant load
+and so `non-affine-subscript`. Two cases fall back to approximations:
+- An access composed from a callee keeps only its reason text, so any "subscript reads memory"
+  in it counts as indirect.
+- A local assigned an index as a statement inside the loop (not as its initializer) counts as
+  `non-affine-subscript`. The tool reports "k is modified inside the loop", not the load, so
+  this undercounts indirect subscripts.
+
+**Only two kinds of fixing hint, because only these are guaranteed:**
+- `restrict` on a pointer parameter, for an alias pair that is Unproven with no run-time check.
+  `AliasAnalyzer::proofAt` checks restrict only after Distinct and Types. Those look at the
+  pointee and at objects, never at the pointer's own qualifiers. So once neither base is `Other`
+  (reassigned or escaped), restrict on either one turns the pair into a Restrict proof.
+  `restrictHint` picks the first base of the pair that is a pointer parameter. The edit goes
+  in one of three places:
+  - after the outermost `*` (`double *restrict b`, `long *restrict const b`,
+    `long *restrict (b)`);
+  - after `[` for array syntax (`b[restrict n]`);
+  - before the name for a typedef'd pointer (`lp restrict b`).
+
+  Under C89 it inserts `__restrict`. There is no hint for a declarator from a macro, an array
+  typedef, or a typedef'd pointer whose name is in parentheses.
+
+  The hint's wording states the real promise: "if no call lets what 'b' points to overlap
+  anything else f accesses". Restrict holds for the whole function, so it also settles f's
+  other pairs and drops their run-time checks.
+- `-fp-reductions` for a refused floating-point reduction. That check is the only one the flag
+  changes.
+
+**One "enables analysis" hint:** for a callee with no visible body, "make the definition
+visible". This is marked `[enables analysis]`, not `[fixes]`, because what the body does is
+unknown. `tests/hints.c` shows the twin with a pure body becoming SAFE, but that is an example,
+not a guarantee.
+
+**No hint for real hazards:** carried scalars, proven array dependences, a scalar read after the
+loop. Considered and rejected: "initialize `t` inside the loop" for a scalar read before it is
+written. When liveness says it is read first, the value really is carried (or read after the
+loop), so that edit would change the program's meaning.
+
+**Verification:** `scripts/check_hints.py` runs the tool with `-reasons`. For every loop whose
+reasons all have fixing hints (`hints : applying every hint above makes this loop SAFE`), it
+applies the edits to a copy and re-runs the tool with the hinted flags. The loop must then be
+SAFE. Results:
+- Fixtures and benchmarks, before `tests/hints.c` was added: 21 fixable loops, 21 verified
+  (`-ipa=coarse` too).
+- `tests/hints.c`: 11 of 11 after the review fixes.
+- Fuzzer programs, seeds 1–15: 12 of 12.
+- Mutation checks, both caught by `tests/hints.test`: a wrong flag in the fp hint, and the
+  restrict insertion at the declaration's start.
+- Not caught, and unreachable: dropping the `Other`-role guard in `restrictHint`. AffineAccess
+  already marks a reassigned parameter `BaseMayAlias`, so it never reaches an alias pair. The
+  guard stays as a defensive check.
+
+**Output:** `-reasons=<file>` appends one JSON object per loop: file, line, column, function,
+safety, target, `fixable`, and reasons with category, text and hint/edits. It appends so that
+several inputs share one file. `check_hints.py --json` writes per-category counts of rejected
+loops, which is Phase 3's rejection breakdown. `-hints=off` drops the hint lines and keeps the
+categories. `gen_filecheck.py` now pins the `rejected`/`hint` lines. Existing fixtures were not
+regenerated, so they don't pin them yet; only `tests/hints.c` does.
+
+**First look (fuzzer, seeds 1–15, `prog.c` only):** reasons by category are 519
+unproven-dependence, 391 non-affine-subscript, 372 pointer-overlap, 234 array-dependence, 85
+scalar-dependence, 40 live-out-scalar. Most pointer-overlap reasons do get a restrict hint, but
+those loops usually have a second, unhintable blocker (often the non-affine access that left the
+range unknown). So few loops are fixable outright.
+
+**Adversarial review (2026-10-19):** 5 confirmed bugs, all fixed. None was a false "makes this
+loop SAFE" line. The reviewer checked every `escalate` site and found that each pushes a
+reason. Verdicts and reason texts matched HEAD.
+1. `long *(b)`: inserting before the name gave `*(restrict b)`, which is invalid C. The edit
+   now goes after the star.
+2. `-std=c89`: `restrict` is not a keyword there. The hint now inserts `__restrict`.
+3. The hint promised too little. It said "if a and b never overlap", but restrict promises
+   more and also drops other loops' run-time guards in the same function (a caller
+   `f(x, y, y+1)` met the stated condition but became UB). The wording now states the full
+   promise.
+4. A `#line` directive made `-reasons` name the presumed file, so `check_hints.py` silently
+   skipped the loop. Records now give the real file, line and column.
+5. `a[i * m->stride]` was counted as `indirect-subscript`. It now uses
+   `ArrayAccess::Load` (above).
+
+Also fixed: `check_hints.py` reports a FAIL instead of aborting when the hinted copy doesn't
+compile, and writes that copy under a unique temporary name. Regression inputs:
+- `tests/hints.c`: `r_paren_name`, `c_invariant_load`, `c_indirect_masked`, `c_modulo`.
+- `tests/Inputs/hints_c89.c` and `tests/Inputs/hints_line.c`, run by `tests/hints.test`.
+- `Inputs/` is now excluded from lit discovery.
+
+After the review fixes: no report or verdict drift against HEAD, and every fixing hint verified
+on fixtures, benchmarks and fuzzer programs. On the fuzzer programs, 18 rejected loops are now
+`indirect-subscript`; before the `&`/`%` fix they were counted as `non-affine-subscript`.
+
+**Finding for Phase 3 (not acted on):** no fixture or benchmark calls a libm function. `sqrt`,
+`exp` and friends have no visible body, so a loop calling them is UNKNOWN (opaque-callee). In
+PolyBench, `correlation`, `gramschmidt` and others call `sqrt`. A list of known side-effect-free
+library functions (ignoring errno, which needs a stated assumption) is a separate decision.

@@ -78,7 +78,7 @@ struct LoopDependence {
   /// Worst outcome over all pairs (Independent when there are none).
   DepOutcome Outcome = DepOutcome::Independent;
   /// One line per Dependent / Unknown pair (or unanalyzable access).
-  std::vector<std::string> Reasons;
+  std::vector<Reason> Reasons;
 
   unsigned PairsTested = 0;
   unsigned IndependentByZIV = 0, IndependentByGCD = 0, IndependentBySIV = 0,

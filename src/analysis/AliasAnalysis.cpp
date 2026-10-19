@@ -281,6 +281,69 @@ AliasAnalyzer::Role AliasAnalyzer::role(const FunctionDecl *F,
   return Role::Object;
 }
 
+std::optional<Hint> AliasAnalyzer::restrictHint(const FunctionDecl *F,
+                                                const ValueDecl *A,
+                                                const ValueDecl *B) {
+  const Role RA = role(F, A), RB = role(F, B);
+  if (RA == Role::Other || RB == Role::Other || canon(A) == canon(B))
+    return std::nullopt;
+  const SourceManager &SM = Ctx.getSourceManager();
+  for (auto [V, R] : {std::pair{A, RA}, std::pair{B, RB}}) {
+    const auto *PVD = dyn_cast<ParmVarDecl>(canon(V));
+    if (R != Role::PtrParam || !PVD || !PVD->getTypeSourceInfo())
+      continue;
+    // Where the qualifier goes: after the declarator's outermost `*`
+    // (`double *restrict b`, `long *restrict const b`, `long (*restrict b)`,
+    // `long *restrict (b)`); after `[` for array syntax (`b[restrict n]`,
+    // which qualifies the adjusted pointer); before the name for a typedef'd
+    // pointer (`lp restrict b`), unless the name is in parentheses.
+    TypeLoc TL = PVD->getTypeSourceInfo()->getTypeLoc();
+    TypeLoc U = TL;
+    bool Parens = false;
+    while (true) {
+      U = U.getUnqualifiedLoc();
+      if (auto P = U.getAs<ParenTypeLoc>()) {
+        Parens = true;
+        U = P.getInnerLoc();
+      } else if (auto AT = U.getAs<AttributedTypeLoc>()) {
+        U = AT.getModifiedLoc();
+      } else {
+        break;
+      }
+    }
+    SourceLocation At;
+    if (auto AL = TL.getAsAdjusted<ArrayTypeLoc>())
+      At = AL.getLBracketLoc().getLocWithOffset(1);
+    else if (PVD->getTypeSourceInfo()->getType()->isArrayType())
+      continue; // an array typedef: no place for the qualifier
+    else if (auto PL = U.getAs<PointerTypeLoc>())
+      At = PL.getStarLoc().getLocWithOffset(1);
+    else if (!Parens)
+      At = PVD->getLocation();
+    if (At.isInvalid() || At.isMacroID() || PVD->getName().empty())
+      continue;
+    const std::string Name = PVD->getNameAsString();
+    HintEdit E;
+    E.File = SM.getFilename(At).str();
+    E.Offset = SM.getFileOffset(At);
+    // `restrict` is a keyword from C99 on; Clang and GCC accept the
+    // spelling `__restrict` in every mode.
+    E.Insert = Ctx.getLangOpts().C99 ? "restrict " : "__restrict ";
+    // restrict promises more than this pair: every object reached through
+    // the parameter and modified in F is reached through it alone, which
+    // also settles F's other pairs (and drops their run-time checks).
+    return Hint{"declare parameter '" + Name + "' of '" +
+                    F->getNameAsString() + "' restrict, if no call lets what '" +
+                    Name + "' points to overlap anything else '" +
+                    F->getNameAsString() + "' accesses (here '" +
+                    (V == A ? B : A)->getNameAsString() +
+                    "'): restrict promises that for the whole function",
+                true,
+                {E}};
+  }
+  return std::nullopt;
+}
+
 AliasProof AliasAnalyzer::proof(const FunctionDecl *F, const ValueDecl *A,
                                 const ValueDecl *B) {
   return proofAt(F, A, B, 0);

@@ -22,7 +22,8 @@ the tool reports from other files (#include'd fragments) are not pinned.
 What gets pinned, each anchored with {{$}}: the loop location, kind, trip
 count, UNRECOGNIZED reason, nest facts, call-chain reach lines, every array
 access with its affine subscripts (or non-affine reason), the safety
-verdict plus its first reason (when not SAFE), and profitability. Guard
+verdict plus its first reason (when not SAFE), its rejection categories and
+hints, and profitability. Guard
 thresholds are wildcarded so cost-model recalibration doesn't break tests.
 """
 import os
@@ -150,6 +151,9 @@ def main(paths):
             si = next(i for i, l in enumerate(L) if l.startswith("  safety"))
             if safety != "SAFE":
                 c.append(lit(L[si + 1].strip()) + A)
+            # Phase 2.5: the rejection categories and every hint.
+            c += [lit(l.strip()) + A for l in L
+                  if re.match(r"  (rejected|hint|hints)\s+:", l)]
             deps = field("deps")
             if deps:
                 c.append("deps       : " + lit(deps) + A)

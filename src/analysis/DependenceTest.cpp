@@ -384,12 +384,12 @@ bool subscriptBounds(const AffineExpr &S, const LoopAccesses &A,
 LoopDependence testLoopDependences(const LoopAccesses &A, int64_t RootStep,
                                    const AliasOracle *Alias) {
   LoopDependence D;
-  auto Note = [&D](DepOutcome O, std::string Reason) {
+  auto Note = [&D](DepOutcome O, RejectCategory Cat, std::string Text) {
     if (O > D.Outcome)
       D.Outcome = O;
-    if (std::find(D.Reasons.begin(), D.Reasons.end(), Reason) ==
-        D.Reasons.end())
-      D.Reasons.push_back(std::move(Reason));
+    if (llvm::none_of(D.Reasons,
+                      [&](const Reason &R) { return R.Text == Text; }))
+      D.Reasons.push_back({Cat, std::move(Text)});
   };
 
   bool AnyWrite = false;
@@ -401,7 +401,7 @@ LoopDependence testLoopDependences(const LoopAccesses &A, int64_t RootStep,
       D.GpuMappable = false;
   }
   if (!A.RootIV) {
-    Note(DepOutcome::Unknown, "loop shape not recognized");
+    Note(DepOutcome::Unknown, RejectCategory::LoopShape, "loop shape not recognized");
     return D;
   }
   const int64_t Step = RootStep == 0 ? 1 : std::llabs(RootStep);
@@ -458,10 +458,10 @@ LoopDependence testLoopDependences(const LoopAccesses &A, int64_t RootStep,
     if (X.Base)
       continue;
     if (writes(X))
-      Note(DepOutcome::Unknown, "cannot tell what " + describe(X) +
+      Note(DepOutcome::Unknown, RejectCategory::UnknownBase, "cannot tell what " + describe(X) +
                                     " writes (" + X.NonAffineReason + ")");
     else if (AnyWrite)
-      Note(DepOutcome::Unknown,
+      Note(DepOutcome::Unknown, RejectCategory::UnknownBase,
            describe(X) + " reads memory this analysis cannot name (" +
                X.NonAffineReason + "), which a write in the loop could alias");
   }
@@ -477,7 +477,7 @@ LoopDependence testLoopDependences(const LoopAccesses &A, int64_t RootStep,
       if (X.Base != Y.Base) {
         if (X.BaseMayAlias || Y.BaseMayAlias) {
           const ArrayAccess &P = X.BaseMayAlias ? X : Y;
-          Note(DepOutcome::Unknown,
+          Note(DepOutcome::Unknown, RejectCategory::PointerOverlap,
                "'" + P.Base->getNameAsString() +
                    "' is a pointer that may point into '" +
                    (X.BaseMayAlias ? Y : X).Base->getNameAsString() +
@@ -505,14 +505,15 @@ LoopDependence testLoopDependences(const LoopAccesses &A, int64_t RootStep,
           K == L ? describe(X) : describe(X) + " and " + describe(Y);
       if (!X.Affine || !Y.Affine) {
         const ArrayAccess &Bad = X.Affine ? Y : X;
-        Note(DepOutcome::Unknown, "cannot test " + Pair + ": " +
+        Note(DepOutcome::Unknown, nonAffineCategory(Bad),
+             "cannot test " + Pair + ": " +
                                       describe(Bad) + " is non-affine (" +
                                       Bad.NonAffineReason + ")");
         continue;
       }
       if (X.Subscripts.size() != Y.Subscripts.size() ||
           X.Delinearized != Y.Delinearized || X.RowLengths != Y.RowLengths) {
-        Note(DepOutcome::Unknown,
+        Note(DepOutcome::Unknown, RejectCategory::UnprovenDependence,
              "cannot test " + Pair + ": they index '" +
                  X.Base->getNameAsString() + "' with different shapes");
         continue;
@@ -565,21 +566,22 @@ LoopDependence testLoopDependences(const LoopAccesses &A, int64_t RootStep,
       // Field-insensitive: s[i].x and s[i + 1].y meet on an element, not
       // necessarily on a field. Don't claim a proven dependence for them.
       if (AllExact && (X.ViaMember || Y.ViaMember)) {
-        Note(DepOutcome::Unknown,
+        Note(DepOutcome::Unknown, RejectCategory::UnprovenDependence,
              "could not prove " + Pair +
                  " independent (they reach the same element; fields are not "
                  "distinguished)");
       } else if (AllExact && !Dist) {
-        Note(DepOutcome::Dependent,
+        Note(DepOutcome::Dependent, RejectCategory::ArrayDependence,
              K == L ? Pair + ": every iteration touches the same element"
                     : Pair + ": every iteration touches the same elements");
       } else if (AllExact) {
         const int64_t Iters = std::llabs(*Dist) / Step;
-        Note(DepOutcome::Dependent,
+        Note(DepOutcome::Dependent, RejectCategory::ArrayDependence,
              Pair + ": the same element is touched " + std::to_string(Iters) +
                  " iteration(s) apart");
       } else {
-        Note(DepOutcome::Unknown, "could not prove " + Pair + " independent");
+        Note(DepOutcome::Unknown, RejectCategory::UnprovenDependence,
+             "could not prove " + Pair + " independent");
       }
     }
   }

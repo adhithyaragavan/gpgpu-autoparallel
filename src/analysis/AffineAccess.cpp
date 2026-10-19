@@ -392,6 +392,45 @@ public:
     return nullptr;
   }
 
+  /// Phase 2.5: the last load build() failed on, and whether its value can
+  /// change between iterations (see ArrayAccess::Load).
+  mutable ArrayAccess::SubscriptLoad Load = ArrayAccess::SubscriptLoad::None;
+
+  void noteLoad(ArrayAccess::SubscriptLoad L) const {
+    if (L > Load)
+      Load = L;
+  }
+
+  /// The loads in E (not looking inside a load): Varying if any of them
+  /// can change between iterations, Invariant if all are fixed, None.
+  ArrayAccess::SubscriptLoad loadsIn(const Expr *E) const {
+    E = E->IgnoreParenImpCasts();
+    if (isa<ArraySubscriptExpr>(E) || isa<MemberExpr>(E) ||
+        (isa<UnaryOperator>(E) &&
+         cast<UnaryOperator>(E)->getOpcode() == UO_Deref))
+      return loadVaries(E) ? ArrayAccess::SubscriptLoad::Varying
+                           : ArrayAccess::SubscriptLoad::Invariant;
+    ArrayAccess::SubscriptLoad L = ArrayAccess::SubscriptLoad::None;
+    for (const Stmt *Child : E->children())
+      if (const auto *CE = dyn_cast_or_null<Expr>(Child))
+        L = std::max(L, loadsIn(CE));
+    return L;
+  }
+
+  /// A loaded value can change between iterations when the load names an
+  /// induction variable in scope or a variable declared in the loop.
+  bool loadVaries(const Expr *E) const {
+    if (const auto *DRE = dyn_cast<DeclRefExpr>(E))
+      if (const auto *VD = canon(dyn_cast<VarDecl>(DRE->getDecl())))
+        if (binding(VD) || C.Facts.DeclaredHere.count(VD))
+          return true;
+    for (const Stmt *Child : E->children())
+      if (const auto *CE = dyn_cast_or_null<Expr>(Child))
+        if (loadVaries(CE))
+          return true;
+    return false;
+  }
+
   bool build(const Expr *E, AffineExpr &Out, std::string &Why,
              unsigned Depth = 0) const {
     if (Depth > 8) {
@@ -461,6 +500,7 @@ public:
           AffineBuilder Sub(C, At->second, IVsAtDecl);
           if (Sub.build(Def->getInit(), Out, Why, Depth + 1))
             return true;
+          noteLoad(Sub.Load);
           Why = "uses " + quoted(VD) + " (= " + exprText(Def->getInit(), C.Ctx) +
                 "): " + Why;
           return false;
@@ -534,6 +574,7 @@ public:
       }
       Why = "subscript uses operator '" +
             BinaryOperator::getOpcodeStr(Op).str() + "'";
+      noteLoad(loadsIn(BO)); // `a[idx[i] & 7]` is still indirect
       return false;
     }
 
@@ -541,6 +582,8 @@ public:
         (isa<UnaryOperator>(E) &&
          cast<UnaryOperator>(E)->getOpcode() == UO_Deref)) {
       Why = "subscript reads memory ('" + exprText(E, C.Ctx) + "')";
+      noteLoad(loadVaries(E) ? ArrayAccess::SubscriptLoad::Varying
+                             : ArrayAccess::SubscriptLoad::Invariant);
       return false;
     }
     if (isa<CallExpr>(E)) {
@@ -549,6 +592,7 @@ public:
     }
     Why = "subscript is not an affine expression ('" + exprText(E, C.Ctx) +
           "')";
+    noteLoad(loadsIn(E));
     return false;
   }
 
@@ -1306,6 +1350,7 @@ private:
           break;
         }
       }
+      Acc.Load = B.Load;
       nonAffine(Acc, Why);
       return;
     }
@@ -1342,6 +1387,7 @@ private:
       if (!B.build(E, Part, Why) ||
           (Sign < 0 && !AffineBuilder::scale(Part, -1, Why)) ||
           !AffineBuilder::add(AE, Part, Why)) {
+        Acc.Load = B.Load;
         nonAffine(Acc, Why);
         return;
       }
@@ -1600,6 +1646,25 @@ void printAccessReport(llvm::raw_ostream &OS, const LoopAccesses &A) {
     }
     OS << "\n";
   }
+}
+
+RejectCategory nonAffineCategory(const ArrayAccess &X) {
+  if (!X.Base)
+    return RejectCategory::UnknownBase;
+  llvm::StringRef Why = X.NonAffineReason;
+  // AffineBuilder::build records whether a failing load varies. An access
+  // composed from a callee (Summaries.cpp) carries only the reason text,
+  // which nests "subscript reads memory" for a load in an argument.
+  if (X.Load == ArrayAccess::SubscriptLoad::Varying)
+    return RejectCategory::IndirectSubscript;
+  if (X.Load == ArrayAccess::SubscriptLoad::None &&
+      Why.contains("subscript reads memory"))
+    return RejectCategory::IndirectSubscript;
+  if (Why.starts_with("induction variable"))
+    return RejectCategory::LoopShape;
+  if (Why.starts_with("base ") || Why.starts_with("argument"))
+    return RejectCategory::UnknownBase;
+  return RejectCategory::NonAffineSubscript;
 }
 
 } // namespace p05

@@ -16,6 +16,7 @@
 #include "analysis/Hoisting.h"
 #include "analysis/LoopAnalysis.h"
 #include "analysis/Profitability.h"
+#include "analysis/Rejection.h"
 #include "analysis/SafetyAnalysis.h"
 #include "analysis/ScalarAnalysis.h"
 #include "analysis/Summaries.h"
@@ -160,6 +161,20 @@ public:
 
     if (!Startup.empty())
       llvm::outs() << Startup << "\n\n";
+    // Phase 2.5: -reasons appends one record per loop (JSON Lines), so
+    // several inputs or runs can share a file.
+    std::unique_ptr<llvm::raw_fd_ostream> Records;
+    if (!p05::reasonsPathFromFlags().empty()) {
+      std::error_code EC;
+      Records = std::make_unique<llvm::raw_fd_ostream>(
+          p05::reasonsPathFromFlags(), EC, llvm::sys::fs::OF_Append);
+      if (EC) {
+        llvm::errs() << "p05tool: cannot open "
+                     << p05::reasonsPathFromFlags() << ": " << EC.message()
+                     << "\n";
+        Records.reset();
+      }
+    }
     for (const p05::LoopInfo &LI : Loops) {
       const size_t K = &LI - Loops.data();
       p05::printLoopReport(llvm::outs(), LI, Loops);
@@ -167,6 +182,22 @@ public:
       p05::printAccessReport(llvm::outs(), AllAccesses[K]);
       p05::printSafetyReport(llvm::outs(), AllSafety[K]);
       p05::printProfitabilityReport(llvm::outs(), AllVerdicts[K]);
+      if (Records) {
+        // The real file and line, not a #line directive's: hint edits are
+        // offsets into the real file, and check_hints.py matches the two.
+        const SourceManager &SM = Context.getSourceManager();
+        const SourceLocation L = SM.getExpansionLoc(LI.Loop->getBeginLoc());
+        const FunctionDecl *F = Alias.enclosingFunction(LI.Loop);
+        p05::LoopRecord R;
+        R.File = L.isValid() ? SM.getFilename(L).str() : InputFile;
+        R.Line = L.isValid() ? SM.getExpansionLineNumber(L) : 0;
+        R.Col = L.isValid() ? SM.getExpansionColumnNumber(L) : 0;
+        R.Function = F ? F->getNameAsString() : "";
+        R.Safety = p05::toString(AllSafety[K].Verdict).str();
+        R.Target = p05::toString(AllVerdicts[K].Target).str();
+        R.Reasons = &AllSafety[K].Reasons;
+        p05::writeRecord(*Records, R);
+      }
 
       if (RewriteFlag)
         OmpCodegen.rewriteLoop(LI, AllVerdicts[K]);

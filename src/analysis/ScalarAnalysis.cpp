@@ -574,30 +574,31 @@ LoopScalars ScalarAnalyzer::analyzeLoop(const LoopInfo &LI) {
       continue; // the loop's own variable; a fresh variable per iteration
     const std::string Q = "'" + V->getNameAsString() + "'";
     if (WC.StaticInside.count(V) || V->hasGlobalStorage()) {
-      R.UnsafeReasons.push_back("writes to " + Q +
+      R.UnsafeReasons.push_back({RejectCategory::SharedScalar, "writes to " + Q +
                                 ", a global or static shared by every "
-                                "iteration");
+                                "iteration"});
       continue;
     }
     if (!L || !Cond) {
-      R.UnknownReasons.push_back("cannot analyze the uses of " + Q);
+      R.UnknownReasons.push_back(
+          {RejectCategory::Other, "cannot analyze the uses of " + Q});
       continue;
     }
     if (L->AddressTaken.count(V)) {
-      R.UnsafeReasons.push_back("writes to " + Q +
+      R.UnsafeReasons.push_back({RejectCategory::SharedScalar, "writes to " + Q +
                                 ", whose address is taken in this function "
-                                "(a pointer could reach the shared copy)");
+                                "(a pointer could reach the shared copy)"});
       continue;
     }
     if (!L->Index.count(V)) {
-      R.UnsafeReasons.push_back("writes to " + Q +
-                                ", which is not a plain scalar variable");
+      R.UnsafeReasons.push_back({RejectCategory::SharedScalar, "writes to " + Q +
+                                ", which is not a plain scalar variable"});
       continue;
     }
     if (mentions(FS->getCond(), V) || mentions(FS->getInc(), V)) {
-      R.UnsafeReasons.push_back("writes to " + Q +
+      R.UnsafeReasons.push_back({RejectCategory::ScalarDependence, "writes to " + Q +
                                 ", which the loop's own condition or "
-                                "increment uses");
+                                "increment uses"});
       continue;
     }
     if (!LiveAt(BodyEntry, V)) {
@@ -608,8 +609,8 @@ LoopScalars ScalarAnalyzer::analyzeLoop(const LoopInfo &LI) {
                  !hasOwnContinue(FS->getBody())) {
         R.Clauses.push_back({ScalarClause::LastPrivate, V, ""});
       } else {
-        R.UnsafeReasons.push_back(Q + " is used after the loop but not "
-                                      "written on every iteration");
+        R.UnsafeReasons.push_back({RejectCategory::LiveOutScalar, Q + " is used after the loop but not "
+                                      "written on every iteration"});
       }
       continue;
     }
@@ -619,15 +620,26 @@ LoopScalars ScalarAnalyzer::analyzeLoop(const LoopInfo &LI) {
     // reductions they look like; complex types are out of scope.
     if (Op.empty() || !V->getType()->isArithmeticType() ||
         V->getType()->isBooleanType() || V->getType()->isAnyComplexType()) {
-      R.UnsafeReasons.push_back("loop-carried dependence: " + Q +
+      R.UnsafeReasons.push_back({RejectCategory::ScalarDependence, "loop-carried dependence: " + Q +
                                 " carries a value from one iteration to the "
-                                "next");
+                                "next"});
       continue;
     }
     if (V->getType()->isFloatingType() && !AllowFP) {
-      R.UnsafeReasons.push_back("floating-point reduction on " + Q +
-                                " (changes the last bits of the result; "
-                                "enable with -fp-reductions)");
+      Reason FP(RejectCategory::FpReduction,
+                "floating-point reduction on " + Q +
+                    " (changes the last bits of the result; enable with "
+                    "-fp-reductions)");
+      // With the flag this exact check is the only one that changes: the
+      // variable becomes reduction(Op: V).
+      HintEdit Flag;
+      Flag.Flag = "-fp-reductions";
+      FP.Fix = Hint{"rerun with -fp-reductions to get reduction(" + Op + ": " +
+                        V->getNameAsString() +
+                        ") (accepts results that differ in the last bits)",
+                    true,
+                    {Flag}};
+      R.UnsafeReasons.push_back(std::move(FP));
       continue;
     }
     R.Clauses.push_back({ScalarClause::Reduction, V, Op});
@@ -643,9 +655,11 @@ LoopScalars ScalarAnalyzer::analyzeLoop(const LoopInfo &LI) {
         R.Clauses.push_back({ScalarClause::LastPrivate, IV, ""});
       else
         R.UnknownReasons.push_back(
-            "induction variable " + Q +
-            (Tracked ? " is used after the loop, which may run zero times"
-                     : " is global, static or address-taken"));
+            {Tracked ? RejectCategory::LiveOutScalar
+                     : RejectCategory::SharedScalar,
+             "induction variable " + Q +
+                 (Tracked ? " is used after the loop, which may run zero times"
+                          : " is global, static or address-taken")});
     }
   }
   return R;

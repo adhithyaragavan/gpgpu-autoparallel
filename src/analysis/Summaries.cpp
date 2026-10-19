@@ -80,6 +80,7 @@ void makeNonAffine(ArrayAccess &X, std::string Why, bool KeepBase = true) {
     X.BaseMayAlias = false;
   }
   X.NonAffineReason = std::move(Why);
+  X.Load = ArrayAccess::SubscriptLoad::None; // only the text is known here
   X.Subscripts.clear();
   X.DimExtents.clear();
   X.RowLengths.clear();
@@ -382,7 +383,12 @@ bool keepInSummary(ArrayAccess &X, const FunctionDecl *Def) {
 /// the same variable), atomics and inline asm (UNKNOWN).
 class NameLevelVisitor : public RecursiveASTVisitor<NameLevelVisitor> {
 public:
-  std::vector<std::pair<std::string, bool>> Found; ///< text, unsafe
+  struct Effect {
+    std::string Text;
+    bool Unsafe;
+    RejectCategory Cat;
+  };
+  std::vector<Effect> Found;
 
   bool VisitBinaryOperator(BinaryOperator *BO) {
     if (BO->isAssignmentOp())
@@ -395,20 +401,20 @@ public:
     return true;
   }
   bool VisitAtomicExpr(AtomicExpr *) {
-    note("uses an atomic builtin", false);
+    note("uses an atomic builtin", false, RejectCategory::AtomicOrAsm);
     return true;
   }
   bool VisitAsmStmt(AsmStmt *) {
-    note("contains inline asm", false);
+    note("contains inline asm", false, RejectCategory::AtomicOrAsm);
     return true;
   }
 
 private:
-  void note(std::string Text, bool Unsafe) {
-    for (const auto &F : Found)
-      if (F.first == Text)
+  void note(std::string Text, bool Unsafe, RejectCategory Cat) {
+    for (const Effect &F : Found)
+      if (F.Text == Text)
         return;
-    Found.push_back({std::move(Text), Unsafe});
+    Found.push_back({std::move(Text), Unsafe, Cat});
   }
   /// `g = `, `g.f = ` (not through `->`, `*` or `[]`: those are accesses).
   void write(const Expr *E) {
@@ -421,7 +427,8 @@ private:
     if (const auto *DRE = dyn_cast<DeclRefExpr>(E))
       if (const auto *VD = dyn_cast<VarDecl>(DRE->getDecl()))
         if (VD->hasGlobalStorage())
-          note("writes global " + quoted(VD), true);
+          note("writes global " + quoted(VD), true,
+               RejectCategory::CalleeSideEffect);
   }
 };
 
@@ -478,7 +485,8 @@ const FunctionSummary &SummaryAnalyzer::summarize(const FunctionDecl *FD) {
 
   for (const CallSite &CS : A.Calls) {
     if (!CS.Callee) {
-      Reason({Def, "calls through a function pointer", false});
+      Reason({Def, "calls through a function pointer", false,
+              RejectCategory::IndirectCall});
       continue;
     }
     const FunctionDecl *GDef = visibleDefinition(CS.Callee);
@@ -512,8 +520,8 @@ const FunctionSummary &SummaryAnalyzer::summarize(const FunctionDecl *FD) {
 
   NameLevelVisitor NV;
   NV.TraverseStmt(Def->getBody());
-  for (auto &[Text, Unsafe] : NV.Found)
-    Reason({Def, Text, Unsafe});
+  for (const NameLevelVisitor::Effect &F : NV.Found)
+    Reason({Def, F.Text, F.Unsafe, F.Cat});
 
   InProgress.erase(FD);
   return *Cache.try_emplace(FD, std::move(S)).first->second;
@@ -521,9 +529,9 @@ const FunctionSummary &SummaryAnalyzer::summarize(const FunctionDecl *FD) {
 
 CallEffects SummaryAnalyzer::composeCalls(LoopAccesses &A) {
   CallEffects Fx;
-  auto Add = [](std::vector<std::string> &V, std::string S) {
-    if (!llvm::is_contained(V, S))
-      V.push_back(std::move(S));
+  auto Add = [](std::vector<Reason> &V, RejectCategory Cat, std::string S) {
+    if (llvm::none_of(V, [&](const Reason &R) { return R.Text == S; }))
+      V.push_back({Cat, std::move(S)});
   };
   llvm::DenseSet<const Expr *> Passed;
   std::vector<ArrayAccess> Composed;
@@ -542,7 +550,8 @@ CallEffects SummaryAnalyzer::composeCalls(LoopAccesses &A) {
               ? Name + " " + R.Text
               : Name + " transitively reaches " + quoted(R.Where) +
                     ", which " + R.Text;
-      Add(R.Unsafe ? Fx.UnsafeReasons : Fx.UnknownReasons, std::move(Text));
+      Add(R.Unsafe ? Fx.UnsafeReasons : Fx.UnknownReasons, R.Cat,
+          std::move(Text));
     }
     if (S.Incomplete && !llvm::is_contained(Fx.Incomplete, CS.Callee))
       Fx.Incomplete.push_back(CS.Callee);

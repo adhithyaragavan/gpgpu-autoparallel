@@ -14,7 +14,7 @@ config.name = "p05"
 config.test_format = lit.formats.ShTest()
 config.suffixes = [".c", ".test"]
 config.test_source_root = os.path.dirname(__file__)
-config.excludes = ["lit.cfg.py"]
+config.excludes = ["lit.cfg.py", "Inputs"]  # Inputs/: data for RUN lines
 # `p05tool -rewrite` writes <fixture>.omp.c next to a fixture; it carries a
 # copy of the RUN line but is generated output, not a test. lit's excludes are
 # plain names, so list whichever ones exist each time the config loads.
