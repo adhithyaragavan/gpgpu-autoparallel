@@ -796,7 +796,9 @@ def main():
     stats, failures = {}, []
     for seed in range(args.seed, args.seed + args.files):
         if args.keep:
-            work = os.path.join(args.keep, f"seed{seed}")
+            # Absolute: driver.c #includes prog.c by this path, which a
+            # relative path would resolve against driver.c's own directory.
+            work = os.path.join(os.path.abspath(args.keep), f"seed{seed}")
             os.makedirs(work, exist_ok=True)
             fuzz_file(seed, args.funcs, work, tool, cc, sysroot, omp, args.runs, stats, failures)
         else:
