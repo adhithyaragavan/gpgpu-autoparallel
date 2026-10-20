@@ -107,6 +107,32 @@ enum class AccessKind {
 
 llvm::StringRef toString(AccessKind K);
 
+/// Phase 2.5: what a subscript that is not affine still says about its value
+/// (`i % 3`, `idx[i] & 7`, `i / 2`, `j * j`, `k + i % 4`): a small tree whose
+/// leaves are affine expressions. DependenceTest's
+/// valueBounds turns it into an inclusive [Lo, Hi] using the loop ranges,
+/// or fails. Rules (C99 semantics, the operation's own type):
+///   x % c   |result| <= |c| - 1; [0, |c| - 1] when x is unsigned or
+///           provably >= 0. x need not be bounded (or even built).
+///   x & c   c >= 0: [0, c], whatever x is.
+///   x / c   c > 0, x bounded: [lo / c, hi / c] for constant ends;
+///           [0 or lo / c, hi] when lo is a constant >= 0.
+///   x >> c  as x / 2^c, only when lo is a constant >= 0.
+///   x * y   both ends of both operands constant: the corner products.
+///   x + y, x - y, c * x, -x: interval arithmetic.
+struct ValueBound {
+  enum class Op { Affine, Add, Scale, Mul, Rem, Div, Shr, And };
+  Op K = Op::Affine;
+  AffineExpr E;            ///< Affine
+  int64_t C = 0;           ///< Scale factor; Rem/Div/Shr/And constant
+  bool Unsigned = false;   ///< Rem: computed in an unsigned type
+  std::vector<ValueBound> Ops; ///< operands (Rem: empty if x isn't built)
+};
+
+/// Phase 2.5 ablation flags (-value-bounds=off, -size-bounds=off).
+bool valueBoundsFromFlags();
+bool sizeBoundsFromFlags();
+
 /// One access in the loop body, e.g. `m[i][j] = ...`.
 struct ArrayAccess {
   const clang::Expr *E = nullptr;
@@ -123,6 +149,25 @@ struct ArrayAccess {
 
   /// Why not, when Affine is false.
   std::string NonAffineReason;
+
+  /// Number of subscripts as written (1 for `p[i]`, `*(p + i)` and a
+  /// linearized `a[i * n + j]`); 0 when unknown (no named base). An access
+  /// composed from a callee keeps the callee's: its argument has the
+  /// parameter's type (Summaries.cpp's usableArg).
+  unsigned Rank = 0;
+
+  /// Phase 2.5: for a non-affine access, a ValueBound for every dimension
+  /// (affine ones as Affine leaves, the base offset folded into the first),
+  /// or empty when some dimension has none. DimExtents is kept with them.
+  std::vector<ValueBound> Bounds;
+
+  /// Phase 2.5: the declared extent of each of the Rank dimensions, 0 when
+  /// unknown: a constant array type, or for a pointer parameter's first
+  /// dimension the size of the array variable every visible call passes
+  /// (AliasAnalyzer::assignExtents). None for a base some affine access
+  /// provably indexes outside it. C's rule that a subscript stays inside
+  /// its object makes [0, extent - 1] a bound on any access but `&a[k]`.
+  std::vector<int64_t> Extents;
 
   /// One entry per dimension, outermost first. 1 entry for `p[i]` / `*(p+i)`.
   std::vector<AffineExpr> Subscripts;

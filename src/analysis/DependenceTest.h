@@ -83,6 +83,9 @@ struct LoopDependence {
   unsigned PairsTested = 0;
   unsigned IndependentByZIV = 0, IndependentByGCD = 0, IndependentBySIV = 0,
            IndependentByBanerjee = 0;
+  /// Phase 2.5: pairs with a non-affine access whose ranges (accessBounds)
+  /// don't meet in some dimension.
+  unsigned IndependentByRange = 0;
   /// Pairs skipped because their base is declared inside the loop (private
   /// to each iteration).
   unsigned PrivatePairsSkipped = 0;
@@ -115,6 +118,24 @@ LoopDependence testLoopDependences(const LoopAccesses &A, int64_t RootStep,
 /// when a needed range is unknown.
 bool subscriptBounds(const AffineExpr &S, const LoopAccesses &A,
                      AffineExpr &Lo, AffineExpr &Hi);
+
+/// Phase 2.5: smallest and largest value of a non-affine subscript's
+/// ValueBound while the analyzed loop runs (affine leaves through
+/// subscriptBounds). False when some part has no bound.
+bool valueBounds(const ValueBound &V, const LoopAccesses &A, AffineExpr &Lo,
+                 AffineExpr &Hi);
+
+/// Phase 2.5: the dimensions accessBounds answers for: an affine access's
+/// subscripts, otherwise ArrayAccess::Rank.
+size_t accessRank(const ArrayAccess &X);
+
+/// Phase 2.5: bounds on dimension Dim of X's subscript while the analyzed
+/// loop runs: subscriptBounds for an affine access, valueBounds for a
+/// bounded non-affine one, and only when those give none, [0, extent - 1]
+/// from a declared extent (never for `&a[k]`, which may point one past the
+/// end, or a delinearized access, whose dimensions aren't the declared ones).
+bool accessBounds(const ArrayAccess &X, size_t Dim, const LoopAccesses &A,
+                  AffineExpr &Lo, AffineExpr &Hi);
 
 /// One summary line, e.g. "4 pair(s): 4 independent (2 SIV, 1 GCD, 1
 /// Banerjee)".

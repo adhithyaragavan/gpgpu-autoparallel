@@ -82,6 +82,7 @@ void makeNonAffine(ArrayAccess &X, std::string Why, bool KeepBase = true) {
   X.NonAffineReason = std::move(Why);
   X.Load = ArrayAccess::SubscriptLoad::None; // only the text is known here
   X.Subscripts.clear();
+  X.Bounds.clear();
   X.DimExtents.clear();
   X.RowLengths.clear();
   X.Delinearized = false;
@@ -247,6 +248,13 @@ ArrayAccess composeAccess(const ArrayAccess &X, const FunctionDecl *Def,
                           const CallSite &CS, const RangeMap &Ranges,
                           const RangeMap &Outer, bool OnlyParams) {
   ArrayAccess Y = X;
+  // Phase 2.5: a value bound is in the callee's terms (its loop ranges and
+  // parameters). The declared extents are assigned later, by base.
+  if (!Y.Affine) {
+    Y.Bounds.clear();
+    Y.DimExtents.clear();
+  }
+  Y.Extents.clear();
   Y.E = CS.Call;
   Y.Within.push_back(X.E);
   Y.Text = Def->getNameAsString() + "(): " + X.Text;

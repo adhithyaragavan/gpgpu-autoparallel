@@ -2978,3 +2978,84 @@ on fixtures, benchmarks and fuzzer programs. On the fuzzer programs, 18 rejected
 `exp` and friends have no visible body, so a loop calling them is UNKNOWN (opaque-callee). In
 PolyBench, `correlation`, `gramschmidt` and others call `sqrt`. A list of known side-effect-free
 library functions (ignoring errno, which needs a stated assumption) is a separate decision.
+
+### 2026-10-20 — Phase 2.5 item 3: bounds for non-affine accesses (values and declared sizes)
+
+**Decision (user, 2026-10-20): both parts, each with its own ablation flag.** The plan said the
+declared-size bound would recover the fuzz loops like `B[i % 3]`. It recovers none of them: every
+such base is a pointer parameter of an externally visible function, so no size is known. What
+recovers some of them is a bound on the subscript's value. The size bound is kept for real code
+(PolyBench-style `static` kernels with `A[N][N]` parameters called with global arrays).
+
+**(a) Value bounds** (`ValueBound` in `AffineAccess.h`, built by `AffineBuilder::bound`,
+evaluated by `valueBounds` in `DependenceTest.cpp`; `-value-bounds=off`). A non-affine subscript
+gets an inclusive [Lo, Hi] in loop-range terms, by C99 semantics in the operation's own type:
+- `x % c`: |result| <= |c| - 1, and [0, |c| - 1] when x is unsigned or provably >= 0; x need
+  not be bounded (`idx[i] % 8`).
+- `x & c`, c >= 0: [0, c] whatever x is.
+- `x / c` (c > 0) and `x >> c` (x >= 0 only): from x's range; `[0 or lo / c, hi]` when hi is
+  symbolic.
+- `x * y` with both ranges constant: the corner products.
+- `+`, `-`, `c * x`, `-x`: interval arithmetic, but never in an unsigned type (it wraps).
+- Narrowing or sign-changing casts pass only a `%` or `&` bound that fits the target type.
+- Poisoned loops (an induction variable written in the body) drop the bounds. Accesses composed
+  from a callee drop them too (they are in the callee's terms).
+
+**(b) Size bounds** (`AliasAnalyzer::assignExtents` / `callerExtent`; `-size-bounds=off`).
+`ArrayAccess::Extents` holds each dimension's declared extent: constant array types, and for a
+pointer parameter's first dimension the size of the array *variable* every visible call passes
+(same visibility rule as the Callers alias proof: `static` or `-whole-program`, never address
+taken, prototyped calls; the caller's own parameter recursively). All calls must pass the same
+size: a bound needs the largest, a map() section the smallest. [0, extent - 1] is used only when
+no other bound exists, never for `&a[k]` (one past the end is legal) or a delinearized access.
+
+**Consumers** (`accessBounds`, `accessRank`):
+1. Alias run-time guards (`runtimeCheck`) for bounded non-affine accesses, e.g. `a[i] = b[i % 3]`
+   checks `b + 24 <= a || ...`.
+2. The dependence test: a pair with a non-affine access is independent when the two ranges
+   provably don't meet in some dimension (`a[i + 8] = a[i % 8]`; the deps line counts "range").
+3. map() sections: bounded non-affine accesses are mappable (clamped for an Object), and a
+   pointer base the pointer rule can't map (a non-exact access, or an end that needs an inner
+   loop to run that no test can show, the triangular case) is planned again as an Object of its
+   extent (the Try loop in `RegionPlanner::plan`, which restores the plan state first).
+
+**Report:** a non-affine access line ends with `; in [lo, hi]...` when every dimension is
+bounded. That is the only change to existing fixtures (four lines in `affine.c`, `hints.c`).
+With both flags off, every fixture and benchmark is byte-identical to `42fb959`, also combined
+with `-ipa=coarse`, `-alias=assume`, `-maps=bound`, `-hoist=off`.
+
+**New fixture** `tests/bounds.c` (+ `tests/bounds.test`, `eval/runtime/bounds_main.c`): each case
+with a twin that must stay UNKNOWN or unmapped (`% k` with symbolic k, a negative mask, unsigned
+`% 4u - 1u`, writes from 7 against `i % 8`, a pointer of unknown size, a static function called
+with an unknown pointer or with arrays of different sizes, an extern triangular kernel). The
+driver calls every guarded loop with overlapping arguments, including partial overlaps that only
+the full bound guards against. `bounds.test` pins the sections and each flag's flips.
+
+**Evidence:**
+- lit 22/22 (macOS and Linux). `check_parallel.sh` on all eight runtime fixtures, 30 runs, -O2
+  and -O0. Docker `OFFLOAD=1` (naive and gated) on bounds, maps, hoist, amortize, alias: 4 target
+  regions in bounds.c run on separate device memory.
+- Mutations, each caught by a runtime mismatch: `%` bound narrowed by one, `&` halved, `/` upper
+  end set to 1, `*` halved, an affine leaf collapsed, the extent halved (alias guard), the map
+  extent halved (OFFLOAD: crash), and the min-of-sizes caller rule (OFFLOAD: mismatch). The
+  range test off by one is caught by the fuzzer's address oracle and by the pinned UNKNOWN twin.
+- Fuzzer: no false SAFE. Seeds 1–15: SAFE 75 → 77. Seeds 100–159: SAFE 272 → 279 (UNKNOWN
+  396 → 389). The `i * n + j` shapes would also need the sign of n; not attempted.
+
+**Adversarial review (2026-10-20):** value bounds, flags and retry state held; one confirmed
+class of bug, fixed:
+1. `callerExtent` took the size of any array-typed argument, including subobjects: a row `A[0]`
+   indexed as the whole matrix (BLAS style), a trailing `d[1]` struct-hack member, `*pa`. The
+   extent was far too small: a gather `b[i + N] = b[idx[i]]` over `R[0]` was SAFE by range and
+   raced; a conditional scale over `A[0]` mapped 512 of N*N elements and crashed on the device.
+   Now only an array variable, a string or a compound literal counts as the passed object.
+   Consequence: PolyBench's `*A` heap arrays give no extent (a deliberate precision cost: the
+   pointer may point into a larger allocation).
+2. Defence in depth: an extent that an affine access provably contradicts (a constant end below
+   0 or past it, e.g. `p[i + 100]` of a 100-element array) is dropped for that base.
+Regression inputs: `sz_row`, `sz_member`, `sz_past` in `tests/bounds.c`, pinned by
+`bounds.test` section 5. The reviewer's reproducers now give UNKNOWN; seeds 5000–5149 were clean.
+
+**Limits noted, not fixed:** `Bounds` is all-or-nothing across dimensions (`pa[2][idx[i]]` loses
+the affine first dimension); value bounds are not carried through callee arguments
+(`h_get(p, i % 3)`).

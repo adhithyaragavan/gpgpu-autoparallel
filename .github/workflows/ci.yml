@@ -43,6 +43,7 @@ jobs:
           CC="/usr/lib/llvm-$LLVM_VERSION/bin/clang" RUNS=20 scripts/check_parallel.sh tests/maps.c eval/runtime/maps_main.c
           CC="/usr/lib/llvm-$LLVM_VERSION/bin/clang" RUNS=20 scripts/check_parallel.sh tests/hoist.c eval/runtime/hoist_main.c
           CC="/usr/lib/llvm-$LLVM_VERSION/bin/clang" RUNS=20 scripts/check_parallel.sh tests/amortize.c eval/runtime/amortize_main.c
+          CC="/usr/lib/llvm-$LLVM_VERSION/bin/clang" RUNS=20 scripts/check_parallel.sh tests/bounds.c eval/runtime/bounds_main.c
 
       - name: Runtime check of map() sections and data regions (target regions on the host device, separate memory)
         run: |
@@ -58,6 +59,7 @@ jobs:
           scripts/check_parallel.sh tests/scalars.c eval/runtime/scalars_main.c
           scripts/check_parallel.sh tests/summaries.c eval/runtime/summaries_main.c
           scripts/check_parallel.sh tests/alias.c eval/runtime/alias_main.c
+          scripts/check_parallel.sh tests/bounds.c eval/runtime/bounds_main.c
 
       - name: Address-logging fuzzer (no false SAFE; parallel output identical)
         run: CC="/usr/lib/llvm-$LLVM_VERSION/bin/clang" python3 eval/fuzz/fuzz.py --seed 1 --files 15 --keep build/fuzz

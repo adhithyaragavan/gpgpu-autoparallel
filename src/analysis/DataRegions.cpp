@@ -180,6 +180,21 @@ std::optional<Layout> layoutOf(const VarDecl *VD, ASTContext &Ctx,
   return L;
 }
 
+/// Phase 2.5: the declared extent of VD's outermost dimension
+/// (ArrayAccess::Extents) when every access to it in A agrees on one; 0
+/// otherwise.
+int64_t declaredExtent(const VarDecl *VD, const LoopAccesses &A) {
+  int64_t E = 0;
+  for (const ArrayAccess &X : A.Accesses) {
+    if (canon(X.Base) != VD)
+      continue;
+    if (X.Extents.empty() || X.Extents[0] <= 0 || (E && X.Extents[0] != E))
+      return 0;
+    E = X.Extents[0];
+  }
+  return E;
+}
+
 /// Does Body (a function's) return or jump anywhere but its very end?
 bool exitsEarly(const Stmt *Body) {
   const auto *CS = dyn_cast_or_null<CompoundStmt>(Body);
@@ -279,7 +294,9 @@ RegionPlanner::RegionPlanner(ASTContext &Ctx, const std::vector<LoopInfo> &Loops
 RegionPlan RegionPlanner::plan(const LoopInfo &LI, const LoopAccesses &A,
                                const FunctionDecl *F) {
   RegionPlan Plan;
+  unsigned Fails = 0;
   auto Fail = [&](std::string Why) {
+    ++Fails;
     Plan.Mappable = false;
     if (!llvm::is_contained(Plan.Why, Why))
       Plan.Why.push_back(std::move(Why));
@@ -432,7 +449,13 @@ RegionPlan RegionPlanner::plan(const LoopInfo &LI, const LoopAccesses &A,
       Fail(quoted(VD) + " is a pointer set inside the loop");
       continue;
     }
-    if (!X.Affine) {
+    // Phase 2.5: a non-affine access needs a bound on every dimension.
+    bool Bounded = !X.Affine && accessRank(X) > 0;
+    for (size_t D = 0; Bounded && D < accessRank(X); ++D) {
+      AffineExpr Lo, Hi;
+      Bounded = accessBounds(X, D, A, Lo, Hi);
+    }
+    if (!X.Affine && !Bounded) {
       Fail(X.Text + " is non-affine");
       continue;
     }
@@ -445,329 +468,397 @@ RegionPlan RegionPlanner::plan(const LoopInfo &LI, const LoopAccesses &A,
   if (!Plan.Mappable)
     return Plan;
 
-  for (const VarDecl *VD : Bases) {
-    std::string Why;
-    std::optional<Layout> L = layoutOf(VD, Ctx, Why);
-    if (!L) {
-      Fail(Why);
-      continue;
+  // Can a test before the loop show that V's loop runs at least once? Why
+  // not, or (in G) the test, empty when its range is a constant.
+  auto RunsTest = [&](const VarDecl *V,
+                      std::string &G) -> std::optional<std::string> {
+    const IVRange *R = RangeOf(V);
+    if (!R || !R->Lo || !R->Hi)
+      return "the range of '" + V->getNameAsString() + "' is not known";
+    std::optional<AffineExpr> Span = minus(*R->Hi, *R->Lo);
+    if (!Span)
+      return "the range of '" + V->getNameAsString() + "' overflows";
+    if (Span->isConstant()) {
+      if (Span->Const < 0)
+        return "the loop over '" + V->getNameAsString() + "' never runs";
+      return std::nullopt;
     }
+    // Bounds that mention another loop's variable can't be tested before
+    // the loop.
+    bool Named = Span->IVTerms.empty() ||
+                 llvm::all_of(Span->IVTerms, [&](const auto &P) {
+                   return IsFixed(P.first);
+                 });
     std::string Bad;
-    if (!Names.nameable(VD, Bad)) {
-      Fail("the map() clause can't name " + quoted(VD) + ": " + Bad);
-      continue;
-    }
-    ArrayRegion R;
-    R.Base = VD;
-    R.ElemBytes = L->UnitBytes;
+    Named = Named && NameableExpr(*Span, Bad);
+    if (!Named)
+      return "can't test before the loop that the loop over '" +
+             V->getNameAsString() + "' runs";
+    G = nonNegative(*Span);
+    return std::nullopt;
+  };
 
-    // Per access: the outer index range (1-D / rows), or the linear one.
-    struct One {
-      const ArrayAccess *X;
-      AffineExpr Lo, Hi;           // outer index (not Linear)
-      std::string LoT, HiT;        // Linear: as text
-      bool Exact = false;
-    };
-    std::vector<One> Ones;
-    bool Linear = false, Ok = true;
-    for (const ArrayAccess &X : A.Accesses) {
-      if (canon(X.Base) != VD)
-        continue;
-      R.Read |= X.Kind == AccessKind::Read || X.Kind == AccessKind::ReadWrite;
-      R.Written |=
-          X.Kind == AccessKind::Write || X.Kind == AccessKind::ReadWrite;
-      // Writing a member of an element leaves the rest as it was.
-      if (X.ViaMember && X.Kind != AccessKind::Read)
-        R.Read = true;
-      One O{&X};
-      const bool Lin = L->K == Layout::PlainPtr && X.Delinearized;
-      if (L->K == Layout::PlainPtr ? (!Lin && X.Subscripts.size() != 1)
-                                   : (X.Delinearized ||
-                                      X.Subscripts.size() != L->Rank)) {
-        Fail("can't map " + X.Text + ": its subscripts don't match the "
-             "shape of " + quoted(VD));
-        Ok = false;
-        break;
+  for (const VarDecl *VD : Bases) {
+    // Phase 2.5: a base the pointer rule can't map (try 0) is planned again
+    // as an Object of its declared extent (try 1), when it has one.
+    const unsigned FailsBefore = Fails;
+    const RegionPlan Saved = Plan;
+    const auto SavedMustRun = MustRun;
+    const auto SavedGuards = Guards;
+    const auto SavedUsed = Used;
+    const int64_t Extent = declaredExtent(VD, A);
+    for (int Try = 0; Try < 2; ++Try) {
+      if (Try == 1) {
+        if (Fails == FailsBefore || Extent <= 0)
+          break;
+        Plan = Saved;
+        MustRun = SavedMustRun;
+        Guards = SavedGuards;
+        Used = SavedUsed;
       }
-      std::vector<AffineExpr> Los, His;
-      for (const AffineExpr &S : X.Subscripts) {
-        AffineExpr Lo, Hi;
-        if (!subscriptBounds(S, A, Lo, Hi)) {
-          Fail("the range of " + X.Text + " can't be bounded");
+      std::string Why;
+      std::optional<Layout> L = layoutOf(VD, Ctx, Why);
+      if (!L) {
+        Fail(Why);
+        continue;
+      }
+      if (Try == 1 && L->K != Layout::Object) {
+        L->K = Layout::Object;
+        L->OuterExtent = Extent;
+      }
+      std::string Bad;
+      if (!Names.nameable(VD, Bad)) {
+        Fail("the map() clause can't name " + quoted(VD) + ": " + Bad);
+        continue;
+      }
+      ArrayRegion R;
+      R.Base = VD;
+      R.ElemBytes = L->UnitBytes;
+
+      // Per access: the outer index range (1-D / rows), or the linear one.
+      struct One {
+        const ArrayAccess *X;
+        AffineExpr Lo, Hi;           // outer index (not Linear)
+        std::string LoT, HiT;        // Linear: as text
+        bool Exact = false;
+      };
+      std::vector<One> Ones;
+      bool Linear = false, Ok = true;
+      for (const ArrayAccess &X : A.Accesses) {
+        if (canon(X.Base) != VD)
+          continue;
+        R.Read |= X.Kind == AccessKind::Read || X.Kind == AccessKind::ReadWrite;
+        R.Written |=
+            X.Kind == AccessKind::Write || X.Kind == AccessKind::ReadWrite;
+        // Writing a member of an element leaves the rest as it was.
+        if (X.ViaMember && X.Kind != AccessKind::Read)
+          R.Read = true;
+        One O{&X};
+        const bool Lin = L->K == Layout::PlainPtr && X.Delinearized;
+        if (L->K == Layout::PlainPtr ? (!Lin && accessRank(X) != 1)
+                                     : (X.Delinearized ||
+                                        accessRank(X) != L->Rank)) {
+          Fail("can't map " + X.Text + ": its subscripts don't match the "
+               "shape of " + quoted(VD));
           Ok = false;
           break;
         }
-        Los.push_back(Lo);
-        His.push_back(Hi);
-      }
-      if (!Ok)
-        break;
-      for (const AffineExpr *E : {&Los[0], &His[0]})
-        if (!NameableExpr(*E, Bad)) {
-          Fail("the map() clause can't name a bound of " + X.Text + ": " +
-               Bad);
-          Ok = false;
-        }
-      if (!Ok)
-        break;
-      if (Lin) {
-        Linear = true;
-        std::string LoT = asIntPtr(Los[0]), HiT = asIntPtr(His[0]);
-        for (size_t D = 1; D < Los.size(); ++D) {
-          if (D - 1 >= X.RowLengths.size() ||
-              !Names.nameable(X.RowLengths[D - 1], Bad)) {
-            Fail("can't linearize " + X.Text);
+        std::vector<AffineExpr> Los, His;
+        for (size_t D = 0; D < accessRank(X); ++D) {
+          AffineExpr Lo, Hi;
+          if (!accessBounds(X, D, A, Lo, Hi)) {
+            Fail("the range of " + X.Text + " can't be bounded");
             Ok = false;
             break;
           }
-          for (const AffineExpr *E : {&Los[D], &His[D]})
-            if (!NameableExpr(*E, Bad)) {
-              Fail("the map() clause can't name a bound of " + X.Text +
-                   ": " + Bad);
-              Ok = false;
-            }
-          Used.insert(X.RowLengths[D - 1]);
-          const std::string N = "(" + std::string(IntPtrType) + ")" +
-                                X.RowLengths[D - 1]->getNameAsString();
-          LoT = linear(LoT, N, Los[D]);
-          HiT = linear(HiT, N, His[D]);
+          Los.push_back(Lo);
+          His.push_back(Hi);
         }
         if (!Ok)
           break;
-        O.LoT = LoT;
-        O.HiT = HiT;
-        O.Exact = Exact(X, X.Subscripts.size());
-        if (L->K != Layout::Object && !O.Exact) {
-          Fail("can't map " + X.Text + ": it may not run on every iteration "
-               "(or a loop around it may stop early), so the ends of its "
-               "range aren't surely touched");
-          Ok = false;
-          break;
-        }
-      } else {
-        O.Lo = Los[0];
-        O.Hi = His[0];
-        O.Exact = Exact(X, 1);
-      }
-      Ones.push_back(std::move(O));
-    }
-    if (!Ok)
-      continue;
-    if (Linear && llvm::any_of(Ones, [](const One &O) { return O.LoT.empty(); })) {
-      Fail("can't map " + quoted(VD) + ": linearized and plain subscripts "
-           "mixed");
-      continue;
-    }
-
-    // The section's ends: Object from every access (clamped below);
-    // otherwise from exact ones, everything else inside them.
-    std::string LoT, HiT;
-    std::optional<AffineExpr> LoE, HiE; // when a single affine expression
-    if (Linear) {
-      std::vector<std::string> Ls, Hs;
-      for (const One &O : Ones) {
-        if (!llvm::is_contained(Ls, O.LoT))
-          Ls.push_back(O.LoT);
-        if (!llvm::is_contained(Hs, O.HiT))
-          Hs.push_back(O.HiT);
-      }
-      LoT = fold(Ls, true);
-      HiT = fold(Hs, false);
-    } else {
-      std::vector<AffineExpr> Ls, Hs;
-      auto Add = [](std::vector<AffineExpr> &Into, const AffineExpr &E,
-                    bool Min) {
-        for (AffineExpr &O : Into)
-          if (std::optional<int64_t> D = constDiff(E, O)) {
-            if (Min ? *D < 0 : *D > 0)
-              O = E;
-            return;
+        for (const AffineExpr *E : {&Los[0], &His[0]})
+          if (!NameableExpr(*E, Bad)) {
+            Fail("the map() clause can't name a bound of " + X.Text + ": " +
+                 Bad);
+            Ok = false;
           }
-        Into.push_back(E);
-      };
-      const bool NeedExact = L->K != Layout::Object;
-      for (const One &O : Ones)
-        if (!NeedExact || O.Exact) {
-          Add(Ls, O.Lo, true);
-          Add(Hs, O.Hi, false);
-        }
-      if (Ls.empty()) {
-        Fail("can't map " + quoted(VD) + ": no access to it runs on every "
-             "iteration, so the ends of its range aren't surely touched");
-        continue;
-      }
-      // Every other access must lie inside the exact ones' span.
-      for (const One &O : Ones) {
-        if (!NeedExact || O.Exact)
-          continue;
-        auto Inside = [&](const AffineExpr &E, const std::vector<AffineExpr> &Ends,
-                          bool Low) {
-          return llvm::any_of(Ends, [&](const AffineExpr &End) {
-            std::optional<int64_t> D = constDiff(E, End);
-            return D && (Low ? *D >= 0 : *D <= 0);
-          });
-        };
-        if (!Inside(O.Lo, Ls, true) || !Inside(O.Hi, Hs, false)) {
-          Fail("can't map " + O.X->Text + ": it may not run on every "
-               "iteration, and its range isn't inside what the other "
-               "accesses to " + quoted(VD) + " surely touch");
-          Ok = false;
+        if (!Ok)
           break;
+        if (Lin) {
+          Linear = true;
+          std::string LoT = asIntPtr(Los[0]), HiT = asIntPtr(His[0]);
+          for (size_t D = 1; D < Los.size(); ++D) {
+            if (D - 1 >= X.RowLengths.size() ||
+                !Names.nameable(X.RowLengths[D - 1], Bad)) {
+              Fail("can't linearize " + X.Text);
+              Ok = false;
+              break;
+            }
+            for (const AffineExpr *E : {&Los[D], &His[D]})
+              if (!NameableExpr(*E, Bad)) {
+                Fail("the map() clause can't name a bound of " + X.Text +
+                     ": " + Bad);
+                Ok = false;
+              }
+            Used.insert(X.RowLengths[D - 1]);
+            const std::string N = "(" + std::string(IntPtrType) + ")" +
+                                  X.RowLengths[D - 1]->getNameAsString();
+            LoT = linear(LoT, N, Los[D]);
+            HiT = linear(HiT, N, His[D]);
+          }
+          if (!Ok)
+            break;
+          O.LoT = LoT;
+          O.HiT = HiT;
+          O.Exact = Exact(X, X.Subscripts.size());
+          if (L->K != Layout::Object && !O.Exact) {
+            Fail("can't map " + X.Text + ": it may not run on every iteration "
+                 "(or a loop around it may stop early), so the ends of its "
+                 "range aren't surely touched");
+            Ok = false;
+            break;
+          }
+        } else {
+          O.Lo = Los[0];
+          O.Hi = His[0];
+          O.Exact = X.Affine && Exact(X, 1);
         }
+        Ones.push_back(std::move(O));
       }
       if (!Ok)
         continue;
-      if (Ls.size() == 1)
-        LoE = Ls[0];
-      if (Hs.size() == 1)
-        HiE = Hs[0];
-      std::vector<std::string> LT, HT;
-      for (const AffineExpr &E : Ls)
-        LT.push_back(text(E));
-      for (const AffineExpr &E : Hs)
-        HT.push_back(text(E));
-      LoT = fold(LT, true);
-      HiT = fold(HT, false);
-    }
-
-    // Loops that must run for the ends to be reached (pointer layouts).
-    // Every loop around an end-defining access, and the analyzed loop: an
-    // access inside an inner loop that doesn't run reaches nothing.
-    if (L->K != Layout::Object) {
-      MustRun.insert(A.RootIV);
-      for (const One &O : Ones)
-        if (O.Exact)
-          for (const VarDecl *V : O.X->InnerIVs)
-            if (!IsFixed(V))
-              MustRun.insert(V);
-    }
-
-    // Clamp an Object to its extent; a pointer's lowest index must be >= 0.
-    std::string StartT, LenT;
-    std::optional<int64_t> Units;
-    if (L->K == Layout::Object) {
-      const int64_t Last = L->OuterExtent - 1;
-      if (LoE && LoE->isConstant())
-        LoT = std::to_string(std::max<int64_t>(LoE->Const, 0));
-      else
-        LoT = "(" + LoT + " < 0 ? 0 : " + LoT + ")";
-      if (HiE && HiE->isConstant())
-        HiT = std::to_string(std::min<int64_t>(HiE->Const, Last));
-      else
-        HiT = "(" + HiT + " > " + std::to_string(Last) + " ? " +
-              std::to_string(Last) + " : " + HiT + ")";
-      if (LoE && HiE && LoE->isConstant() && HiE->isConstant()) {
-        const int64_t Lo = std::max<int64_t>(LoE->Const, 0);
-        const int64_t Hi = std::min<int64_t>(HiE->Const, Last);
-        Units = std::max<int64_t>(Hi - Lo + 1, 0);
-      }
-    } else if (LoE && LoE->isConstant()) {
-      if (LoE->Const < 0) {
-        Fail("can't map " + quoted(VD) + ": the loop reaches index " +
-             std::to_string(LoE->Const) + ", below the pointer");
+      if (Linear && llvm::any_of(Ones, [](const One &O) { return O.LoT.empty(); })) {
+        Fail("can't map " + quoted(VD) + ": linearized and plain subscripts "
+             "mixed");
         continue;
       }
-    } else if (!isAllDigits(LoT)) {
-      const std::string G = LoE ? nonNegative(*LoE) : LoT + " >= 0";
-      if (!llvm::is_contained(Guards, G))
-        Guards.push_back(G);
-    }
-    StartT = LoT;
-    if (Units) {
-      LenT = std::to_string(*Units);
-    } else if (LoE && HiE && L->K != Layout::Object) {
-      std::optional<AffineExpr> Len = minus(*HiE, *LoE);
-      if (Len && !__builtin_add_overflow(Len->Const, 1, &Len->Const)) {
-        if (Len->isConstant()) {
-          Units = std::max<int64_t>(Len->Const, 0);
-          LenT = std::to_string(*Units);
-        } else {
-          LenT = text(*Len);
-        }
-      }
-    }
-    if (LenT.empty()) {
-      const std::string D = StartT == "0" ? "(" + HiT + ") + 1"
-                                          : "(" + HiT + ") - (" + StartT +
-                                                ") + 1";
-      // A pointer's ends are touched elements whenever MapGuard holds (so
-      // the last is >= the first); an Object's clamped ends may cross when
-      // the loop doesn't run.
-      LenT = L->K == Layout::Object ? "(" + D + " > 0 ? " + D + " : 0)" : D;
-    }
-    R.ConstUnits = Units;
-    // An Object's clamped length is at most Hi - Lo + 1 (and its extent):
-    // when that is a constant (`g[i][j]` in the inner loop: one row), the
-    // model prices that, though the clause keeps its clamps.
-    if (!Units && L->K == Layout::Object && LoE && HiE)
-      if (std::optional<AffineExpr> Len = minus(*HiE, *LoE);
-          Len && Len->isConstant() && Len->Const < L->OuterExtent)
-        R.ConstUnits = std::max<int64_t>(Len->Const + 1, 0);
-    R.SectionText = VD->getNameAsString() + "[" + StartT + ":" + LenT + "]";
-    for (int64_t E : L->Inner)
-      R.Suffix += "[0:" + std::to_string(E) + "]";
-    R.SectionText += R.Suffix;
-    R.StartText = StartT;
-    R.LastText = HiT;
-    R.LenText = LenT;
-    if (L->K != Layout::Object) {
-      R.StartE = LoE;
-      R.LastE = HiE;
-    }
-    if (L->K == Layout::Object)
-      R.ObjectExtent = L->OuterExtent;
-    Used.insert(VD);
 
-    // `from`: an exact plain write whose outer subscript is one loop
-    // variable (+-1) and whose inner subscripts each run over a whole row,
-    // spanning the section exactly.
-    if (R.Written && !R.Read && !Linear && LoE && HiE) {
-      for (const One &O : Ones) {
-        const ArrayAccess &X = *O.X;
-        if (X.Kind != AccessKind::Write || X.ViaMember || !O.Exact)
-          continue;
-        auto OneIV = [&](const AffineExpr &S, bool Unit) {
-          const VarDecl *Only = nullptr;
-          for (const auto &[V, K] : S.IVTerms) {
-            if (IsFixed(V))
-              continue;
-            if (Only || (K != 1 && K != -1) || (Unit && K != 1))
-              return (const VarDecl *)nullptr;
-            Only = V;
-          }
-          return Only;
-        };
-        const VarDecl *Outer = OneIV(X.Subscripts[0], false);
-        bool Dense = Outer != nullptr;
-        llvm::SmallPtrSet<const VarDecl *, 4> Used;
-        if (Outer)
-          Used.insert(Outer);
-        for (size_t D = 1; Dense && D < X.Subscripts.size(); ++D) {
-          const AffineExpr &S = X.Subscripts[D];
-          const VarDecl *V = OneIV(S, true);
-          const IVRange *VR = V ? RangeOf(V) : nullptr;
-          Dense = V && S.SymTerms.empty() && S.Const == 0 &&
-                  Used.insert(V).second && VR && VR->Exact && VR->Lo &&
-                  VR->Hi && VR->Lo->isConstant() && VR->Lo->Const == 0 &&
-                  VR->Hi->isConstant() && D - 1 < L->Inner.size() &&
-                  VR->Hi->Const == L->Inner[D - 1] - 1;
+      // The section's ends: Object from every access (clamped below);
+      // otherwise from exact ones, everything else inside them.
+      std::string LoT, HiT;
+      std::optional<AffineExpr> LoE, HiE; // when a single affine expression
+      if (Linear) {
+        std::vector<std::string> Ls, Hs;
+        for (const One &O : Ones) {
+          if (!llvm::is_contained(Ls, O.LoT))
+            Ls.push_back(O.LoT);
+          if (!llvm::is_contained(Hs, O.HiT))
+            Hs.push_back(O.HiT);
         }
-        std::optional<int64_t> DL = constDiff(O.Lo, *LoE),
-                               DH = constDiff(O.Hi, *HiE);
-        if (Dense && DL && *DL == 0 && DH && *DH == 0) {
-          // The write covers the section only if the loops around it run:
-          // a section that doesn't depend on a loop that runs zero times
-          // (an Object's, or one set by an inner loop) is still copied back.
-          R.WriteCovers = true;
-          MustRun.insert(A.RootIV);
-          for (const VarDecl *V : X.InnerIVs)
-            if (!IsFixed(V))
-              MustRun.insert(V);
-          break;
+        LoT = fold(Ls, true);
+        HiT = fold(Hs, false);
+      } else {
+        std::vector<AffineExpr> Ls, Hs;
+        auto Add = [](std::vector<AffineExpr> &Into, const AffineExpr &E,
+                      bool Min) {
+          for (AffineExpr &O : Into)
+            if (std::optional<int64_t> D = constDiff(E, O)) {
+              if (Min ? *D < 0 : *D > 0)
+                O = E;
+              return;
+            }
+          Into.push_back(E);
+        };
+        const bool NeedExact = L->K != Layout::Object;
+        for (const One &O : Ones)
+          if (!NeedExact || O.Exact) {
+            Add(Ls, O.Lo, true);
+            Add(Hs, O.Hi, false);
+          }
+        if (Ls.empty()) {
+          Fail("can't map " + quoted(VD) + ": no access to it runs on every "
+               "iteration, so the ends of its range aren't surely touched");
+          continue;
+        }
+        // Every other access must lie inside the exact ones' span.
+        for (const One &O : Ones) {
+          if (!NeedExact || O.Exact)
+            continue;
+          auto Inside = [&](const AffineExpr &E, const std::vector<AffineExpr> &Ends,
+                            bool Low) {
+            return llvm::any_of(Ends, [&](const AffineExpr &End) {
+              std::optional<int64_t> D = constDiff(E, End);
+              return D && (Low ? *D >= 0 : *D <= 0);
+            });
+          };
+          if (!Inside(O.Lo, Ls, true) || !Inside(O.Hi, Hs, false)) {
+            Fail("can't map " + O.X->Text + ": it may not run on every "
+                 "iteration, and its range isn't inside what the other "
+                 "accesses to " + quoted(VD) + " surely touch");
+            Ok = false;
+            break;
+          }
+        }
+        if (!Ok)
+          continue;
+        if (Ls.size() == 1)
+          LoE = Ls[0];
+        if (Hs.size() == 1)
+          HiE = Hs[0];
+        std::vector<std::string> LT, HT;
+        for (const AffineExpr &E : Ls)
+          LT.push_back(text(E));
+        for (const AffineExpr &E : Hs)
+          HT.push_back(text(E));
+        LoT = fold(LT, true);
+        HiT = fold(HT, false);
+      }
+
+      // Loops that must run for the ends to be reached (pointer layouts).
+      // Every loop around an end-defining access, and the analyzed loop: an
+      // access inside an inner loop that doesn't run reaches nothing.
+      if (L->K != Layout::Object) {
+        MustRun.insert(A.RootIV);
+        for (const One &O : Ones)
+          if (O.Exact)
+            for (const VarDecl *V : O.X->InnerIVs)
+              if (!IsFixed(V))
+                MustRun.insert(V);
+        // Phase 2.5: a loop no test can show runs fails the whole plan
+        // later; fail here instead when the declared extent can map VD.
+        if (Try == 0 && Extent > 0) {
+          for (const VarDecl *V : MustRun) {
+            std::string G;
+            std::optional<std::string> Bad;
+            if (!SavedMustRun.count(V) && (Bad = RunsTest(V, G))) {
+              Fail(*Bad);
+              Ok = false;
+              break;
+            }
+          }
+          if (!Ok)
+            continue;
         }
       }
+
+      // Clamp an Object to its extent; a pointer's lowest index must be >= 0.
+      std::string StartT, LenT;
+      std::optional<int64_t> Units;
+      if (L->K == Layout::Object) {
+        const int64_t Last = L->OuterExtent - 1;
+        if (LoE && LoE->isConstant())
+          LoT = std::to_string(std::max<int64_t>(LoE->Const, 0));
+        else
+          LoT = "(" + LoT + " < 0 ? 0 : " + LoT + ")";
+        if (HiE && HiE->isConstant())
+          HiT = std::to_string(std::min<int64_t>(HiE->Const, Last));
+        else
+          HiT = "(" + HiT + " > " + std::to_string(Last) + " ? " +
+                std::to_string(Last) + " : " + HiT + ")";
+        if (LoE && HiE && LoE->isConstant() && HiE->isConstant()) {
+          const int64_t Lo = std::max<int64_t>(LoE->Const, 0);
+          const int64_t Hi = std::min<int64_t>(HiE->Const, Last);
+          Units = std::max<int64_t>(Hi - Lo + 1, 0);
+        }
+      } else if (LoE && LoE->isConstant()) {
+        if (LoE->Const < 0) {
+          Fail("can't map " + quoted(VD) + ": the loop reaches index " +
+               std::to_string(LoE->Const) + ", below the pointer");
+          continue;
+        }
+      } else if (!isAllDigits(LoT)) {
+        const std::string G = LoE ? nonNegative(*LoE) : LoT + " >= 0";
+        if (!llvm::is_contained(Guards, G))
+          Guards.push_back(G);
+      }
+      StartT = LoT;
+      if (Units) {
+        LenT = std::to_string(*Units);
+      } else if (LoE && HiE && L->K != Layout::Object) {
+        std::optional<AffineExpr> Len = minus(*HiE, *LoE);
+        if (Len && !__builtin_add_overflow(Len->Const, 1, &Len->Const)) {
+          if (Len->isConstant()) {
+            Units = std::max<int64_t>(Len->Const, 0);
+            LenT = std::to_string(*Units);
+          } else {
+            LenT = text(*Len);
+          }
+        }
+      }
+      if (LenT.empty()) {
+        const std::string D = StartT == "0" ? "(" + HiT + ") + 1"
+                                            : "(" + HiT + ") - (" + StartT +
+                                                  ") + 1";
+        // A pointer's ends are touched elements whenever MapGuard holds (so
+        // the last is >= the first); an Object's clamped ends may cross when
+        // the loop doesn't run.
+        LenT = L->K == Layout::Object ? "(" + D + " > 0 ? " + D + " : 0)" : D;
+      }
+      R.ConstUnits = Units;
+      // An Object's clamped length is at most Hi - Lo + 1 (and its extent):
+      // when that is a constant (`g[i][j]` in the inner loop: one row), the
+      // model prices that, though the clause keeps its clamps.
+      if (!Units && L->K == Layout::Object && LoE && HiE)
+        if (std::optional<AffineExpr> Len = minus(*HiE, *LoE);
+            Len && Len->isConstant() && Len->Const < L->OuterExtent)
+          R.ConstUnits = std::max<int64_t>(Len->Const + 1, 0);
+      R.SectionText = VD->getNameAsString() + "[" + StartT + ":" + LenT + "]";
+      for (int64_t E : L->Inner)
+        R.Suffix += "[0:" + std::to_string(E) + "]";
+      R.SectionText += R.Suffix;
+      R.StartText = StartT;
+      R.LastText = HiT;
+      R.LenText = LenT;
+      if (L->K != Layout::Object) {
+        R.StartE = LoE;
+        R.LastE = HiE;
+      }
+      if (L->K == Layout::Object)
+        R.ObjectExtent = L->OuterExtent;
+      Used.insert(VD);
+
+      // `from`: an exact plain write whose outer subscript is one loop
+      // variable (+-1) and whose inner subscripts each run over a whole row,
+      // spanning the section exactly.
+      if (R.Written && !R.Read && !Linear && LoE && HiE) {
+        for (const One &O : Ones) {
+          const ArrayAccess &X = *O.X;
+          if (X.Kind != AccessKind::Write || X.ViaMember || !O.Exact)
+            continue;
+          auto OneIV = [&](const AffineExpr &S, bool Unit) {
+            const VarDecl *Only = nullptr;
+            for (const auto &[V, K] : S.IVTerms) {
+              if (IsFixed(V))
+                continue;
+              if (Only || (K != 1 && K != -1) || (Unit && K != 1))
+                return (const VarDecl *)nullptr;
+              Only = V;
+            }
+            return Only;
+          };
+          const VarDecl *Outer = OneIV(X.Subscripts[0], false);
+          bool Dense = Outer != nullptr;
+          llvm::SmallPtrSet<const VarDecl *, 4> Used;
+          if (Outer)
+            Used.insert(Outer);
+          for (size_t D = 1; Dense && D < X.Subscripts.size(); ++D) {
+            const AffineExpr &S = X.Subscripts[D];
+            const VarDecl *V = OneIV(S, true);
+            const IVRange *VR = V ? RangeOf(V) : nullptr;
+            Dense = V && S.SymTerms.empty() && S.Const == 0 &&
+                    Used.insert(V).second && VR && VR->Exact && VR->Lo &&
+                    VR->Hi && VR->Lo->isConstant() && VR->Lo->Const == 0 &&
+                    VR->Hi->isConstant() && D - 1 < L->Inner.size() &&
+                    VR->Hi->Const == L->Inner[D - 1] - 1;
+          }
+          std::optional<int64_t> DL = constDiff(O.Lo, *LoE),
+                                 DH = constDiff(O.Hi, *HiE);
+          if (Dense && DL && *DL == 0 && DH && *DH == 0) {
+            // The write covers the section only if the loops around it run:
+            // a section that doesn't depend on a loop that runs zero times
+            // (an Object's, or one set by an inner loop) is still copied back.
+            R.WriteCovers = true;
+            MustRun.insert(A.RootIV);
+            for (const VarDecl *V : X.InnerIVs)
+              if (!IsFixed(V))
+                MustRun.insert(V);
+            break;
+          }
+        }
+      }
+      Plan.Regions.push_back(std::move(R));
+      break;
     }
-    Plan.Regions.push_back(std::move(R));
   }
   if (!Plan.Mappable)
     return Plan;
@@ -794,38 +885,12 @@ RegionPlan RegionPlanner::plan(const LoopInfo &LI, const LoopAccesses &A,
 
   // Every loop whose variable an end depends on must run at least once.
   for (const VarDecl *V : MustRun) {
-    const IVRange *R = RangeOf(V);
-    if (!R || !R->Lo || !R->Hi) {
-      Fail("the range of '" + V->getNameAsString() + "' is not known");
+    std::string G;
+    if (std::optional<std::string> Bad = RunsTest(V, G)) {
+      Fail(*Bad);
       return Plan;
     }
-    std::optional<AffineExpr> Span = minus(*R->Hi, *R->Lo);
-    if (!Span) {
-      Fail("the range of '" + V->getNameAsString() + "' overflows");
-      return Plan;
-    }
-    if (Span->isConstant()) {
-      if (Span->Const < 0) {
-        Fail("the loop over '" + V->getNameAsString() + "' never runs");
-        return Plan;
-      }
-      continue;
-    }
-    // Bounds that mention another loop's variable can't be tested before
-    // the loop.
-    bool Named = Span->IVTerms.empty() ||
-                 llvm::all_of(Span->IVTerms, [&](const auto &P) {
-                   return IsFixed(P.first);
-                 });
-    std::string Bad;
-    Named = Named && NameableExpr(*Span, Bad);
-    if (!Named) {
-      Fail("can't test before the loop that the loop over '" +
-           V->getNameAsString() + "' runs");
-      return Plan;
-    }
-    const std::string G = nonNegative(*Span);
-    if (!llvm::is_contained(Guards, G))
+    if (!G.empty() && !llvm::is_contained(Guards, G))
       Guards.push_back(G);
   }
   for (const std::string &G : Guards)

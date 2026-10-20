@@ -1,0 +1,63 @@
+# Phase 2.5 item 3 (tests/bounds.c pins the verdicts and access lines).
+#
+# 1. The sections the bounds give: an Object by its declared size, and a
+#    pointer parameter by its callers' array variables (q, x, and A when the
+#    pointer rule can't map it).
+RUN: %p05 %S/bounds.c -- %cflags | FileCheck --check-prefix=MAPS %s
+MAPS-LABEL: bounds.c:248:3
+MAPS: tab (map(to: tab[0:262144]), 8 B/elem)
+MAPS-LABEL: bounds.c:269:3
+MAPS: grid (map(to: grid[0:32][0:16]), 128 B/elem)
+MAPS-LABEL: bounds.c:312:3
+MAPS: q (map(to: q[0:256]), 8 B/elem)
+MAPS-LABEL: bounds.c:338:3
+MAPS: safety     : UNKNOWN
+#    The triangular nests: A's pointer section would need the inner loop to
+#    run, which can't be tested before the loop. One call passes `*pa`, so
+#    sz_tri's A has no extent; sz_tri_gpu's A maps by its extent.
+MAPS-LABEL: bounds.c:367:3
+MAPS: A (map(tofrom: A[0:n][0:32]), 256 B/elem), x (map(to: x[0:32]), 8 B/elem)
+MAPS-LABEL: bounds.c:447:3
+MAPS: A (map(tofrom: A[0:(((((__INTPTR_TYPE__)n - 1) > 31 ? 31 : ((__INTPTR_TYPE__)n - 1))) + 1 > 0 ? ((((__INTPTR_TYPE__)n - 1) > 31 ? 31 : ((__INTPTR_TYPE__)n - 1))) + 1 : 0)][0:32]), 256 B/elem), x (map(to: x[0:32]), 8 B/elem)
+MAPS-LABEL: bounds.c:484:3
+MAPS: o_tab (map(to: o_tab[0:262144]), 8 B/elem)
+
+# 2. -value-bounds=off: the value-bounded loops are UNKNOWN again, the
+#    size-bounded ones are not.
+RUN: %p05 -value-bounds=off %S/bounds.c -- %cflags | FileCheck --check-prefix=NOVAL %s
+NOVAL-LABEL: bounds.c:42:3
+NOVAL: safety     : UNKNOWN
+NOVAL-LABEL: bounds.c:206:3
+NOVAL: safety     : UNKNOWN
+NOVAL-LABEL: bounds.c:248:3
+NOVAL: safety     : SAFE
+
+# 3. -size-bounds=off: the other way round, and no section for q.
+RUN: %p05 -size-bounds=off %S/bounds.c -- %cflags | FileCheck --check-prefix=NOSIZE %s
+NOSIZE-LABEL: bounds.c:42:3
+NOSIZE: safety     : SAFE
+NOSIZE-LABEL: bounds.c:248:3
+NOSIZE: safety     : UNKNOWN
+NOSIZE-LABEL: bounds.c:312:3
+NOSIZE-NOT: map(to: q
+NOSIZE-LABEL: bounds.c:338:3
+NOSIZE-LABEL: bounds.c:367:3
+NOSIZE: safety     : UNKNOWN
+
+# 4. Calls that pass arrays of different sizes give no extent: no section.
+RUN: %p05 -policy naive %S/bounds.c -- %cflags | FileCheck --check-prefix=SIZES %s
+SIZES-LABEL: bounds.c:505:3
+SIZES: GPU offload declined: no map() section: q[idx[i]] is non-affine
+
+# 5. Review 2026-10-20: a row, a struct member, or an extent an affine access
+#    contradicts gives no bound: the gathers stay UNKNOWN.
+RUN: %p05 %S/bounds.c -- %cflags | FileCheck --check-prefix=SUBOBJ %s
+SUBOBJ-LABEL: bounds.c:535:3
+SUBOBJ: R b[idx[i]] : non-affine: subscript reads memory ('idx[i]'){{$}}
+SUBOBJ: safety     : UNKNOWN
+SUBOBJ-LABEL: bounds.c:559:3
+SUBOBJ: R d[idx[i]] : non-affine: subscript reads memory ('idx[i]'){{$}}
+SUBOBJ: safety     : UNKNOWN
+SUBOBJ-LABEL: bounds.c:585:3
+SUBOBJ: R p[idx[i]] : non-affine: subscript reads memory ('idx[i]'){{$}}
+SUBOBJ: safety     : UNKNOWN

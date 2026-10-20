@@ -442,6 +442,112 @@ bool AliasAnalyzer::callersProve(const FunctionDecl *F, const ValueDecl *A,
   return true;
 }
 
+std::optional<int64_t> AliasAnalyzer::callerExtent(const FunctionDecl *F,
+                                                   const VarDecl *P,
+                                                   unsigned Depth) {
+  if (Depth >= MaxCallerDepth)
+    return std::nullopt;
+  const FunctionDecl *Def = F ? F->getDefinition() : nullptr;
+  if (!Def || Def->isMain() || !Def->hasPrototype())
+    return std::nullopt;
+  if (Def->isExternallyVisible() && !WholeProgram)
+    return std::nullopt;
+  std::optional<unsigned> K = paramIndex(P, Def);
+  if (!K || role(Def, P) != Role::PtrParam)
+    return std::nullopt;
+  indexCalls();
+  if (AddressTaken.count(Def->getCanonicalDecl()))
+    return std::nullopt;
+  auto It = CallsTo.find(Def->getCanonicalDecl());
+  if (It == CallsTo.end())
+    return std::nullopt;
+  const QualType Pointee =
+      P->getType()->getPointeeType().getCanonicalType().getUnqualifiedType();
+  // Every call must pass the same size: a bound on the subscripts needs the
+  // largest, and a map() section of that many elements the smallest.
+  std::optional<int64_t> Size;
+  for (const CallExpr *CE : It->second) {
+    const QualType CT = CE->getCallee()->getType();
+    if ((CT->isPointerType() &&
+         CT->getPointeeType()->getAs<FunctionNoProtoType>()) ||
+        *K >= CE->getNumArgs())
+      return std::nullopt;
+    const Expr *Arg = peel(CE->getArg(*K));
+    std::optional<int64_t> E;
+    // A whole array variable, string or compound literal. Not a subobject
+    // (`m[k]`, `s.d`) or `*pa`: real code indexes a row as the whole
+    // matrix, a trailing `d[1]` as a flexible member, and `*pa` may point
+    // into a larger allocation, all past the array type's size.
+    const auto *CAT = Ctx.getAsConstantArrayType(Arg->getType());
+    const auto *Whole = dyn_cast<DeclRefExpr>(Arg);
+    if (CAT && ((Whole && isa<VarDecl>(Whole->getDecl())) ||
+                isa<StringLiteral>(Arg) || isa<CompoundLiteralExpr>(Arg))) {
+      if (CAT->getElementType().getCanonicalType().getUnqualifiedType() ==
+          Pointee)
+        E = CAT->getSize().getSExtValue();
+    } else if (CAT) {
+      return std::nullopt;
+    } else if (const auto *DRE = dyn_cast<DeclRefExpr>(Arg)) {
+      // The caller's own pointer parameter of the same type, a few levels up.
+      const VarDecl *Q = canon(DRE->getDecl());
+      if (Q && isa<ParmVarDecl>(Q) && Q->getType()->isPointerType() &&
+          Q->getType()
+                  ->getPointeeType()
+                  .getCanonicalType()
+                  .getUnqualifiedType() == Pointee)
+        E = callerExtent(enclosingFunction(CE), Q, Depth + 1);
+    }
+    if (!E || *E <= 0 || (Size && *Size != *E))
+      return std::nullopt;
+    Size = E;
+  }
+  return Size;
+}
+
+void AliasAnalyzer::assignExtents(const FunctionDecl *F, LoopAccesses &A) {
+  llvm::DenseSet<const VarDecl *> Contradicted;
+  for (ArrayAccess &X : A.Accesses) {
+    const VarDecl *VD = canon(X.Base);
+    if (!VD || X.Rank == 0)
+      continue;
+    X.Extents.assign(X.Rank, 0);
+    QualType T = VD->getType();
+    for (unsigned D = 0; D < X.Rank; ++D) {
+      if (const auto *CAT = Ctx.getAsConstantArrayType(T)) {
+        X.Extents[D] = CAT->getSize().getSExtValue();
+        T = CAT->getElementType();
+      } else if (const ArrayType *AT = Ctx.getAsArrayType(T)) {
+        T = AT->getElementType();
+      } else if (T->isPointerType()) {
+        if (D == 0 && !X.BaseMayAlias)
+          X.Extents[D] = callerExtent(F, VD, 0).value_or(0);
+        T = T->getPointeeType();
+      } else {
+        break;
+      }
+    }
+  }
+  // An affine access the loop ranges put provably outside an extent means
+  // the program reads past the declared size (or the extent is wrong): use
+  // none for that base.
+  for (const ArrayAccess &X : A.Accesses) {
+    const VarDecl *VD = canon(X.Base);
+    if (!VD || !X.Affine || X.Delinearized ||
+        X.Kind == AccessKind::AddressTaken)
+      continue;
+    for (size_t D = 0; D < X.Subscripts.size() && D < X.Extents.size(); ++D) {
+      AffineExpr Lo, Hi;
+      if (X.Extents[D] > 0 && subscriptBounds(X.Subscripts[D], A, Lo, Hi) &&
+          ((Lo.isConstant() && (Lo.Const < 0 || Lo.Const > X.Extents[D] - 1)) ||
+           (Hi.isConstant() && (Hi.Const < 0 || Hi.Const > X.Extents[D] - 1))))
+        Contradicted.insert(VD);
+    }
+  }
+  for (ArrayAccess &X : A.Accesses)
+    if (Contradicted.count(canon(X.Base)))
+      X.Extents.clear();
+}
+
 std::optional<std::string>
 AliasAnalyzer::runtimeCheck(const FunctionDecl *F, SourceLocation At,
                             const ValueDecl *A, const ValueDecl *B,
@@ -463,22 +569,31 @@ AliasAnalyzer::runtimeCheck(const FunctionDecl *F, SourceLocation At,
     for (const ArrayAccess &X : Acc.Accesses) {
       if (X.Base != V)
         continue;
+      // Phase 2.5: a non-affine access needs a bound on every dimension.
+      const size_t Rank = accessRank(X);
       if (!X.Affine) {
-        Why = "the range of " + Quoted(V) + " it touches is unknown: " +
-              X.Text + " is non-affine";
-        return false;
+        bool Bounded = Rank > 0;
+        for (size_t D = 0; Bounded && D < Rank; ++D) {
+          AffineExpr L, H;
+          Bounded = accessBounds(X, D, Acc, L, H);
+        }
+        if (!Bounded) {
+          Why = "the range of " + Quoted(V) + " it touches is unknown: " +
+                X.Text + " is non-affine";
+          return false;
+        }
       }
       QualType T = canon(V)->getType();
       // A read of a global by name (SafetyAnalysis, no expression) touches
       // the variable itself, whatever its type.
-      const size_t Depth =
-          !X.E ? 0 : X.Delinearized ? 1 : X.Subscripts.size();
+      const size_t Depth = !X.E ? 0 : X.Delinearized ? 1 : Rank;
       for (size_t D = 0; D < Depth; ++D) {
         if (T->isPointerType())
           T = T->getPointeeType();
         else if (const ArrayType *AT = Ctx.getAsArrayType(T))
           T = AT->getElementType();
-        else if (!(D == 0 && Depth == 1 && X.Subscripts[0].isConstant() &&
+        else if (!(D == 0 && Depth == 1 && X.Affine &&
+                   X.Subscripts[0].isConstant() &&
                    X.Subscripts[0].Const == 0)) {
           Why = "can't size " + X.Text;
           return false;
@@ -492,9 +607,9 @@ AliasAnalyzer::runtimeCheck(const FunctionDecl *F, SourceLocation At,
       Piece P;
       P.Size = Ctx.getTypeSizeInChars(T).getQuantity();
       std::vector<AffineExpr> Los, His;
-      for (const AffineExpr &S : X.Subscripts) {
+      for (size_t D = 0; D < Rank; ++D) {
         AffineExpr L, H;
-        if (!subscriptBounds(S, Acc, L, H)) {
+        if (!accessBounds(X, D, Acc, L, H)) {
           Why = "the range of " + Quoted(V) + " it touches is unknown: a "
                 "loop range in " + X.Text + " can't be bounded";
           return false;
@@ -518,6 +633,8 @@ AliasAnalyzer::runtimeCheck(const FunctionDecl *F, SourceLocation At,
                 X.RowLengths[D - 1]->getNameAsString();
           else if (D < X.DimExtents.size() && isAllDigits(X.DimExtents[D]))
             E = X.DimExtents[D];
+          else if (!X.Delinearized && D < X.Extents.size() && X.Extents[D] > 0)
+            E = std::to_string(X.Extents[D]);
           else {
             Why = "can't linearize " + X.Text + " (unknown row length)";
             return false;

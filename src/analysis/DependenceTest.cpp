@@ -381,6 +381,141 @@ bool subscriptBounds(const AffineExpr &S, const LoopAccesses &A,
   return true;
 }
 
+namespace {
+
+AffineExpr constExpr(int64_t V) {
+  AffineExpr E;
+  E.Const = V;
+  return E;
+}
+
+std::optional<int64_t> fit(Int V) {
+  if (V < INT64_MIN || V > INT64_MAX)
+    return std::nullopt;
+  return static_cast<int64_t>(V);
+}
+
+} // namespace
+
+bool valueBounds(const ValueBound &V, const LoopAccesses &A, AffineExpr &Lo,
+                 AffineExpr &Hi) {
+  using Op = ValueBound::Op;
+  auto Const = [&](int64_t L, int64_t H) {
+    Lo = constExpr(L);
+    Hi = constExpr(H);
+    return true;
+  };
+  switch (V.K) {
+  case Op::Affine:
+    return subscriptBounds(V.E, A, Lo, Hi);
+  case Op::Add: {
+    AffineExpr L, H;
+    for (const ValueBound &O : V.Ops) {
+      AffineExpr OL, OH;
+      if (!valueBounds(O, A, OL, OH) || !addScaled(L, OL, 1) ||
+          !addScaled(H, OH, 1))
+        return false;
+    }
+    Lo = std::move(L);
+    Hi = std::move(H);
+    return true;
+  }
+  case Op::Scale: {
+    AffineExpr OL, OH;
+    if (V.Ops.size() != 1 || !valueBounds(V.Ops[0], A, OL, OH))
+      return false;
+    AffineExpr L, H;
+    if (!addScaled(L, V.C >= 0 ? OL : OH, V.C) ||
+        !addScaled(H, V.C >= 0 ? OH : OL, V.C))
+      return false;
+    Lo = std::move(L);
+    Hi = std::move(H);
+    return true;
+  }
+  case Op::Mul: {
+    AffineExpr L1, H1, L2, H2;
+    if (V.Ops.size() != 2 || !valueBounds(V.Ops[0], A, L1, H1) ||
+        !valueBounds(V.Ops[1], A, L2, H2) || !L1.isConstant() ||
+        !H1.isConstant() || !L2.isConstant() || !H2.isConstant())
+      return false;
+    Int Min = 0, Max = 0;
+    bool First = true;
+    for (int64_t X : {L1.Const, H1.Const})
+      for (int64_t Y : {L2.Const, H2.Const}) {
+        const Int P = Int(X) * Y;
+        Min = First ? P : std::min(Min, P);
+        Max = First ? P : std::max(Max, P);
+        First = false;
+      }
+    std::optional<int64_t> L = fit(Min), H = fit(Max);
+    return L && H && Const(*L, *H);
+  }
+  case Op::Rem: {
+    const int64_t M = std::llabs(V.C) - 1;
+    if (V.Unsigned)
+      return Const(0, M);
+    AffineExpr OL, OH;
+    if (V.Ops.size() == 1 && valueBounds(V.Ops[0], A, OL, OH)) {
+      // x % c is x itself when 0 <= x <= |c| - 1 (or -(|c| - 1) <= x <= 0).
+      if (OL.isConstant() && OH.isConstant() &&
+          ((OL.Const >= 0 && OH.Const <= M) ||
+           (OL.Const >= -M && OH.Const <= 0)))
+        return Const(OL.Const, OH.Const);
+      // The result takes the sign of x.
+      if (OL.isConstant() && OL.Const >= 0)
+        return Const(0, M);
+      if (OH.isConstant() && OH.Const <= 0)
+        return Const(-M, 0);
+    }
+    return Const(-M, M);
+  }
+  case Op::And:
+    return Const(0, V.C);
+  case Op::Div:
+  case Op::Shr: {
+    AffineExpr OL, OH;
+    if (V.Ops.size() != 1 || !valueBounds(V.Ops[0], A, OL, OH))
+      return false;
+    auto Apply = [&](int64_t X) {
+      return V.K == Op::Div ? X / V.C : X >> V.C;
+    };
+    // Division truncates toward zero and is monotonic for c > 0; a right
+    // shift of a negative value is implementation-defined, so x >= 0 only.
+    if (OL.isConstant() && OH.isConstant() &&
+        (V.K == Op::Div || OL.Const >= 0))
+      return Const(Apply(OL.Const), Apply(OH.Const));
+    // 0 <= x / c <= x for x >= 0.
+    if (OL.isConstant() && OL.Const >= 0) {
+      Lo = constExpr(Apply(OL.Const));
+      Hi = std::move(OH);
+      return true;
+    }
+    return false;
+  }
+  }
+  return false;
+}
+
+size_t accessRank(const ArrayAccess &X) {
+  return X.Affine ? X.Subscripts.size() : X.Rank;
+}
+
+bool accessBounds(const ArrayAccess &X, size_t Dim, const LoopAccesses &A,
+                  AffineExpr &Lo, AffineExpr &Hi) {
+  if (X.Affine) {
+    if (Dim < X.Subscripts.size() && subscriptBounds(X.Subscripts[Dim], A, Lo, Hi))
+      return true;
+  } else if (Dim < X.Bounds.size() && valueBounds(X.Bounds[Dim], A, Lo, Hi)) {
+    return true;
+  }
+  if (X.Kind == AccessKind::AddressTaken || X.Delinearized ||
+      Dim >= X.Extents.size() || X.Extents[Dim] <= 0)
+    return false;
+  Lo = constExpr(0);
+  Hi = constExpr(X.Extents[Dim] - 1);
+  return true;
+}
+
 LoopDependence testLoopDependences(const LoopAccesses &A, int64_t RootStep,
                                    const AliasOracle *Alias) {
   LoopDependence D;
@@ -504,6 +639,26 @@ LoopDependence testLoopDependences(const LoopAccesses &A, int64_t RootStep,
       const std::string Pair =
           K == L ? describe(X) : describe(X) + " and " + describe(Y);
       if (!X.Affine || !Y.Affine) {
+        // Phase 2.5: two accesses whose ranges don't meet in some
+        // dimension never touch the same element.
+        if (K != L && !X.Delinearized && !Y.Delinearized &&
+            accessRank(X) == accessRank(Y)) {
+          const std::vector<AffineExpr> Facts = FactsFor(X, Y);
+          bool Apart = false;
+          for (size_t Dim = 0; !Apart && Dim < accessRank(X); ++Dim) {
+            AffineExpr XL, XH, YL, YH;
+            if (!accessBounds(X, Dim, A, XL, XH) ||
+                !accessBounds(Y, Dim, A, YL, YH))
+              continue;
+            AffineExpr D1 = XH, D2 = YH;
+            Apart = (addScaled(D1, YL, -1) && provablyNegative(D1, Facts)) ||
+                    (addScaled(D2, XL, -1) && provablyNegative(D2, Facts));
+          }
+          if (Apart) {
+            ++D.IndependentByRange;
+            continue;
+          }
+        }
         const ArrayAccess &Bad = X.Affine ? Y : X;
         Note(DepOutcome::Unknown, nonAffineCategory(Bad),
              "cannot test " + Pair + ": " +
@@ -592,7 +747,8 @@ std::string dependenceSummary(const LoopDependence &D) {
   if (D.SingleIteration)
     return "at most one iteration: nothing can be carried";
   const unsigned Indep = D.IndependentByZIV + D.IndependentByGCD +
-                         D.IndependentBySIV + D.IndependentByBanerjee;
+                         D.IndependentBySIV + D.IndependentByBanerjee +
+                         D.IndependentByRange;
   std::string S = std::to_string(D.PairsTested) + " pair(s), " +
                   std::to_string(Indep) + " independent";
   std::string By;
@@ -604,6 +760,7 @@ std::string dependenceSummary(const LoopDependence &D) {
   Add(D.IndependentByGCD, "GCD");
   Add(D.IndependentBySIV, "SIV");
   Add(D.IndependentByBanerjee, "Banerjee");
+  Add(D.IndependentByRange, "range");
   if (!By.empty())
     S += " (" + By + ")";
   if (D.PrivatePairsSkipped)

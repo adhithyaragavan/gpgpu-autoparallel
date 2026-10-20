@@ -80,6 +80,11 @@ public:
                                           const LoopAccesses &Acc,
                                           std::string &Why);
 
+  /// Phase 2.5: fill ArrayAccess::Extents for the accesses of a loop in F:
+  /// constant array types, and for a pointer parameter's first dimension the
+  /// size of the constant array every call passes (callerExtent).
+  void assignExtents(const clang::FunctionDecl *F, LoopAccesses &A);
+
   /// The function whose body contains S.
   const clang::FunctionDecl *enclosingFunction(const clang::Stmt *S);
 
@@ -100,6 +105,14 @@ private:
   bool callersProve(const clang::FunctionDecl *F, const clang::ValueDecl *A,
                     const clang::ValueDecl *B, unsigned Depth);
   void indexCalls();
+  /// The number of elements of the object P (an unmodified pointer
+  /// parameter of F) points to the first of, the same at every call: each
+  /// passes an lvalue of a constant array type with P's element type, or the
+  /// caller's own parameter of P's type with an extent of its own. Needs
+  /// every call visible, as callersProve does. Nullopt otherwise (sizes that
+  /// differ, too), or when never called.
+  std::optional<int64_t> callerExtent(const clang::FunctionDecl *F,
+                                      const clang::VarDecl *P, unsigned Depth);
 
   clang::ASTContext &Ctx;
   bool WholeProgram;

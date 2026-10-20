@@ -484,8 +484,8 @@ void nonlinear(double *a, int n) {
   // CHECK: nest ivs   : i{{$}}
   // CHECK: accesses   : 3 (0 affine){{$}}
   // CHECK-NEXT: W a[i * i] : non-affine: subscript multiplies two non-constant terms ('i * i'){{$}}
-  // CHECK-NEXT: W a[i / 2] : non-affine: subscript uses operator '/'{{$}}
-  // CHECK-NEXT: W a[i % 4] : non-affine: subscript uses operator '%'{{$}}
+  // CHECK-NEXT: W a[i / 2] : non-affine: subscript uses operator '/'; in [0, n - 1]{{$}}
+  // CHECK-NEXT: W a[i % 4] : non-affine: subscript uses operator '%'; in [0, 3]{{$}}
   // CHECK-NEXT: safety     : UNKNOWN{{$}}
   // CHECK: - cannot test W a[i * i]: W a[i * i] is non-affine (subscript multiplies two non-constant terms ('i * i')){{$}}
   // CHECK: deps       : 6 pair(s), 0 independent{{$}}

@@ -578,7 +578,7 @@ void c_indirect_masked(double *a, const int *idx, int n) {
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
   // CHECK: nest ivs   : i{{$}}
   // CHECK: accesses   : 2 (1 affine){{$}}
-  // CHECK-NEXT: RW a[idx[i] & 7] : non-affine: subscript uses operator '&'{{$}}
+  // CHECK-NEXT: RW a[idx[i] & 7] : non-affine: subscript uses operator '&'; in [0, 7]{{$}}
   // CHECK-NEXT: R idx[i] : [i]{{$}}
   // CHECK-NEXT: safety     : UNKNOWN{{$}}
   // CHECK: - cannot test RW a[idx[i] & 7]: RW a[idx[i] & 7] is non-affine (subscript uses operator '&'){{$}}
@@ -598,7 +598,7 @@ void c_modulo(double *a, int n) {
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
   // CHECK: nest ivs   : i{{$}}
   // CHECK: accesses   : 1 (0 affine){{$}}
-  // CHECK-NEXT: W a[i % 3] : non-affine: subscript uses operator '%'{{$}}
+  // CHECK-NEXT: W a[i % 3] : non-affine: subscript uses operator '%'; in [0, 2]{{$}}
   // CHECK-NEXT: safety     : UNKNOWN{{$}}
   // CHECK: - cannot test W a[i % 3]: W a[i % 3] is non-affine (subscript uses operator '%'){{$}}
   // CHECK: rejected   : non-affine-subscript{{$}}

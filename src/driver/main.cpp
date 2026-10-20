@@ -116,6 +116,8 @@ public:
       p05::CallEffects CallFx;
       if (UseSummaries)
         CallFx = Summaries.composeCalls(Accesses);
+      if (p05::sizeBoundsFromFlags())
+        Alias.assignExtents(Alias.enclosingFunction(LI.Loop), Accesses);
       AllSafety.push_back(Safety.analyzeLoop(LI, Accesses,
                                              Scalars.analyzeLoop(LI),
                                              UseSummaries ? &CallFx : nullptr));

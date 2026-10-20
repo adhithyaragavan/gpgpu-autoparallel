@@ -1,16 +1,42 @@
 #include "analysis/AffineAccess.h"
+#include "analysis/DependenceTest.h"
+#include "analysis/Profitability.h"
 
 #include "clang/AST/ParentMapContext.h"
 #include "clang/AST/PrettyPrinter.h"
 #include "clang/AST/RecursiveASTVisitor.h"
 #include "clang/Lex/Lexer.h"
 #include "llvm/ADT/DenseSet.h"
+#include "llvm/Support/CommandLine.h"
 
 #include <utility>
 
 using namespace clang;
 
 namespace p05 {
+
+enum class OnOff { On, Off };
+
+static llvm::cl::opt<OnOff> FlagValueBounds(
+    "value-bounds",
+    llvm::cl::desc("Bound non-affine subscripts by their value (Phase 2.5)"),
+    llvm::cl::values(
+        clEnumValN(OnOff::On, "on", "i % 3, x & 7, i / 2, j * j (default)"),
+        clEnumValN(OnOff::Off, "off", "no bound (ablation baseline)")),
+    llvm::cl::init(OnOff::On), llvm::cl::cat(optionCategory()));
+
+static llvm::cl::opt<OnOff> FlagSizeBounds(
+    "size-bounds",
+    llvm::cl::desc("Bound accesses by the declared array size (Phase 2.5)"),
+    llvm::cl::values(
+        clEnumValN(OnOff::On, "on",
+                   "constant arrays, and pointer parameters every visible "
+                   "call passes one to (default)"),
+        clEnumValN(OnOff::Off, "off", "no bound (ablation baseline)")),
+    llvm::cl::init(OnOff::On), llvm::cl::cat(optionCategory()));
+
+bool valueBoundsFromFlags() { return FlagValueBounds == OnOff::On; }
+bool sizeBoundsFromFlags() { return FlagSizeBounds == OnOff::On; }
 
 int64_t AffineExpr::coeff(const VarDecl *IV) const {
   auto It = IVTerms.find(IV);
@@ -596,6 +622,155 @@ public:
     return false;
   }
 
+  /// Phase 2.5: what bounds E's value when it isn't affine (ValueBound in
+  /// the header). Affine parts become Affine leaves; nullopt when some part
+  /// has no bound. Doesn't change Load (the reason is build()'s).
+  std::optional<ValueBound> bound(const Expr *E, unsigned Depth = 0) const {
+    if (Depth > 8)
+      return std::nullopt;
+    E = E->IgnoreParens();
+    {
+      const ArrayAccess::SubscriptLoad Saved = Load;
+      AffineExpr AE;
+      std::string W;
+      const bool Ok = build(E, AE, W);
+      Load = Saved;
+      if (Ok) {
+        ValueBound V;
+        V.E = std::move(AE);
+        return V;
+      }
+    }
+    auto Node = [](ValueBound::Op K, std::vector<ValueBound> Ops,
+                   int64_t C = 0) {
+      ValueBound V;
+      V.K = K;
+      V.Ops = std::move(Ops);
+      V.C = C;
+      return V;
+    };
+
+    if (const auto *CE = dyn_cast<CastExpr>(E)) {
+      switch (CE->getCastKind()) {
+      case CK_LValueToRValue:
+      case CK_NoOp:
+        return bound(CE->getSubExpr(), Depth + 1);
+      case CK_IntegralCast: {
+        std::optional<ValueBound> S = bound(CE->getSubExpr(), Depth + 1);
+        if (!S)
+          return std::nullopt;
+        if (valuePreserving(CE->getSubExpr()->getType(), CE->getType()))
+          return S;
+        // A narrowing or sign-changing conversion keeps a value that fits.
+        const QualType To = CE->getType();
+        const unsigned W = C.Ctx.getIntWidth(To);
+        std::optional<int64_t> Lo, Hi;
+        if (S->K == ValueBound::Op::And) {
+          Lo = 0;
+          Hi = S->C;
+        } else if (S->K == ValueBound::Op::Rem) {
+          Hi = std::llabs(S->C) - 1;
+          if (S->Unsigned)
+            Lo = 0;
+          else
+            Lo = -*Hi;
+        }
+        if (!Lo || W < 2 || W > 64)
+          return std::nullopt;
+        const bool Signed = To->isSignedIntegerOrEnumerationType();
+        const int64_t Max = W == 64 ? INT64_MAX
+                                    : (int64_t(1) << (Signed ? W - 1 : W)) - 1;
+        const int64_t Min = Signed ? (W == 64 ? INT64_MIN : -Max - 1) : 0;
+        if (*Lo < Min || *Hi > Max)
+          return std::nullopt;
+        return S;
+      }
+      default:
+        return std::nullopt;
+      }
+    }
+
+    if (const auto *UO = dyn_cast<UnaryOperator>(E)) {
+      if (UO->getOpcode() == UO_Plus)
+        return bound(UO->getSubExpr(), Depth + 1);
+      if (UO->getOpcode() == UO_Minus &&
+          !UO->getType()->isUnsignedIntegerOrEnumerationType())
+        if (std::optional<ValueBound> S = bound(UO->getSubExpr(), Depth + 1))
+          return Node(ValueBound::Op::Scale, {std::move(*S)}, -1);
+      return std::nullopt;
+    }
+
+    const auto *BO = dyn_cast<BinaryOperator>(E);
+    if (!BO)
+      return std::nullopt;
+    const BinaryOperatorKind Op = BO->getOpcode();
+    // Unsigned arithmetic wraps: x - 1 at x == 0 is no small negative value.
+    // %, &, / and >> can't wrap.
+    const bool Unsigned = BO->getType()->isUnsignedIntegerOrEnumerationType();
+    std::optional<int64_t> RC = constant(BO->getRHS());
+    switch (Op) {
+    case BO_Add:
+    case BO_Sub:
+    case BO_Mul: {
+      if (Unsigned)
+        return std::nullopt;
+      std::optional<ValueBound> L = bound(BO->getLHS(), Depth + 1);
+      std::optional<ValueBound> R = bound(BO->getRHS(), Depth + 1);
+      if (!L || !R)
+        return std::nullopt;
+      if (Op == BO_Add)
+        return Node(ValueBound::Op::Add, {std::move(*L), std::move(*R)});
+      if (Op == BO_Sub)
+        return Node(ValueBound::Op::Add,
+                    {std::move(*L),
+                     Node(ValueBound::Op::Scale, {std::move(*R)}, -1)});
+      std::optional<int64_t> LC = constant(BO->getLHS());
+      if (LC)
+        return Node(ValueBound::Op::Scale, {std::move(*R)}, *LC);
+      if (RC)
+        return Node(ValueBound::Op::Scale, {std::move(*L)}, *RC);
+      return Node(ValueBound::Op::Mul, {std::move(*L), std::move(*R)});
+    }
+    case BO_Rem: {
+      if (!RC || *RC == 0 || *RC == INT64_MIN)
+        return std::nullopt;
+      std::vector<ValueBound> Ops;
+      if (std::optional<ValueBound> L = bound(BO->getLHS(), Depth + 1))
+        Ops.push_back(std::move(*L));
+      ValueBound V = Node(ValueBound::Op::Rem, std::move(Ops), *RC);
+      V.Unsigned = Unsigned;
+      return V;
+    }
+    case BO_And: {
+      std::optional<int64_t> LC = constant(BO->getLHS());
+      const std::optional<int64_t> &K = RC ? RC : LC;
+      if (!K || *K < 0)
+        return std::nullopt;
+      return Node(ValueBound::Op::And, {}, *K);
+    }
+    case BO_Div:
+    case BO_Shr: {
+      if (!RC || (Op == BO_Div ? *RC <= 0 : (*RC < 0 || *RC > 62)))
+        return std::nullopt;
+      std::optional<ValueBound> L = bound(BO->getLHS(), Depth + 1);
+      if (!L)
+        return std::nullopt;
+      return Node(Op == BO_Div ? ValueBound::Op::Div : ValueBound::Op::Shr,
+                  {std::move(*L)}, *RC);
+    }
+    default:
+      return std::nullopt;
+    }
+  }
+
+  /// E's value, if it folds to a constant that fits in int64_t.
+  std::optional<int64_t> constant(const Expr *E) const {
+    Expr::EvalResult R;
+    if (!E->isValueDependent() && E->EvaluateAsInt(R, C.Ctx) && R.Val.isInt())
+      return R.Val.getInt().tryExtValue();
+    return std::nullopt;
+  }
+
   static bool scale(AffineExpr &A, int64_t K, std::string &Why) {
     auto Mul = [&](int64_t &V) {
       if (__builtin_mul_overflow(V, K, &V)) {
@@ -1100,6 +1275,11 @@ private:
       Acc.DimExtents.clear();
       Acc.Delinearized = false;
     }
+    // A bound over the loop ranges means nothing when they can't be trusted.
+    if (!Poison.empty() && !Acc.Bounds.empty()) {
+      Acc.Bounds.clear();
+      Acc.DimExtents.clear();
+    }
     Out.Accesses.push_back(std::move(Acc));
   }
 
@@ -1109,9 +1289,35 @@ private:
       Acc.Base = nullptr;
     Acc.NonAffineReason = std::move(Why);
     Acc.Subscripts.clear();
-    Acc.DimExtents.clear();
+    if (Acc.Bounds.empty())
+      Acc.DimExtents.clear();
     Acc.Delinearized = false;
     push(std::move(Acc));
+  }
+
+  /// Phase 2.5: a ValueBound for each subscript in Idx (the base offset
+  /// added to the first), or nothing if one has none.
+  std::vector<ValueBound> boundAll(const AffineBuilder &B,
+                                   llvm::ArrayRef<const Expr *> Idx,
+                                   const AffineExpr &BaseOffset) {
+    if (!valueBoundsFromFlags())
+      return {};
+    std::vector<ValueBound> Out;
+    for (size_t D = 0; D < Idx.size(); ++D) {
+      std::optional<ValueBound> V = B.bound(Idx[D]);
+      if (!V)
+        return {};
+      if (D == 0 && !(BaseOffset.isConstant() && BaseOffset.Const == 0)) {
+        ValueBound Off;
+        Off.E = BaseOffset;
+        ValueBound Sum;
+        Sum.K = ValueBound::Op::Add;
+        Sum.Ops = {std::move(*V), std::move(Off)};
+        V = std::move(Sum);
+      }
+      Out.push_back(std::move(*V));
+    }
+    return Out;
   }
 
   /// Resolve a pointer/array variable used as an access base to a variable
@@ -1319,6 +1525,7 @@ private:
     }
     Acc.Base = Base;
     Acc.BaseSubstituted = Base != BaseVD;
+    Acc.Rank = Idx.size();
     Acc.DimExtents = dimExtents(BaseVD->getType(), Idx.size());
 
     AffineBuilder B(C, IVs, IVsAtDecl);
@@ -1351,6 +1558,7 @@ private:
         }
       }
       Acc.Load = B.Load;
+      Acc.Bounds = boundAll(B, Idx, BaseOffset);
       nonAffine(Acc, Why);
       return;
     }
@@ -1380,14 +1588,40 @@ private:
     }
     Acc.Base = Base;
     Acc.BaseSubstituted = Base != VD;
+    Acc.Rank = 1;
     Acc.DimExtents = {std::string()};
     AffineBuilder B(C, IVs, IVsAtDecl);
+    const AffineExpr BaseOffset = AE;
     for (const auto &[E, Sign] : Parts) {
       AffineExpr Part;
       if (!B.build(E, Part, Why) ||
           (Sign < 0 && !AffineBuilder::scale(Part, -1, Why)) ||
           !AffineBuilder::add(AE, Part, Why)) {
         Acc.Load = B.Load;
+        // Phase 2.5: the sum of the parts' bounds, plus the base offset.
+        if (valueBoundsFromFlags()) {
+          ValueBound Sum;
+          Sum.K = ValueBound::Op::Add;
+          Sum.Ops.emplace_back();
+          Sum.Ops.back().E = BaseOffset;
+          for (const auto &[PE, PS] : Parts) {
+            std::optional<ValueBound> V = B.bound(PE);
+            if (!V) {
+              Sum.Ops.clear();
+              break;
+            }
+            if (PS < 0) {
+              ValueBound Neg;
+              Neg.K = ValueBound::Op::Scale;
+              Neg.C = -1;
+              Neg.Ops.push_back(std::move(*V));
+              V = std::move(Neg);
+            }
+            Sum.Ops.push_back(std::move(*V));
+          }
+          if (!Sum.Ops.empty())
+            Acc.Bounds.push_back(std::move(Sum));
+        }
         nonAffine(Acc, Why);
         return;
       }
@@ -1631,7 +1865,20 @@ void printAccessReport(llvm::raw_ostream &OS, const LoopAccesses &A) {
   for (const ArrayAccess &Acc : A.Accesses) {
     OS << "    " << toString(Acc.Kind) << " " << Acc.Text << " : ";
     if (!Acc.Affine) {
-      OS << "non-affine: " << Acc.NonAffineReason << "\n";
+      OS << "non-affine: " << Acc.NonAffineReason;
+      // Phase 2.5: what still bounds it, when every dimension has a bound.
+      std::string In;
+      for (size_t D = 0; D < Acc.Rank; ++D) {
+        AffineExpr Lo, Hi;
+        if (!accessBounds(Acc, D, A, Lo, Hi)) {
+          In.clear();
+          break;
+        }
+        In += "[" + Lo.str() + ", " + Hi.str() + "]";
+      }
+      if (!In.empty())
+        OS << "; in " << In;
+      OS << "\n";
       continue;
     }
     for (const AffineExpr &S : Acc.Subscripts)
