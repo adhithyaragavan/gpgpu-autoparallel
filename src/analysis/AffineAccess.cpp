@@ -7,8 +7,12 @@
 #include "clang/AST/RecursiveASTVisitor.h"
 #include "clang/Lex/Lexer.h"
 #include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/StringSet.h"
 #include "llvm/Support/CommandLine.h"
 
+#include <functional>
+#include <map>
+#include <memory>
 #include <utility>
 
 using namespace clang;
@@ -35,8 +39,114 @@ static llvm::cl::opt<OnOff> FlagSizeBounds(
         clEnumValN(OnOff::Off, "off", "no bound (ablation baseline)")),
     llvm::cl::init(OnOff::On), llvm::cl::cat(optionCategory()));
 
+static llvm::cl::opt<OnOff> FlagFieldBases(
+    "field-bases",
+    llvm::cl::desc("Name bases reached through struct fields (Phase 2.5)"),
+    llvm::cl::values(
+        clEnumValN(OnOff::On, "on",
+                   "s->atoms->r[i], SD.grid[i], and field types kept apart "
+                   "(default)"),
+        clEnumValN(OnOff::Off, "off", "unknown base (ablation baseline)")),
+    llvm::cl::init(OnOff::On), llvm::cl::cat(optionCategory()));
+
 bool valueBoundsFromFlags() { return FlagValueBounds == OnOff::On; }
 bool sizeBoundsFromFlags() { return FlagSizeBounds == OnOff::On; }
+bool fieldBasesFromFlags() { return FlagFieldBases == OnOff::On; }
+
+namespace {
+/// Every field path made in this translation unit, by key (pathKey) and by
+/// its synthetic declaration. Cleared by each AffineAnalyzer (one per TU).
+struct PathRegistry {
+  std::map<std::string, std::unique_ptr<FieldPath>> ByKey;
+  llvm::DenseMap<const VarDecl *, const FieldPath *> ByDecl;
+};
+PathRegistry &registry() {
+  static PathRegistry R;
+  return R;
+}
+} // namespace
+
+const FieldPath *fieldPath(const ValueDecl *Base) {
+  const auto *VD = dyn_cast_or_null<VarDecl>(Base);
+  if (!VD)
+    return nullptr;
+  auto It = registry().ByDecl.find(VD);
+  return It == registry().ByDecl.end() ? nullptr : It->second;
+}
+
+QualType accessedType(const ArrayAccess &X) {
+  const Expr *E = X.Within.empty() ? X.E : X.Within.front();
+  return E ? E->getType() : QualType();
+}
+
+bool isMemberAccess(const ArrayAccess &X) {
+  const Expr *E = X.Within.empty() ? X.E : X.Within.front();
+  return E && isa<MemberExpr>(E->IgnoreParens());
+}
+
+bool strictlyTyped(const ArrayAccess &X) {
+  const Expr *E = X.Within.empty() ? X.E : X.Within.front();
+  if (!E)
+    return false;
+  // A union member may be read through another member (type punning), and a
+  // bit-field shares its memory location with its neighbours.
+  for (E = E->IgnoreParens();;) {
+    if (const auto *ME = dyn_cast<MemberExpr>(E)) {
+      const auto *FD = dyn_cast<FieldDecl>(ME->getMemberDecl());
+      if (!FD || FD->isBitField() || FD->getParent()->isUnion())
+        return false;
+      E = ME->getBase()->IgnoreParenImpCasts();
+    } else if (const auto *ASE = dyn_cast<ArraySubscriptExpr>(E)) {
+      E = ASE->getBase()->IgnoreParenImpCasts();
+    } else {
+      return true;
+    }
+  }
+}
+
+bool scalarTypesMayAlias(QualType A, QualType B, ASTContext &Ctx) {
+  // __attribute__((may_alias)) sits on a typedef, which canonical types lose.
+  auto MayAlias = [&Ctx](QualType T) {
+    for (unsigned Steps = 0; Steps < 32; ++Steps) {
+      if (const auto *TT = T->getAs<TypedefType>();
+          TT && TT->getDecl()->hasAttr<MayAliasAttr>())
+        return true;
+      const QualType Next = T.getSingleStepDesugaredType(Ctx);
+      if (Next == T)
+        return false;
+      T = Next;
+    }
+    return true;
+  };
+  if (MayAlias(A) || MayAlias(B))
+    return true;
+  A = A.getCanonicalType().getUnqualifiedType();
+  B = B.getCanonicalType().getUnqualifiedType();
+  auto Scalar = [](QualType T) {
+    if (const auto *ET = T->getAs<EnumType>())
+      return !ET->getDecl()->isComplete() ? QualType()
+                                          : ET->getDecl()->getIntegerType();
+    if (T->isAnyCharacterType() || T->isBooleanType() ||
+        !(T->isIntegerType() || T->isRealFloatingType() ||
+          T->isPointerType()))
+      return QualType();
+    return T;
+  };
+  QualType SA = Scalar(A), SB = Scalar(B);
+  if (SA.isNull() || SB.isNull())
+    return true;
+  SA = SA.getCanonicalType();
+  SB = SB.getCanonicalType();
+  if (SA->isAnyCharacterType() || SB->isAnyCharacterType())
+    return true;
+  if (SA->isPointerType() && SB->isPointerType())
+    return true;
+  if (SA->isIntegerType() && SB->isIntegerType())
+    return Ctx.getTypeSize(SA) == Ctx.getTypeSize(SB);
+  if (SA->isRealFloatingType() && SB->isRealFloatingType())
+    return SA == SB;
+  return false;
+}
 
 int64_t AffineExpr::coeff(const VarDecl *IV) const {
   auto It = IVTerms.find(IV);
@@ -245,6 +355,270 @@ bool mayAlias(QualType Written, QualType Var, ASTContext &Ctx) {
     return Ctx.getCorrespondingUnsignedType(Written) ==
            Ctx.getCorrespondingUnsignedType(Var);
   return false;
+}
+
+/// Phase 2.5: E without parentheses and the casts that keep its value
+/// (an lvalue's load, NoOp).
+const Expr *peelLoads(const Expr *E) {
+  while (true) {
+    E = E->IgnoreParens();
+    const auto *ICE = dyn_cast<ImplicitCastExpr>(E);
+    if (!ICE || (ICE->getCastKind() != CK_LValueToRValue &&
+                 ICE->getCastKind() != CK_NoOp))
+      return E;
+    E = ICE->getSubExpr();
+  }
+}
+
+/// A key naming the variable or field path E is (`s`, `s->atoms`,
+/// `SD.grid`), equal for two expressions only if they name the same thing;
+/// nullopt for anything else.
+std::optional<std::string> pathKey(const Expr *E) {
+  E = peelLoads(E);
+  if (const auto *DRE = dyn_cast<DeclRefExpr>(E)) {
+    const auto *VD = dyn_cast<VarDecl>(DRE->getDecl());
+    if (!VD)
+      return std::nullopt;
+    return "v" + std::to_string(reinterpret_cast<uintptr_t>(
+                     VD->getCanonicalDecl()));
+  }
+  if (const auto *ME = dyn_cast<MemberExpr>(E)) {
+    std::optional<std::string> B = pathKey(ME->getBase());
+    if (!B)
+      return std::nullopt;
+    return *B + (ME->isArrow() ? "->" : ".") +
+           std::to_string(reinterpret_cast<uintptr_t>(
+               ME->getMemberDecl()->getCanonicalDecl()));
+  }
+  return std::nullopt;
+}
+
+/// Parse E as a field path (FieldPath, without Decl): a root variable and
+/// at least one link, each field of a struct (not a union), none volatile or
+/// atomic, the last a pointer to an object type (not to an array) or an
+/// array member. False when E is not one; the root variable's checks are
+/// the caller's.
+bool parsePath(const Expr *E, FieldPath &P) {
+  const auto *ME = dyn_cast<MemberExpr>(peelLoads(E));
+  if (!ME)
+    return false;
+  llvm::SmallVector<const MemberExpr *, 4> Chain;
+  const Expr *Cur = ME;
+  while (const auto *M = dyn_cast<MemberExpr>(peelLoads(Cur))) {
+    Chain.insert(Chain.begin(), M);
+    Cur = M->getBase();
+  }
+  const auto *DRE = dyn_cast<DeclRefExpr>(peelLoads(Cur));
+  const auto *Root = DRE ? dyn_cast<VarDecl>(DRE->getDecl()) : nullptr;
+  if (!Root || Root->getType().isVolatileQualified())
+    return false;
+  P.Root = canon(Root);
+  P.Spelling = Root->getNameAsString();
+  std::string Key = *pathKey(DRE);
+  for (const MemberExpr *M : Chain) {
+    const auto *FD = dyn_cast<FieldDecl>(M->getMemberDecl());
+    // An anonymous struct member has no name a run-time check could spell.
+    if (!FD || FD->getParent()->isUnion() || FD->getName().empty() ||
+        FD->isAnonymousStructOrUnion() ||
+        FD->getType().isVolatileQualified() || FD->getType()->isAtomicType() ||
+        FD->isBitField())
+      return false;
+    // What the link is applied to: a pointer to a struct for `->`, a struct
+    // for `.`; never through a volatile one.
+    QualType On = M->getBase()->getType();
+    if (M->isArrow())
+      On = On->getPointeeType();
+    if (On.isVolatileQualified())
+      return false;
+    if (M->isArrow())
+      P.DerefKeys.push_back(Key);
+    P.Links.push_back({FD, M->isArrow()});
+    P.Spelling += (M->isArrow() ? "->" : ".") + FD->getNameAsString();
+    Key += (M->isArrow() ? "->" : ".") +
+           std::to_string(reinterpret_cast<uintptr_t>(FD->getCanonicalDecl()));
+    if (FD->getType()->isPointerType())
+      P.LoadedTypes.push_back(FD->getType());
+  }
+  QualType Last = P.Links.back().first->getType();
+  if (Last->isPointerType()) {
+    QualType Pointee = Last->getPointeeType();
+    return !Pointee->isVoidType() && !Pointee->isFunctionType() &&
+           !Pointee->isIncompleteType() &&
+           !Pointee.isVolatileQualified();
+  }
+  if (const ArrayType *AT = Last->getAsArrayTypeUnsafe())
+    return !AT->getElementType().isVolatileQualified() &&
+           !AT->getElementType()->isIncompleteType();
+  return false;
+}
+
+/// Could a write of an object of type W change a value of one of the types
+/// in Loaded? A record or array written whole changes every field and
+/// element in it; a character, void or union write may change anything.
+bool writeMayChange(QualType W, llvm::ArrayRef<QualType> Loaded,
+                    ASTContext &Ctx, unsigned Depth = 0) {
+  W = W.getCanonicalType().getUnqualifiedType();
+  if (Depth > 8 || W->isAnyCharacterType() || W->isVoidType() ||
+      W->isUnionType())
+    return true;
+  if (const ArrayType *AT = Ctx.getAsArrayType(W))
+    return writeMayChange(AT->getElementType(), Loaded, Ctx, Depth + 1);
+  if (const auto *RT = W->getAs<RecordType>()) {
+    const RecordDecl *RD = RT->getDecl()->getDefinition();
+    if (!RD)
+      return true;
+    for (const FieldDecl *FD : RD->fields())
+      if (writeMayChange(FD->getType(), Loaded, Ctx, Depth + 1))
+        return true;
+    return false;
+  }
+  return llvm::any_of(Loaded, [&](QualType L) {
+    return scalarTypesMayAlias(W, L, Ctx);
+  });
+}
+
+bool hasJump(const Stmt *S);
+
+/// Keys (pathKey) of the variables and paths the loop dereferences whenever
+/// it runs: in its condition, and in its body's first iteration up to the
+/// first statement that could jump or call (`->`, `*`, and the base of a
+/// subscript). Short-circuit and conditional operands, branches and inner
+/// loop bodies don't count.
+llvm::StringSet<> eagerDerefs(const ForStmt *FS) {
+  llvm::StringSet<> Out;
+  struct Calls : RecursiveASTVisitor<Calls> {
+    bool Found = false;
+    bool VisitCallExpr(CallExpr *) { return !(Found = true); }
+    bool VisitAsmStmt(AsmStmt *) { return !(Found = true); }
+    bool VisitStmtExpr(StmtExpr *) { return !(Found = true); }
+  };
+  auto Risky = [](const Stmt *S) {
+    if (!S)
+      return false;
+    if (hasJump(S))
+      return true;
+    Calls V;
+    V.TraverseStmt(const_cast<Stmt *>(S));
+    return V.Found;
+  };
+  std::function<void(const Expr *)> Collect = [&](const Expr *E) {
+    if (!E)
+      return;
+    E = E->IgnoreParens();
+    auto Deref = [&](const Expr *P) {
+      if (std::optional<std::string> K = pathKey(P))
+        Out.insert(*K);
+    };
+    if (const auto *BO = dyn_cast<BinaryOperator>(E);
+        BO && (BO->getOpcode() == BO_LAnd || BO->getOpcode() == BO_LOr ||
+               BO->getOpcode() == BO_Comma)) {
+      Collect(BO->getLHS());
+      if (BO->getOpcode() == BO_Comma)
+        Collect(BO->getRHS());
+      return;
+    }
+    if (const auto *CO = dyn_cast<AbstractConditionalOperator>(E)) {
+      Collect(CO->getCond());
+      return;
+    }
+    if (isa<UnaryExprOrTypeTraitExpr>(E) || isa<StmtExpr>(E))
+      return;
+    // Only an lvalue that is read or written dereferences the pointers it is
+    // reached through: `s->v->lo` (an array member) and `&s->v->n` load
+    // nothing, and a compiler emits no access for them.
+    auto Accessed = [&](const Expr *L) {
+      for (L = L->IgnoreParens();;) {
+        if (const auto *ME = dyn_cast<MemberExpr>(L)) {
+          if (ME->isArrow())
+            return Deref(ME->getBase());
+          L = ME->getBase()->IgnoreParens();
+        } else if (const auto *UO = dyn_cast<UnaryOperator>(L);
+                   UO && UO->getOpcode() == UO_Deref) {
+          return Deref(UO->getSubExpr());
+        } else if (const auto *ASE = dyn_cast<ArraySubscriptExpr>(L)) {
+          Deref(ASE->getBase());
+          const auto *Decay =
+              dyn_cast<ImplicitCastExpr>(ASE->getBase()->IgnoreParens());
+          if (!Decay || Decay->getCastKind() != CK_ArrayToPointerDecay)
+            return;
+          L = Decay->getSubExpr()->IgnoreParens();
+        } else {
+          return;
+        }
+      }
+    };
+    if (const auto *IC = dyn_cast<ImplicitCastExpr>(E);
+        IC && IC->getCastKind() == CK_LValueToRValue)
+      Accessed(IC->getSubExpr());
+    if (const auto *BO = dyn_cast<BinaryOperator>(E);
+        BO && BO->isAssignmentOp())
+      Accessed(BO->getLHS());
+    if (const auto *UO = dyn_cast<UnaryOperator>(E);
+        UO && UO->isIncrementDecrementOp())
+      Accessed(UO->getSubExpr());
+    for (const Stmt *C : E->children())
+      if (const auto *CE = dyn_cast_or_null<Expr>(C))
+        Collect(CE);
+  };
+  // Returns false once nothing after S is certain to run.
+  std::function<bool(const Stmt *)> Walk = [&](const Stmt *S) -> bool {
+    if (!S)
+      return true;
+    if (const auto *CS = dyn_cast<CompoundStmt>(S)) {
+      for (const Stmt *B : CS->body())
+        if (!Walk(B))
+          return false;
+      return true;
+    }
+    if (isa<NullStmt>(S))
+      return true;
+    if (const auto *E = dyn_cast<Expr>(S)) {
+      // One call whose arguments call nothing: they are evaluated before
+      // it runs (it may not return).
+      if (const auto *CE = dyn_cast<CallExpr>(E->IgnoreParenImpCasts())) {
+        if (Risky(CE->getCallee()) ||
+            llvm::any_of(CE->arguments(), [&](const Expr *A) { return Risky(A); }))
+          return false;
+        for (const Expr *A : CE->arguments())
+          Collect(A);
+        return false;
+      }
+      if (Risky(E))
+        return false;
+      Collect(E);
+      return true;
+    }
+    if (const auto *DS = dyn_cast<DeclStmt>(S)) {
+      if (Risky(DS))
+        return false;
+      for (const Decl *D : DS->decls())
+        if (const auto *VD = dyn_cast<VarDecl>(D))
+          Collect(VD->getInit());
+      return true;
+    }
+    auto Header = [&](const Expr *Cond, std::initializer_list<const Stmt *> Rest) {
+      if (Risky(Cond))
+        return false;
+      Collect(Cond);
+      for (const Stmt *R : Rest)
+        if (Risky(R))
+          return false;
+      return true;
+    };
+    if (const auto *IS = dyn_cast<IfStmt>(S))
+      return !IS->getInit() && !IS->getConditionVariable() &&
+             Header(IS->getCond(), {IS->getThen(), IS->getElse()});
+    if (const auto *Inner = dyn_cast<ForStmt>(S))
+      return Walk(Inner->getInit()) && !Inner->getConditionVariable() &&
+             Header(Inner->getCond(), {Inner->getInc(), Inner->getBody()});
+    if (const auto *WS = dyn_cast<WhileStmt>(S))
+      return !WS->getConditionVariable() && Header(WS->getCond(), {WS->getBody()});
+    return false;
+  };
+  if (!FS->getConditionVariable() && !Risky(FS->getCond()))
+    Collect(FS->getCond());
+  Walk(FS->getBody());
+  return Out;
 }
 
 const FunctionDecl *enclosingFunction(const Stmt *S, ASTContext &Ctx) {
@@ -866,12 +1240,20 @@ const Expr *peelPointerCasts(const Expr *E) {
   }
 }
 
+/// Phase 2.5: with Path, a field path (`s->r + i`) is a base too: Path
+/// gives its synthetic declaration, or null.
+using PathFn = llvm::function_ref<const VarDecl *(const Expr *)>;
+
 bool splitPointer(const Expr *E, const VarDecl *&Base,
                   llvm::SmallVectorImpl<std::pair<const Expr *, int>> &Offs,
-                  int Sign = 1) {
+                  PathFn Path = nullptr, int Sign = 1) {
   E = peelPointerCasts(E);
-  if (const auto *DRE = dyn_cast<DeclRefExpr>(E)) {
-    const VarDecl *VD = canon(dyn_cast<VarDecl>(DRE->getDecl()));
+  const VarDecl *PathVD =
+      Path && isa<MemberExpr>(E) ? Path(E) : nullptr;
+  if (isa<DeclRefExpr>(E) || PathVD) {
+    const VarDecl *VD =
+        PathVD ? PathVD
+               : canon(dyn_cast<VarDecl>(cast<DeclRefExpr>(E)->getDecl()));
     if (!VD)
       return false;
     QualType T = VD->getType();
@@ -894,11 +1276,11 @@ bool splitPointer(const Expr *E, const VarDecl *&Base,
       const bool R = BO->getRHS()->getType()->isPointerType();
       if (L && !R) {
         Offs.push_back({BO->getRHS(), BO->getOpcode() == BO_Sub ? -Sign : Sign});
-        return splitPointer(BO->getLHS(), Base, Offs, Sign);
+        return splitPointer(BO->getLHS(), Base, Offs, Path, Sign);
       }
       if (R && !L && BO->getOpcode() == BO_Add) {
         Offs.push_back({BO->getLHS(), Sign});
-        return splitPointer(BO->getRHS(), Base, Offs, Sign);
+        return splitPointer(BO->getRHS(), Base, Offs, Path, Sign);
       }
     }
     return false;
@@ -908,7 +1290,7 @@ bool splitPointer(const Expr *E, const VarDecl *&Base,
     if (const auto *ASE =
             dyn_cast<ArraySubscriptExpr>(UO->getSubExpr()->IgnoreParens())) {
       Offs.push_back({ASE->getIdx(), 1});
-      return splitPointer(ASE->getBase(), Base, Offs, 1);
+      return splitPointer(ASE->getBase(), Base, Offs, Path, 1);
     }
   return false;
 }
@@ -936,6 +1318,8 @@ public:
     }
     IVs.assign(Chain.begin(), Chain.end());
     ChainLen = Chain.size();
+    if (fieldBasesFromFlags() && C.Root)
+      Eager = eagerDerefs(C.Root);
     const LoopInfo &Root = A.Loops[RootIndex];
     if (Root.Kind != LoopKind::Unrecognized && Root.InductionVar) {
       Out.RootIV = canon(Root.InductionVar);
@@ -1037,7 +1421,7 @@ public:
   }
   bool VisitMemberExpr(MemberExpr *ME) {
     // `p->f` reads or writes the object p points to: an access to p[0].
-    if (ME->isArrow())
+    if (ME->isArrow() && !ConsumedMembers.count(ME))
       recordPointerAccess(ME, ME->getBase());
     return true;
   }
@@ -1115,7 +1499,7 @@ private:
       }
     const VarDecl *VD = nullptr;
     llvm::SmallVector<std::pair<const Expr *, int>, 4> Parts;
-    if (!splitPointer(P, VD, Parts)) {
+    if (!splitPointer(P, VD, Parts, paths())) {
       A.Why = "argument is not a named pointer or array plus an offset";
       return;
     }
@@ -1320,6 +1704,60 @@ private:
     return Out;
   }
 
+  /// Phase 2.5: the synthetic base for the field path E (FieldPath), or
+  /// null: E is not one, the flag is off, or (PathWhy says) the loop may
+  /// change what it loads.
+  const VarDecl *pathBase(const Expr *E) {
+    PathWhy.clear();
+    FieldPath P;
+    // A callee's paths name its own variables: Summaries drops them anyway.
+    if (!fieldBasesFromFlags() || C.FunctionMode || !parsePath(E, P))
+      return nullptr;
+    std::string Why;
+    if (C.Facts.DeclaredHere.count(P.Root)) {
+      PathWhy = quoted(P.Root) + " is declared inside the " + C.scope();
+      return nullptr;
+    }
+    if (otherWrites(P.Root, C.Facts, {}, C, Why)) {
+      PathWhy = quoted(P.Root) + " " + Why;
+      return nullptr;
+    }
+    for (QualType T : C.Facts.IndirectWriteTypes)
+      if (writeMayChange(T, P.LoadedTypes, C.Ctx)) {
+        PathWhy = "a write of type '" + T.getAsString() + "' inside the " +
+                  C.scope() + " may change it";
+        return nullptr;
+      }
+    const std::string Key = *pathKey(E);
+    PathRegistry &Reg = registry();
+    auto It = Reg.ByKey.find(Key);
+    if (It == Reg.ByKey.end()) {
+      const QualType T = P.Links.back().first->getType();
+      auto *VD = VarDecl::Create(
+          C.Ctx, const_cast<DeclContext *>(P.Root->getDeclContext()),
+          P.Root->getLocation(), P.Root->getLocation(),
+          &C.Ctx.Idents.get(P.Spelling), T, C.Ctx.getTrivialTypeSourceInfo(T),
+          SC_None);
+      VD->setImplicit();
+      P.Decl = VD;
+      It = Reg.ByKey.emplace(Key, std::make_unique<FieldPath>(std::move(P)))
+               .first;
+      Reg.ByDecl[VD] = It->second.get();
+    }
+    const FieldPath &FP = *It->second;
+    if (RootIndex != NoRoot &&
+        llvm::all_of(FP.DerefKeys,
+                      [&](const std::string &K) { return Eager.contains(K); }))
+      Out.EagerPaths.insert(FP.Decl);
+    return FP.Decl;
+  }
+  PathFn paths() { return PathsFn; }
+  const std::function<const VarDecl *(const Expr *)> PathsFn =
+      [this](const Expr *E) { return pathBase(E); };
+  std::string pathWhy() const {
+    return PathWhy.empty() ? "" : ", which the loop may change: " + PathWhy;
+  }
+
   /// Resolve a pointer/array variable used as an access base to a variable
   /// that is fixed for the whole loop, plus an affine offset. An array is
   /// always fixed. A pointer must not change inside the loop, or be a local
@@ -1331,8 +1769,9 @@ private:
       Why = "base pointer substitution is too deep";
       return false;
     }
-    if (!VD->getType()->isPointerType()) {
-      Base = VD; // a named array cannot be reassigned
+    // A field path or a named array: fixed for the whole loop.
+    if (fieldPath(VD) || !VD->getType()->isPointerType()) {
+      Base = VD;
       return true;
     }
     auto Decl = C.Facts.DeclaredHere.find(VD);
@@ -1405,7 +1844,7 @@ private:
     const VarDecl *P = nullptr;
     llvm::SmallVector<std::pair<const Expr *, int>, 4> Parts;
     // q[k] means P[e + k] only if q and P step over the same element type.
-    if (!splitPointer(Def->getInit(), P, Parts) ||
+    if (!splitPointer(Def->getInit(), P, Parts, paths()) ||
         elementType(VD->getType()) != elementType(P->getType())) {
       Why = "base pointer " + quoted(VD) + " is set inside the " + C.scope();
       return false;
@@ -1437,6 +1876,7 @@ private:
   /// `a[i]`, `m[i][j]`, `a[i * n + j]`.
   void recordSubscriptChain(const ArraySubscriptExpr *Outer) {
     ArrayAccess Acc = start(Outer);
+    PathWhy.clear();
     // A subscript that still has array type (`m[i]` of `double m[N][M]`) is
     // not an element access: it decays to a pointer to a row.
     if (Outer->getType()->isArrayType())
@@ -1447,6 +1887,8 @@ private:
     // arrays). Stop at anything else.
     llvm::SmallVector<const Expr *, 4> Idx;
     const Expr *BaseE = nullptr;
+    // Phase 2.5: a field path's synthetic base (`s->p[i]`, `s->buf[i]`).
+    const VarDecl *PathVD = nullptr;
     const ArraySubscriptExpr *Cur = Outer;
     while (true) {
       Idx.insert(Idx.begin(), Cur->getIdx());
@@ -1460,11 +1902,19 @@ private:
           continue;
         }
         BaseE = Inner;
+        // An array member: the path access covers what `p->buf` names.
+        if (const auto *ME = dyn_cast<MemberExpr>(Inner))
+          if ((PathVD = pathBase(ME)))
+            ConsumedMembers.insert(ME);
         break;
       }
       if (const auto *ICE = dyn_cast<ImplicitCastExpr>(B);
           ICE && ICE->getCastKind() == CK_LValueToRValue) {
         const Expr *Inner = ICE->getSubExpr()->IgnoreParens();
+        if (isa<MemberExpr>(Inner) && (PathVD = pathBase(Inner))) {
+          BaseE = Inner;
+          break;
+        }
         if (isa<ArraySubscriptExpr>(Inner) || isa<MemberExpr>(Inner) ||
             (isa<UnaryOperator>(Inner) &&
              cast<UnaryOperator>(Inner)->getOpcode() == UO_Deref)) {
@@ -1472,7 +1922,7 @@ private:
           // from memory. The load is recorded as its own (read) access.
           nonAffine(Acc,
                     "base is a pointer loaded from memory ('" +
-                        exprText(Inner, C.Ctx) + "')",
+                        exprText(Inner, C.Ctx) + "')" + pathWhy(),
                     /*KeepBase=*/false);
           return;
         }
@@ -1483,12 +1933,12 @@ private:
       break;
     }
 
-    const VarDecl *BaseVD = asVar(BaseE);
+    const VarDecl *BaseVD = PathVD ? PathVD : asVar(BaseE);
     if (!BaseVD) {
       nonAffine(Acc,
                 isa<MemberExpr>(BaseE->IgnoreParenImpCasts())
                     ? "base is a struct member ('" + exprText(BaseE, C.Ctx) +
-                          "')"
+                          "')" + pathWhy()
                     : "base is not a named array or pointer ('" +
                           exprText(BaseE, C.Ctx) + "')",
                 /*KeepBase=*/false);
@@ -1503,7 +1953,7 @@ private:
         nonAffine(Acc, Why, /*KeepBase=*/false);
         return;
       }
-    } else if (BaseVD->getType()->isPointerType() &&
+    } else if (!PathVD && BaseVD->getType()->isPointerType() &&
                (C.Facts.DeclaredHere.count(BaseVD) ||
                 otherWrites(BaseVD, C.Facts, {}, C, Why))) {
       // Multi-dimensional through a pointer to rows: no substitution.
@@ -1518,7 +1968,7 @@ private:
       // A pointer to rows that isn't an unmodified parameter may point
       // anywhere (local, global, or a reassigned/escaped parameter).
       Acc.BaseMayAlias =
-          BaseVD->getType()->isPointerType() &&
+          !PathVD && BaseVD->getType()->isPointerType() &&
           (!isa<ParmVarDecl>(BaseVD) ||
            C.FunctionFacts.WriteSites.count(BaseVD) ||
            C.FunctionAddressTaken.count(BaseVD));
@@ -1571,11 +2021,12 @@ private:
     ArrayAccess Acc = start(Node);
     const VarDecl *VD = nullptr;
     llvm::SmallVector<std::pair<const Expr *, int>, 4> Parts;
-    if (!splitPointer(PtrExpr, VD, Parts)) {
+    PathWhy.clear();
+    if (!splitPointer(PtrExpr, VD, Parts, paths())) {
       nonAffine(Acc,
                 "dereferences something other than a named pointer plus an "
                 "offset ('" +
-                    exprText(Node, C.Ctx) + "')",
+                    exprText(Node, C.Ctx) + "')" + pathWhy(),
                 /*KeepBase=*/false);
       return;
     }
@@ -1802,6 +2253,12 @@ private:
   AffineBuilder::DeclIVMap IVsAtDecl;
   llvm::DenseMap<const Expr *, AccessKind> KindOf;
   llvm::DenseSet<const ArraySubscriptExpr *> Consumed;
+  /// Phase 2.5: `p->buf` of an array member a path access already covers.
+  llvm::DenseSet<const MemberExpr *> ConsumedMembers;
+  /// Phase 2.5: eagerDerefs of the analyzed loop, and why the last field
+  /// path pathBase() parsed was refused (empty when it wasn't).
+  llvm::StringSet<> Eager;
+  std::string PathWhy;
   llvm::DenseSet<const Expr *> Recorded;
   llvm::DenseSet<const CallExpr *> RecordedCalls;
   llvm::DenseMap<const ForStmt *, BodyFacts> OuterFacts;
@@ -1817,6 +2274,9 @@ AffineAnalyzer::AffineAnalyzer(ASTContext &Ctx,
     : Ctx(Ctx), Loops(Loops) {
   for (size_t I = 0; I < Loops.size(); ++I)
     IndexOf[Loops[I].Loop] = I;
+  // One analyzer per translation unit: no path of an earlier one survives.
+  registry().ByKey.clear();
+  registry().ByDecl.clear();
 }
 
 LoopAccesses AffineAnalyzer::analyzeLoop(size_t Index) {
@@ -1892,6 +2352,60 @@ void printAccessReport(llvm::raw_ostream &OS, const LoopAccesses &A) {
            << "]";
     }
     OS << "\n";
+  }
+}
+
+const VarDecl *knownFieldPath(const Expr *E) {
+  if (!isa<MemberExpr>(peelLoads(E)))
+    return nullptr;
+  std::optional<std::string> K = pathKey(E);
+  if (!K)
+    return nullptr;
+  auto It = registry().ByKey.find(*K);
+  return It == registry().ByKey.end() ? nullptr : It->second->Decl;
+}
+
+void invalidateFieldPaths(LoopAccesses &A, ASTContext &Ctx, bool Composed) {
+  llvm::DenseMap<const VarDecl *, std::string> Changed;
+  for (const ArrayAccess &X : A.Accesses) {
+    const FieldPath *P = fieldPath(X.Base);
+    if (!P || Changed.count(P->Decl))
+      continue;
+    if (!Composed && !A.Calls.empty()) {
+      Changed[P->Decl] = "a call's writes are not known (-ipa=coarse)";
+      continue;
+    }
+    for (const ArrayAccess &W : A.Accesses) {
+      if (W.Kind != AccessKind::Write && W.Kind != AccessKind::ReadWrite)
+        continue;
+      // The root variable's own writes by name were checked when the path
+      // was made; anything else that writes memory does so as an access of
+      // some type.
+      const QualType T = accessedType(W);
+      if (T.isNull() || writeMayChange(T, P->LoadedTypes, Ctx)) {
+        Changed[P->Decl] =
+            W.Text + " writes a '" +
+            (T.isNull() ? std::string("value") : T.getAsString()) + "'";
+        break;
+      }
+    }
+  }
+  if (Changed.empty())
+    return;
+  for (ArrayAccess &X : A.Accesses) {
+    auto It = Changed.find(dyn_cast_or_null<VarDecl>(X.Base));
+    if (It == Changed.end())
+      continue;
+    X.NonAffineReason = "base is a pointer loaded from memory ('" +
+                        fieldPath(X.Base)->Spelling +
+                        "'), which the loop may change: " + It->second;
+    X.Base = nullptr;
+    X.Affine = false;
+    X.Subscripts.clear();
+    X.DimExtents.clear();
+    X.Bounds.clear();
+    X.Extents.clear();
+    X.Delinearized = false;
   }
 }
 

@@ -86,6 +86,10 @@ struct LoopDependence {
   /// Phase 2.5: pairs with a non-affine access whose ranges (accessBounds)
   /// don't meet in some dimension.
   unsigned IndependentByRange = 0;
+  /// Phase 2.5: pairs whose accesses touch objects of scalar types C's
+  /// strict-aliasing rule keeps apart (`s->n` vs `a[i]` of doubles), on any
+  /// bases (-field-bases).
+  unsigned IndependentByType = 0;
   /// Pairs skipped because their base is declared inside the loop (private
   /// to each iteration).
   unsigned PrivatePairsSkipped = 0;

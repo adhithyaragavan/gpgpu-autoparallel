@@ -696,7 +696,8 @@ void calls_offloader(int steps) {
 struct holder { double *d; };
 
 // Host code reads through a pointer loaded from a struct (it points at a):
-// refused.
+// refused. (Phase 2.5: s.d is a field path; `restrict` on a says nothing
+// about it, since it holds a pointer based on a.)
 double loaded_ptr(double *restrict a, double *restrict b, int n, int steps) {
   struct holder s = {a};
   double r = 0.0;
@@ -706,16 +707,16 @@ double loaded_ptr(double *restrict a, double *restrict b, int n, int steps) {
   // CHECK: nest       : depth 0, 2 child loop(s){{$}}
   // CHECK: nest ivs   : t{{$}}
   // CHECK: relax reaches 0 function(s), max depth 0: <nothing> (leaf){{$}}
-  // CHECK: accesses   : 5 (4 affine){{$}}
+  // CHECK: accesses   : 5 (5 affine){{$}}
   // CHECK-NEXT: W b[i] : [i]{{$}}
   // CHECK-NEXT: R a[i] : [i]{{$}}
   // CHECK-NEXT: W a[i] : [i]{{$}}
   // CHECK-NEXT: R b[i] : [i]{{$}}
-  // CHECK-NEXT: R s.d[3] : non-affine: base is a pointer loaded from memory ('s.d'){{$}}
+  // CHECK-NEXT: R s.d[3] : [3]{{$}}
   // CHECK-NEXT: safety     : UNSAFE{{$}}
-  // CHECK: - R s.d[3] reads memory this analysis cannot name (base is a pointer loaded from memory ('s.d')), which a write in the loop could alias{{$}}
   // CHECK: deps       : 4 pair(s), 0 independent{{$}}
   // CHECK: alias      : 'b' and 'a' can't overlap (restrict){{$}}
+  // CHECK: alias      : 'a' and 's.d' may overlap: checked at run time{{$}}
   // CHECK: profitability : SEQUENTIAL{{$}}
   for (int t = 0; t < steps; t++) {
     // CHECK: hoist.c:[[#LOOP34:@LINE+17]]:5{{$}}

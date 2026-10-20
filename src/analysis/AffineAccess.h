@@ -63,6 +63,9 @@
 //     each call's arguments are recorded in the same terms (CallSite), and
 //     what the callee does with them is Phase 1.5's summaries (Summaries.h).
 //   - Operands of sizeof/alignof are not accesses (they are not evaluated).
+//   - Phase 2.5: a base reached through struct fields (`s->a[i]`) is a
+//     FieldPath while the loop can't change what the path loads; a write of
+//     `p->buf[i]` (an array member) is then not also a write of all of *p.
 
 #ifndef P05_ANALYSIS_AFFINEACCESS_H
 #define P05_ANALYSIS_AFFINEACCESS_H
@@ -129,9 +132,46 @@ struct ValueBound {
   std::vector<ValueBound> Ops; ///< operands (Rem: empty if x isn't built)
 };
 
-/// Phase 2.5 ablation flags (-value-bounds=off, -size-bounds=off).
+/// Phase 2.5 ablation flags (-value-bounds=off, -size-bounds=off,
+/// -field-bases=off).
 bool valueBoundsFromFlags();
 bool sizeBoundsFromFlags();
+bool fieldBasesFromFlags();
+
+/// Phase 2.5: a base reached through struct fields: a root variable, then
+/// `.f` / `->f` links, ending in a pointer field (`s->atoms->r[i]`,
+/// `SD.grid[i]`) or an array member (`p->buf[i]`). Each distinct path is one
+/// synthetic VarDecl, named by the path's spelling and typed by its last
+/// field, so bases still compare by pointer; fieldPath() tells it apart.
+///
+/// A path is a base only while the loop can't change what it loads: the
+/// root isn't written in the loop, and nothing the loop or its callees
+/// write may alias a field it loads (C's strict-aliasing rule, as for
+/// everything else here). AffineAccess checks the loop's own writes when it
+/// makes the base; invalidateFieldPaths() checks the composed accesses of
+/// callees after Summaries ran. A path never crosses a subscript, a union or
+/// a volatile or atomic field.
+struct FieldPath {
+  const clang::VarDecl *Root = nullptr;
+  /// Each field, and whether it is reached with `->`.
+  std::vector<std::pair<const clang::FieldDecl *, bool>> Links;
+  std::string Spelling;
+  /// Keys (pathKey) of the prefixes evaluating the path dereferences: the
+  /// one before every `->`.
+  std::vector<std::string> DerefKeys;
+  /// The types of the values the path loads: every field but an array
+  /// member at the end (its address is computed, not loaded), and every
+  /// record it goes through by `.`.
+  std::vector<clang::QualType> LoadedTypes;
+  const clang::VarDecl *Decl = nullptr;
+};
+
+/// The path Base stands for, or null when Base is an ordinary variable.
+const FieldPath *fieldPath(const clang::ValueDecl *Base);
+
+/// The synthetic base some loop's analysis made for the field path E
+/// (`s->r` in `s->r[i]`), or null.
+const clang::VarDecl *knownFieldPath(const clang::Expr *E);
 
 /// One access in the loop body, e.g. `m[i][j] = ...`.
 struct ArrayAccess {
@@ -286,9 +326,43 @@ struct LoopAccesses {
   /// The analyzed loop's iteration space can't be trusted (its variable, or
   /// an enclosing one, is written inside it): every access is non-affine.
   bool Poisoned = false;
+  /// Phase 2.5: field-path bases whose every dereference the loop makes
+  /// anyway once it runs (in its condition, or in its first iteration before
+  /// anything that could jump or call): a run-time check may evaluate them
+  /// before the loop, behind a test that the loop runs.
+  llvm::DenseSet<const clang::VarDecl *> EagerPaths;
 
   unsigned numAffine() const;
 };
+
+/// Phase 2.5: after Summaries composed the callees' accesses into A, turn
+/// every access through a field path that a write in A (the loop's own or a
+/// callee's) may change into one with an unknown base. Without Composed
+/// (-ipa=coarse) any call may change every path.
+void invalidateFieldPaths(LoopAccesses &A, clang::ASTContext &Ctx,
+                          bool Composed);
+
+/// Phase 2.5: the type of the object X reads or writes (for an access
+/// composed from a callee, the callee's access), or a null type when it has
+/// no expression.
+clang::QualType accessedType(const ArrayAccess &X);
+
+/// Phase 2.5: does X read or write one field (`p->n`) rather than an
+/// element of its base?
+bool isMemberAccess(const ArrayAccess &X);
+
+/// Phase 2.5: does strict aliasing describe what X touches? Not for a
+/// bit-field (it shares a memory location with its neighbours) or anything
+/// reached through a union member (read through another member).
+bool strictlyTyped(const ArrayAccess &X);
+
+/// Phase 2.5: can objects of types A and B overlap under C's strict-aliasing
+/// rule? Only scalar types are ever kept apart: integers of different sizes,
+/// different floating types, an integer and a floating or pointer type. Any
+/// character, record, union, array or vector type may alias anything, as
+/// may two pointer types, and a type behind a may_alias typedef.
+bool scalarTypesMayAlias(clang::QualType A, clang::QualType B,
+                         clang::ASTContext &Ctx);
 
 class AffineAnalyzer {
 public:

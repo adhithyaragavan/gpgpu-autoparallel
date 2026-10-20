@@ -114,6 +114,9 @@ struct RegionPlan {
   bool Mappable = true;
   /// Why not, one line per base that didn't.
   std::vector<std::string> Why;
+  /// Phase 2.5: some base is a field path (never mapped); Regions is then
+  /// incomplete, and profitability counts the loop's bytes itself.
+  bool HasPath = false;
   std::vector<ArrayRegion> Regions;
   /// Conditions the sections need at run time ("n >= 1", ...), joined with
   /// &&; empty when none. A safety condition: kept under every policy.

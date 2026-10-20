@@ -355,6 +355,15 @@ bool keepInSummary(ArrayAccess &X, const FunctionDecl *Def) {
     makeNonAffine(X, "base is not a variable", /*KeepBase=*/false);
     return true;
   }
+  // Phase 2.5: a field path names Def's own variables and was only checked
+  // against Def's writes.
+  if (fieldPath(VD)) {
+    makeNonAffine(X,
+                  "base " + quoted(VD) + " is reached through struct fields "
+                  "in '" + Def->getNameAsString() + "'",
+                  /*KeepBase=*/false);
+    return true;
+  }
   if (paramIndex(VD, Def)) {
     // `&n` of a by-value parameter points at this call's own copy.
     if (!VD->getType()->isPointerType())

@@ -1,0 +1,24 @@
+# Phase 2.5 field-path bases (tests/fields.c pins the default verdicts).
+#
+# 1. -field-bases=off: back to unknown bases; the array-member write is
+#    UNSAFE again (all of *d counted as written every iteration).
+RUN: %p05 -field-bases=off %S/fields.c -- %cflags | FileCheck --check-prefix=OFF %s
+OFF-LABEL: fields.c:44:3
+OFF: - cannot tell what W s->a[i] writes (base is a pointer loaded from memory ('s->a')){{$}}
+OFF: safety     : UNKNOWN
+OFF-LABEL: fields.c:141:3
+OFF: safety     : UNSAFE
+
+# 2. -ipa=coarse composes no callee: a loop with a call keeps no path.
+RUN: %p05 -ipa=coarse %S/fields.c -- %cflags | FileCheck --check-prefix=COARSE %s
+COARSE-LABEL: fields.c:224:3
+COARSE: R s->b[i] : non-affine: base is a pointer loaded from memory ('s->b'), which the loop may change: a call's writes are not known (-ipa=coarse){{$}}
+
+# 3. No map() section for a path: the GPU is declined (-policy naive), also
+#    with the old exact-base maps.
+RUN: %p05 -policy naive %S/fields.c -- %cflags | FileCheck --check-prefix=GPU %s
+GPU-LABEL: fields.c:179:3
+GPU: GPU offload declined: no map() section: 's->ia' is reached through struct fields
+RUN: %p05 -policy naive -maps=bound %S/fields.c -- %cflags | FileCheck --check-prefix=BOUND %s
+BOUND-LABEL: fields.c:179:3
+BOUND: GPU offload declined: map() regions are only sized correctly when every access is exactly base[i]

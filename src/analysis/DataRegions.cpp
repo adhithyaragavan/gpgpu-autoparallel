@@ -443,6 +443,11 @@ RegionPlan RegionPlanner::plan(const LoopInfo &LI, const LoopAccesses &A,
       Fail(X.Text + " has no named base");
       continue;
     }
+    if (fieldPath(VD)) {
+      Plan.HasPath = true;
+      Fail(quoted(VD) + " is reached through struct fields");
+      continue;
+    }
     if (A.DeclaredInLoop.count(VD) && VD->getType()->isArrayType())
       continue; // private to each iteration: a local on the device
     if (A.DeclaredInLoop.count(VD)) {

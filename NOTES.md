@@ -3059,3 +3059,123 @@ Regression inputs: `sz_row`, `sz_member`, `sz_past` in `tests/bounds.c`, pinned 
 **Limits noted, not fixed:** `Bounds` is all-or-nothing across dimensions (`pa[2][idx[i]]` loses
 the affine first dimension); value bounds are not carried through callee arguments
 (`h_get(p, i % 3)`).
+
+### 2026-10-20 — Phase 2.5: bases reached through struct fields (field paths)
+
+**Decision (user, 2026-10-20): field-pointer bases before inspectors (item 2).** The plan put
+item 2 (inspector/executor for indirect subscripts) next, "once a first look at PolyBench + one
+application shows how many loops are UNKNOWN from indirect subscripts". The first look
+(PolyBench/C 4.2.1, 333 loops; XSBench openmp-threading, 32; CoMD src-mpi, 111; `-reasons`
+categories) found **one** loop held back by an indirect subscript (XSBench `Simulation.c:773`, a
+histogram an inspector would reject anyway). The dominant application blocker was
+`unknown-base`: arrays reached through struct fields (`SD.nuclide_grid[i]`, `s->atoms->r[i]`),
+a reason on 16 of 18 UNKNOWN XSBench loops and 46 of 61 CoMD loops (PolyBench has none). An
+indirect subscript behind such a base is never even reached. User's choices: field bases first,
+CPU only (no map() sections for paths yet), then re-survey before deciding on item 2.
+
+**Design** (`FieldPath` in `AffineAccess.h`; `-field-bases=off`):
+- A path is a root variable (parameter, global, or local struct) and one or more `.f` / `->f`
+  links, ending in a pointer field or an array member. Each distinct path is one synthetic
+  `VarDecl` (named by the spelling, typed by the last field), so every consumer still compares
+  bases by pointer; `fieldPath()` tells them apart. Never through a subscript, a union, an
+  anonymous member, a bitfield, a volatile or atomic field.
+- A local declared in the loop from a path (`int *num_nucs = SD.num_nucs;`, XSBench) stands for
+  the path, as `q = a + k` stands for `a`. A local set *outside* the loop is not substituted
+  (the field may change between the two).
+- Invariance: the root is not written in the loop (`otherWrites`), and no write in it may change
+  a pointer field the path loads. Writes are judged by type, the strict-aliasing assumption
+  already made everywhere: a char/void/union write may change anything, a record or array write
+  any field inside it, two pointer types always may. The loop's own writes are checked when the
+  path is made; after Summaries composes the callees, `invalidateFieldPaths` checks every write
+  access again (a callee doing `s->atoms = o`). Under `-ipa=coarse` a call drops every path.
+- Aliasing: `Role::Path`. Only the Types proof, or Distinct for two array members of one object
+  (`dd->localMin` vs `dd->localMax`); otherwise a run-time overlap check spelling the path.
+  **No restrict proof**: a field can hold a pointer *based on* the restrict parameter
+  (`struct holder s = {a};` in `tests/hoist.c`: this fixture caught it during development).
+  `restrictHint` never fires for a path pair.
+- The check reads the path before the loop, so it dereferences every pointer before a `->`.
+  It is emitted only when the loop dereferences those anyway once it runs (`eagerDerefs`: the
+  loop condition, and the first iteration up to the first statement that may jump or call;
+  branches, short-circuit and `?:` operands don't count; a statement that is one call counts its
+  arguments), and only behind `Hi >= Lo` of the loop's range. Otherwise UNKNOWN.
+- Field types: a pair where one access reads or writes one field (`p->n`) and the two accessed
+  types can't alias (`scalarTypesMayAlias`: integers of different sizes, different floating
+  types, integer vs floating vs pointer; never char, records, unions) is independent ("type" in
+  the deps line). This is what keeps `s->atoms` (a pointer) apart from the doubles of
+  `s->atoms->p[i][k]`; it also settles `a[i * m->stride]` against `m` (`hints.c`).
+- GPU: DataRegions refuses a section for a path ("is reached through struct fields"),
+  `GpuMappable` is false (the `-maps=bound` path). Summaries drop a callee's own paths.
+- Profitability: a plan that stops at a path (`RegionPlan::HasPath`) has no regions, so the
+  loop's bytes are counted from its own subscripts, as before 2.1. Without this a path loop
+  priced at "0 B, intensity inf" and got a 16x higher CPU guard than the same loop over
+  pointer parameters (`n >= 32768` vs `2048`).
+
+**Fixture changes** (CHECK lines edited by hand; regenerating would also add the `rejected:`
+lines item 1 introduced to every loop):
+- `affine.c` `member_base`: UNSAFE → SAFE. `s->v[i] = 22.0` with `double v[16]` was UNSAFE
+  because the write counted as one to all of `*s` on every iteration. A documented false UNSAFE.
+- `hints.c` `c_invariant_load`: still UNKNOWN (non-affine subscript); the pointer-overlap reason
+  and its restrict hint are gone (the int field `m->stride` can't overlap the doubles of `a`).
+- `hoist.c` `loaded_ptr`: still UNSAFE; `s.d[3]` is now a path, pinned as "may overlap" with the
+  restrict `a` (the regression above).
+
+**Evidence.** `-field-bases=off` is byte-identical to b149c90 (report and rewrite) on all 24
+fixtures and benchmarks under 8 flag sets (default, `-ipa=coarse`, `-alias=assume`,
+`-maps=bound`, `-hoist=off`, `-policy naive`, both bounds off, `-whole-program`). lit 24/24 (Mac
+and the Linux container). `check_parallel.sh` OK on all nine runtime drivers, host and `OFFLOAD=1`
+(naive and gated) in the container. `check_hints.py` OK (default and `-ipa=coarse`). Mutations
+caught by `eval/runtime/fields_main.c`: dropping the overlap check (MISMATCH), dropping the
+`Hi >= Lo` test (segfault on `f_ptr(NULL, 0)`), treating every path as eager (segfault).
+
+**Survey after** (`-field-bases` on vs off; PolyBench unchanged, it has no struct bases):
+- XSBench: SAFE 3 → 4 (`Simulation.c:736`, CPU_PARALLEL), `unknown-base` 16 → 6. Remaining
+  blockers on the 28 others: pointer-overlap 13, opaque-callee 8, scalar-dependence 7,
+  non-affine 6, unknown-base 6; indirect-subscript now 2 (a path exposed a second one).
+- CoMD: SAFE 12 → 16, `unknown-base` 46 → 17, CPU_PARALLEL 8 → 9. `decomposition.c:34/42` and
+  `linkCells.c:88` UNSAFE → SAFE (the array-member pseudo-write); `eam.c:467` UNKNOWN → SAFE;
+  `haloExchange.c:168/171/229` UNSAFE → UNKNOWN (the real blocker is an opaque callee);
+  `CoMD.c:330` UNKNOWN → UNSAFE. Remaining: opaque-callee 51, pointer-overlap 35, non-affine 29,
+  scalar-dependence 19, loop-shape 18.
+- So indirect subscripts are still rare (2 XSBench loops, 0 CoMD): item 2 (inspectors) stays
+  behind pointer-overlap and opaque callees (libm, MPI wrappers) in what limits these codes.
+
+**Adversarial review** (separate agent): 2 false SAFEs, 1 wrong check, 1 harness bug, 1 precision
+bug; all fixed, each with a fixture in `tests/fields.c` (now 22 loops):
+1. Type rule across union members (`q->i` written, `q->f` read): C allows the pun. MISMATCH at -O2.
+   `strictlyTyped()` refuses any access reached through a union member.
+2. Type rule across adjacent bit-fields (`unsigned short lo:4; unsigned hi:4`): one memory
+   location, different declared sizes. MISMATCH. Bit-fields refused too, and a `may_alias`
+   typedef (lost by canonical types) now may alias anything in `scalarTypesMayAlias`.
+3. `eagerDerefs` counted `s->v->lo` (an array member, which loads nothing) as dereferencing `s->v`,
+   so the check read `s->v->a` with `s->v == NULL`: the parallel build segfaulted where the
+   sequential one ran. Now only an lvalue that is read (`LValueToRValue`), assigned or
+   incremented counts, through the chain of `.`, `->`, `*` and subscripts that reaches it
+   (`g_decay`, called with a null `s->v` in the runtime driver).
+4. The fuzzer's address oracle assumed distinct names are disjoint buffers, but the struct variant
+   names A as both `A` and `ps.a`: 10 "false SAFEs" on seeds 100-159 (and 2-5 per 20 files on
+   seeds 1000/5000/9000), every one a loop whose run-time check fails when it runs. Not tool
+   bugs (the differential runs matched). The log build now evaluates each loop's
+   `if(parallel: C)` from the rewrite (`FG<id>` in clauses.h); an instance where C is false
+   runs sequentially and its conflicts don't count.
+5. The profitability byte count (above).
+Held up: root and field writes in the loop, callees, `memcpy`, by-value struct copies, char
+writes; in-loop locals (reassigned, address-taken, cast); odd C (flexible arrays, anonymous
+members, `_Atomic`, packed, VLA structs); 3-link self-referencing paths at run time; descending
+and unknown-start ranges; IPA composition.
+
+**Fuzz** (struct-of-pointers variant on 35% of functions): seeds 1-15, 100-159, 1000-1019,
+5000-5019, 9000-9019 all "no false SAFE, parallel output identical". Seeds 100-159: SAFE 273 of
+1356 loops (236 with the flag off).
+
+**Limits noted, not fixed:**
+- No map() sections for paths (GPU declined). OpenMP 5 attaches pointer members
+  (`map(s->a[0:n])`), but that needs its own offload testing.
+- Other unmappable SAFE loops (not paths) still price at `data/iteration: 0 B` (pre-existing
+  since 2.1); changing that would move fixtures, so it is left for the cost-model work.
+- Field paths dereferenced only inside an inner loop's body never count as eager, so 2-D nests
+  through `s->a` get no check; any pointer-typed write invalidates every path that loads a
+  pointer field (two pointer types always may alias).
+- CoMD's force and update loops also need two induction variables in one header
+  (`for (iOff = ..., ii = 0; ii < n; ii++, iOff++)`, 17 loops `loop-shape`), and its outer
+  per-box loops dereference `s->atoms` only inside the inner loop, so the eager rule refuses
+  their checks.

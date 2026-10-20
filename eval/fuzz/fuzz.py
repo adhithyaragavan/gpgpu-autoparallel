@@ -21,7 +21,9 @@ they index, and (for the address oracle only) distinct pointer parameters point
 at disjoint buffers. The differential run also repeats every file with
 overlapping parameters (B == A, B == A + 1, C == B - 1): since Phase 1.6 a SAFE
 loop over two pointers is either proven disjoint or guarded by a run-time
-overlap check, so it must still match the sequential build. A loop
+overlap check, so it must still match the sequential build. Some functions
+also reach A, B and C through struct fields (`S->b`, `ps.c`, Phase 2.5), so
+one array may have two names in a loop. A loop
 instance during which some access leaves its object is discarded, not counted;
 only runs that never leave an object are used for the differential run.
 
@@ -65,6 +67,7 @@ def sreg(name):
 REGION = {"A": "RA", "B": "RB", "C": "RC", "M": "RM", "G": "RG", "H": "RH"}
 
 HELPERS = """\
+struct P { u64 *a, *b, *c; };
 u64 G[64];
 u64 H[8][8];
 static void h_set(u64 *p, u64 v) { p[0] = v; }
@@ -76,6 +79,7 @@ static u64 h_pure(u64 x) { return x * 3 + 1; }
 """
 
 HELPERS_LOG = """\
+struct P { u64 *a, *b, *c; };
 u64 G[64];
 u64 H[8][8];
 static void h_set(u64 *p, u64 v, int reg) { WR(&p[0], 0, reg) = v; }
@@ -102,8 +106,12 @@ class Scope:
 
 
 class Gen:
-    def __init__(self, rnd):
+    def __init__(self, rnd, rs):
         self.r = rnd
+        # Phase 2.5: struct-field spellings (`S->b`, `ps.c`) come from their
+        # own stream, so a seed's program is the same apart from them.
+        self.rs = rs
+        self.has_s = False
         self.tmp = 0
         # Per function: a "clean" function indexes its arrays the way real
         # loop code does (each array has one layout, reads are small shifts
@@ -114,6 +122,13 @@ class Gen:
         self.writes = []
         self.layout = {}
         self.row = "n"
+
+    def spell(self, arr):
+        """A or the same pointer read from a struct field: `S->a` or `ps.a`
+        (ps = {A, B, C}, S = &ps), so one array may have two names."""
+        if self.has_s and arr in ("A", "B", "C") and self.rs.random() < 0.5:
+            return self.rs.choice(["S->", "ps."]) + arr.lower()
+        return arr
 
     def pick(self, weighted):
         items, weights = zip(*weighted)
@@ -221,7 +236,8 @@ class Gen:
             if arr == "M":
                 return f"M[{subs[0]}][{subs[1]}]", f"&M[{subs[0]}][CK({subs[1]}, 8)]", "RM"
             reg = sc.q_reg if arr == "q" else REGION[arr]
-            return f"{arr}[{subs[0]}]", f"&{arr}[{subs[0]}]", reg
+            name = self.spell(arr)
+            return f"{name}[{subs[0]}]", f"&{name}[{subs[0]}]", reg
         if arr is None:
             choices = [("A", 5), ("B", 4), ("C", 2), ("M", 2), ("G", 1), ("H", 1)]
             if sc.has_q:
@@ -241,7 +257,8 @@ class Gen:
         s = self.subscript(sc, depth)
         p, l = self.split(s)
         reg = sc.q_reg if arr == "q" else REGION[arr]
-        return f"{arr}[{p}]", f"&{arr}[{l}]", reg
+        name = self.spell(arr)
+        return f"{name}[{p}]", f"&{name}[{l}]", reg
 
     def split(self, s):
         """Subscripts may contain a nested read (indirect). Those are built
@@ -421,7 +438,7 @@ class Gen:
             head = head.replace("int ", "", 1)
         lid = len(loops)
         pad = "  " * ind
-        lines = [(f"{pad}for ({head}) {{", f"{pad}LB({lid}); for ({head}) {{ IT();")]
+        lines = [(f"{pad}for ({head}) {{", f"{pad}LB({lid}, FG{lid}); for ({head}) {{ IT();")]
         loops.append(lid)
         body_sc = sc.child(iv)
         nstmts = self.pick([(1, 3), (2, 4), (3, 2)])
@@ -458,6 +475,10 @@ class Gen:
                  ("  int i = 0, j = 0, l = 0;", "  int i = 0, j = 0, l = 0;")]
         if has_q:
             lines.append((f"  u64 *q = {q_init};", f"  u64 *q = {q_init};"))
+        self.has_s = self.rs.random() < 0.35
+        if self.has_s:
+            lines.append(("  struct P ps = {A, B, C}, *S = &ps;",
+                          "  struct P ps = {A, B, C}, *S = &ps;"))
         nloops = self.pick([(1, 3), (2, 1)])
         for _ in range(nloops):
             lines += self.loop(sc, 0, 1, self.pick([(1, 2), (2, 4), (3, 2)]), loops)
@@ -471,7 +492,7 @@ class Gen:
 def generate(seed, nfuncs):
     """Returns (plain source, log source, {loop id: plain line no},
     {loop id: function index})."""
-    g = Gen(random.Random(seed))
+    g = Gen(random.Random(seed), random.Random(seed * 7919 + 13))
     plain = ["typedef unsigned long u64;", HELPERS]
     log = ['#include "clauses.h"', '#include "fuzzrt.h"', HELPERS_LOG]
     line_of, func_of = {}, {}
@@ -661,10 +682,17 @@ def fuzz_file(seed, nfuncs, work, tool, cc, sysroot, omp, runs, stats, failures)
         m0, m1 = modes.get("s0", 0), modes.get("s1", 0)
         if m0 or m1:
             entries.append(f"[{lid}] = {{{m0}, {m1}}}")
+    # A loop's if(parallel: C) condition, evaluated in the log build as FG<id>:
+    # an instance where C is false runs sequentially, so its conflicts are not
+    # evidence against the verdict (a field and a parameter naming one array,
+    # `ps.a` and `A`, must make the run-time overlap check fail, not pass).
+    conds = parallel_conditions(open(omp_c).read()) if os.path.exists(omp_c) else {}
+    guards = "".join(f"#define FG{lid} ({conds.get(line, '1')})\n"
+                     for lid, line in line_of.items())
     with open(os.path.join(work, "clauses.h"), "w") as fh:
         fh.write("#define FUZZ_CLAUSES 1\n"
-                 "static const unsigned char clause_mode[4096][2] = {%s};\n"
-                 % ", ".join(entries))
+                 "static const unsigned char clause_mode[4096][2] = {%s};\n%s"
+                 % (", ".join(entries), guards))
     exe = os.path.join(work, "log")
     res = run([cc, "-O1", "-w"] + sysroot + [os.path.join(work, "prog_log.c"), "-o", exe])
     if res.returncode != 0:
@@ -767,6 +795,27 @@ def fuzz_file(seed, nfuncs, work, tool, cc, sysroot, omp, runs, stats, failures)
                                  f"first: f{first[0]}, n m k = "
                                  f"{' '.join(first[1:4])}; exit {got.returncode})\n{fn}")
                 return
+
+
+def parallel_conditions(omp_text):
+    """{original line: C} for every pragma with an if(parallel: C) clause in
+    the tool's rewrite. Each pragma is one inserted line just above its loop."""
+    out, inserted = {}, 0
+    for no, line in enumerate(omp_text.splitlines(), 1):
+        if not line.lstrip().startswith("#pragma omp"):
+            continue
+        inserted += 1
+        at = line.find("if(parallel:")
+        if at < 0:
+            continue
+        depth, i = 0, at + 2
+        for i in range(at + 2, len(line)):
+            depth += {"(": 1, ")": -1}.get(line[i], 0)
+            if depth == 0:
+                break
+        # The loop is the next line; in prog.c it sits `inserted` lines higher.
+        out[no + 1 - inserted] = line[at + len("if(parallel:"):i].strip()
+    return out
 
 
 def function_text(src_lines, f):

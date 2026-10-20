@@ -531,7 +531,7 @@ LoopDependence testLoopDependences(const LoopAccesses &A, int64_t RootStep,
   for (const ArrayAccess &X : A.Accesses) {
     AnyWrite |= writes(X);
     const auto *BaseVD = llvm::dyn_cast_or_null<VarDecl>(X.Base);
-    if (!exactlyRootIV(X, A) || X.BaseMayAlias ||
+    if (!exactlyRootIV(X, A) || X.BaseMayAlias || fieldPath(X.Base) ||
         (BaseVD && A.DeclaredInLoop.count(BaseVD->getCanonicalDecl())))
       D.GpuMappable = false;
   }
@@ -606,6 +606,22 @@ LoopDependence testLoopDependences(const LoopAccesses &A, int64_t RootStep,
       const ArrayAccess &X = A.Accesses[K], &Y = A.Accesses[L];
       if (!X.Base || !Y.Base || !(writes(X) || writes(Y)))
         continue;
+      // Phase 2.5: a write can't change an object of a type it can't alias
+      // (the assumption AffineAccess makes everywhere): `s->n` (an int)
+      // and `s->r[i]` (doubles) never overlap, whatever the bases. Only
+      // for a field: whole elements are AliasAnalysis's Types proof.
+      if (fieldBasesFromFlags() && (isMemberAccess(X) || isMemberAccess(Y)) &&
+          X.Kind != AccessKind::AddressTaken &&
+          Y.Kind != AccessKind::AddressTaken && strictlyTyped(X) &&
+          strictlyTyped(Y)) {
+        const QualType TX = accessedType(X), TY = accessedType(Y);
+        if (!TX.isNull() && !TY.isNull() &&
+            !scalarTypesMayAlias(TX, TY, X.Base->getASTContext())) {
+          ++D.PairsTested;
+          ++D.IndependentByType;
+          continue;
+        }
+      }
       // A pointer this analysis couldn't pin down (an unresolved local, a
       // reassigned or escaped parameter, a global) may point into any other
       // array: different bases are not known to be disjoint.
@@ -748,7 +764,7 @@ std::string dependenceSummary(const LoopDependence &D) {
     return "at most one iteration: nothing can be carried";
   const unsigned Indep = D.IndependentByZIV + D.IndependentByGCD +
                          D.IndependentBySIV + D.IndependentByBanerjee +
-                         D.IndependentByRange;
+                         D.IndependentByRange + D.IndependentByType;
   std::string S = std::to_string(D.PairsTested) + " pair(s), " +
                   std::to_string(Indep) + " independent";
   std::string By;
@@ -761,6 +777,7 @@ std::string dependenceSummary(const LoopDependence &D) {
   Add(D.IndependentBySIV, "SIV");
   Add(D.IndependentByBanerjee, "Banerjee");
   Add(D.IndependentByRange, "range");
+  Add(D.IndependentByType, "type");
   if (!By.empty())
     S += " (" + By + ")";
   if (D.PrivatePairsSkipped)

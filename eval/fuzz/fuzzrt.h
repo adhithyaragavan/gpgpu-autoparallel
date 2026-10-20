@@ -81,7 +81,7 @@ static u64 rt_hash(u64 h, const void *p, size_t bytes) {
 // evidence. Any clean instance is a real execution of the plain program for
 // some input data (the bad access only changed array contents).
 struct frame {
-  int id; long inst; long iter; int bad, conf;
+  int id; long inst; long iter; int bad, conf, serial;
   long wa, wb; int wreg; long woff;  // first conflict's witness
   // Function-level scalars s0/s1 the tool privatized for this loop: the
   // iteration each was last first-touched in, and the first violation of
@@ -126,10 +126,12 @@ static void rt_begin(int fn, int n, int m, int k) {
   memset(reported, 0, sizeof reported);
 }
 
-static void LB(int id) {
+// `parallel`: the loop's if(parallel: ...) condition (1 if it has none). An
+// instance where it is false runs sequentially: its conflicts are not counted.
+static void LB(int id, int parallel) {
   if (depth == MAX_DEPTH) { fprintf(stderr, "fuzzrt: nest too deep\n"); exit(2); }
   stack[depth] = (struct frame){.id = id, .inst = ++next_inst, .iter = -1,
-                                .pv_iter = {-1, -1}};
+                                .serial = !parallel, .pv_iter = {-1, -1}};
   depth++;
 }
 static void IT(void) { stack[depth - 1].iter++; }
@@ -137,6 +139,7 @@ static void LE(void) {
   struct frame *f = &stack[--depth];
   if (f->bad) return;
   if (f->iter + 1 > max_iters[f->id]) max_iters[f->id] = f->iter + 1;
+  if (f->serial) return;
   if (f->conf && !reported[f->id]) {
     reported[f->id] = 1;
     printf("C %d %d %d %d iterations %ld and %ld both touch %s%+ld\n", f->id, cur_n, cur_m,

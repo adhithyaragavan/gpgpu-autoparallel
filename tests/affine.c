@@ -599,20 +599,19 @@ void moving_base(double *p, int n) {
   }
 }
 
-// A struct member base is opaque: W s->v[i] : non-affine (struct member)
+// A struct member base (Phase 2.5: a field path, tests/fields.c): distinct
+// elements of s->v. Was UNSAFE (the write counted as one to all of *s).
 struct vec { double v[16]; };
 void member_base(struct vec *s) {
-  // CHECK: affine.c:[[#LOOP34:@LINE+12]]:3{{$}}
+  // CHECK: affine.c:[[#LOOP34:@LINE+10]]:3{{$}}
   // CHECK: kind       : CONSTANT_BOUND{{$}}
   // CHECK: trip count : 16{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
   // CHECK: nest ivs   : i{{$}}
-  // CHECK: accesses   : 2 (1 affine){{$}}
-  // CHECK-NEXT: W s->v[i] : non-affine: base is a struct member ('s->v'){{$}}
-  // CHECK-NEXT: W s->v : [0]{{$}}
-  // CHECK-NEXT: safety     : UNSAFE{{$}}
-  // CHECK: - cannot tell what W s->v[i] writes (base is a struct member ('s->v')){{$}}
-  // CHECK: deps       : 1 pair(s), 0 independent{{$}}
+  // CHECK: accesses   : 1 (1 affine){{$}}
+  // CHECK-NEXT: W s->v[i] : [i]{{$}}
+  // CHECK-NEXT: safety     : SAFE{{$}}
+  // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
   // CHECK: profitability : SEQUENTIAL{{$}}
   for (int i = 0; i < 16; i++)
     s->v[i] = 22.0;

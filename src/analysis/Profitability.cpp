@@ -275,9 +275,12 @@ private:
   void markAccess(ArraySubscriptExpr *ASE, bool Write, bool Read) {
     const auto *DRE =
         dyn_cast<DeclRefExpr>(ASE->getBase()->IgnoreParenImpCasts());
-    if (!DRE)
+    // Phase 2.5: a field path (`s->r[i]`) is a base of its own.
+    const ValueDecl *Base =
+        DRE ? cast<ValueDecl>(DRE->getDecl()->getCanonicalDecl())
+            : knownFieldPath(ASE->getBase()->IgnoreParenImpCasts());
+    if (!Base)
       return;
-    const auto *Base = cast<ValueDecl>(DRE->getDecl()->getCanonicalDecl());
     ArrayRegion &R = regionFor(Base);
     R.Read = R.Read || Read;
     R.Written = R.Written || Write;
@@ -592,7 +595,9 @@ ProfitabilityAnalyzer::priceLoop(const LoopInfo &LI, const LoopSafety &Safety,
   double OpsPerIter = V.OpsInBody + V.OpsInCallees;
 
   // --- Data: which arrays, how big, which direction --------------------------
-  if (Plan) {
+  // Phase 2.5: a plan that stopped at a field path has no regions to count.
+  const bool FromPlan = Plan && !Plan->HasPath;
+  if (FromPlan) {
     V.Regions = Plan->Regions;
     V.RangeMaps = true;
   } else {
@@ -616,7 +621,7 @@ ProfitabilityAnalyzer::priceLoop(const LoopInfo &LI, const LoopSafety &Safety,
                             ? std::to_string(*LI.ConstBound + (Inclusive ? 1 : 0))
                             : (Inclusive ? "(" + LI.BoundText + ") + 1"
                                         : LI.BoundText);
-  if (!Plan)
+  if (!FromPlan)
     for (ArrayRegion &R : V.Regions)
       R.ExtentText = Extent;
 
@@ -625,7 +630,7 @@ ProfitabilityAnalyzer::priceLoop(const LoopInfo &LI, const LoopSafety &Safety,
   double BytesPerIter = 0.0;
   for (const ArrayRegion &R : V.Regions) {
     double Units = 1.0;
-    if (Plan && R.ConstUnits && LI.TripCount && *LI.TripCount > 0)
+    if (FromPlan && R.ConstUnits && LI.TripCount && *LI.TripCount > 0)
       // Not floored at one unit: an inner loop touches one element of its
       // row (one unit) per run, not per iteration.
       Units = static_cast<double>(*R.ConstUnits) /
@@ -732,7 +737,7 @@ ProfitabilityAnalyzer::priceLoop(const LoopInfo &LI, const LoopSafety &Safety,
     V.Costs.TransferBytes = BytesPerIter * static_cast<double>(Span);
     // Phase 2.1: the sections' own sizes, when constant (a descending loop's
     // bound is not its span, so this replaces Span there too).
-    if (Plan) {
+    if (FromPlan) {
       bool AllKnown = true;
       double Bytes = 0.0;
       for (const ArrayRegion &R : V.Regions) {

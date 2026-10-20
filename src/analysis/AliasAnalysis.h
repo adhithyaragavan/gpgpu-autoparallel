@@ -25,6 +25,13 @@
 //             be visible: the function is `static` (or -whole-program says
 //             no other translation unit calls it), never has its address
 //             taken, and every call has a prototype.
+//   Paths     (Phase 2.5) a base reached through struct fields
+//             (`s->atoms->r`) gets only the Types proof, else a run-time
+//             check: the field may hold a pointer based on a restrict
+//             parameter, or point into this call's own objects. Evaluating it before the loop dereferences
+//             every pointer before a `->`: the check does so only when the
+//             loop dereferences them anyway once it runs
+//             (LoopAccesses::EagerPaths), behind a test that it runs.
 //   Unproven  a pointer parameter and another pointer parameter or a global:
 //             runtimeCheck() builds a test that the byte ranges the loop
 //             touches in the two do not overlap, emitted into the OpenMP
@@ -90,15 +97,18 @@ public:
 
   /// Phase 2.5: for a pair proof() leaves Unproven, a hint that makes it
   /// Restrict: the qualifier on A or B, whichever is a pointer parameter of
-  /// F (proofAt reaches the restrict test whenever neither base is Other,
-  /// and Distinct and Types don't look at the pointer's own qualifiers).
+  /// F (proofAt reaches the restrict test whenever neither base is Other or
+  /// a Path, and Distinct and Types don't look at the pointer's own
+  /// qualifiers).
   /// Nullopt when neither can take it, or its declarator is in a macro.
   std::optional<Hint> restrictHint(const clang::FunctionDecl *F,
                                    const clang::ValueDecl *A,
                                    const clang::ValueDecl *B);
 
 private:
-  enum class Role { PtrParam, Object, Other };
+  /// Path: a field path (FieldPath): like a pointer parameter no caller
+  /// is known for, and it may also point into this call's own objects.
+  enum class Role { PtrParam, Object, Path, Other };
   Role role(const clang::FunctionDecl *F, const clang::ValueDecl *V);
   AliasProof proofAt(const clang::FunctionDecl *F, const clang::ValueDecl *A,
                      const clang::ValueDecl *B, unsigned Depth);

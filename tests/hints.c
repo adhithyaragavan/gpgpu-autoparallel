@@ -609,12 +609,13 @@ void c_modulo(double *a, int n) {
 }
 
 // UNKNOWN non-affine-subscript, not indirect: the loaded stride is the
-// same on every iteration. (Also pointer-overlap: 'm' could point into 'a'.)
+// same on every iteration. (Phase 2.5: the int field m->stride can't overlap
+// the doubles of 'a', so no pointer-overlap and no restrict hint.)
 struct mat {
   int stride;
 };
 void c_invariant_load(double *a, const struct mat *m, int n) {
-  // CHECK: hints.c:[[#LOOP30:@LINE+14]]:3{{$}}
+  // CHECK: hints.c:[[#LOOP30:@LINE+13]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
@@ -624,9 +625,8 @@ void c_invariant_load(double *a, const struct mat *m, int n) {
   // CHECK-NEXT: R m->stride : [0]{{$}}
   // CHECK-NEXT: safety     : UNKNOWN{{$}}
   // CHECK: - cannot test W a[i * m->stride]: W a[i * m->stride] is non-affine (subscript reads memory ('m->stride')){{$}}
-  // CHECK: rejected   : non-affine-subscript, pointer-overlap{{$}}
-  // CHECK: hint       : declare parameter 'a' of 'c_invariant_load' restrict, if no call lets what 'a' points to overlap anything else 'c_invariant_load' accesses (here 'm'): restrict promises that for the whole function [fixes pointer-overlap]{{$}}
-  // CHECK: deps       : 1 pair(s), 0 independent{{$}}
+  // CHECK: rejected   : non-affine-subscript{{$}}
+  // CHECK: deps       : 2 pair(s), 1 independent (1 type){{$}}
   // CHECK: profitability : SEQUENTIAL{{$}}
   for (int i = 0; i < n; i++)
     a[i * m->stride] = 1.0;

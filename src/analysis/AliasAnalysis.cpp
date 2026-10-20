@@ -244,6 +244,8 @@ AliasAnalyzer::Role AliasAnalyzer::role(const FunctionDecl *F,
   const VarDecl *VD = canon(V);
   if (!VD || !F)
     return Role::Other;
+  if (fieldPath(VD))
+    return Role::Path;
   if (isa<ParmVarDecl>(VD)) {
     const FunctionDecl *Def = F->getDefinition();
     if (!paramIndex(VD, Def))
@@ -285,7 +287,9 @@ std::optional<Hint> AliasAnalyzer::restrictHint(const FunctionDecl *F,
                                                 const ValueDecl *A,
                                                 const ValueDecl *B) {
   const Role RA = role(F, A), RB = role(F, B);
-  if (RA == Role::Other || RB == Role::Other || canon(A) == canon(B))
+  // restrict never settles a pair with a field path (proofAt).
+  if (RA == Role::Other || RB == Role::Other || RA == Role::Path ||
+      RB == Role::Path || canon(A) == canon(B))
     return std::nullopt;
   const SourceManager &SM = Ctx.getSourceManager();
   for (auto [V, R] : {std::pair{A, RA}, std::pair{B, RB}}) {
@@ -356,6 +360,30 @@ AliasProof AliasAnalyzer::proofAt(const FunctionDecl *F, const ValueDecl *A,
     return AliasProof::Unproven;
   if (canon(A) == canon(B))
     return AliasProof::Unproven;
+  auto Elem = [&](const ValueDecl *V, Role R) {
+    QualType T = canon(V)->getType();
+    if (R == Role::PtrParam || (R == Role::Path && T->isPointerType()))
+      T = T->getPointeeType();
+    return innermost(T, Ctx);
+  };
+  // Phase 2.5: a field path may point anywhere, this call's own objects
+  // included. Not even a restrict parameter keeps it apart: the field may
+  // hold a pointer based on that parameter (`struct holder s = {a};`).
+  if (RA == Role::Path || RB == Role::Path) {
+    // Two array members of one object (`dd->localMin`, `dd->localMax`):
+    // the same prefix, then different fields. Subscripts stay inside their
+    // array (AffineAccess's assumption), so they never meet.
+    const FieldPath *PA = fieldPath(A), *PB = fieldPath(B);
+    if (PA && PB && PA->Root == PB->Root &&
+        PA->Links.size() == PB->Links.size() &&
+        std::equal(PA->Links.begin(), PA->Links.end() - 1,
+                   PB->Links.begin()) &&
+        PA->Links.back().first->getType()->isArrayType() &&
+        PB->Links.back().first->getType()->isArrayType())
+      return AliasProof::Distinct;
+    return typesMayAlias(Elem(A, RA), Elem(B, RB), Ctx) ? AliasProof::Unproven
+                                                        : AliasProof::Types;
+  }
   if (RA == Role::Object && RB == Role::Object)
     return AliasProof::Distinct;
   // A pointer parameter vs an object: it can't point into this call's own
@@ -375,12 +403,6 @@ AliasProof AliasAnalyzer::proofAt(const FunctionDecl *F, const ValueDecl *A,
       return AliasProof::Distinct;
   }
 
-  auto Elem = [&](const ValueDecl *V, Role R) {
-    QualType T = canon(V)->getType();
-    if (R == Role::PtrParam)
-      T = T->getPointeeType();
-    return innermost(T, Ctx);
-  };
   if (!typesMayAlias(Elem(A, RA), Elem(B, RB), Ctx))
     return AliasProof::Types;
   for (auto [V, R] : {std::pair{A, RA}, std::pair{B, RB}})
@@ -508,7 +530,9 @@ void AliasAnalyzer::assignExtents(const FunctionDecl *F, LoopAccesses &A) {
   llvm::DenseSet<const VarDecl *> Contradicted;
   for (ArrayAccess &X : A.Accesses) {
     const VarDecl *VD = canon(X.Base);
-    if (!VD || X.Rank == 0)
+    // A field path's array member may be a struct hack (`double d[1]`
+    // indexed past its end): no extent.
+    if (!VD || X.Rank == 0 || fieldPath(VD))
       continue;
     X.Extents.assign(X.Rank, 0);
     QualType T = VD->getType();
@@ -753,8 +777,23 @@ AliasAnalyzer::runtimeCheck(const FunctionDecl *F, SourceLocation At,
             return std::nullopt;
 
   // The base's address, as an integer.
+  bool NeedRuns = false;
   auto Addr = [&](const ValueDecl *V, std::string &Out) -> bool {
     const VarDecl *VD = canon(V);
+    if (const FieldPath *P = fieldPath(VD)) {
+      if (!Nameable(P->Root))
+        return false;
+      if (!P->DerefKeys.empty()) {
+        if (!Acc.EagerPaths.count(P->Decl)) {
+          Why = "evaluating " + Quoted(V) + " before the loop would "
+                "dereference a pointer the loop may never dereference";
+          return false;
+        }
+        NeedRuns = true;
+      }
+      Out = "(" + std::string(IntPtrType) + ")" + P->Spelling;
+      return true;
+    }
     if (!isa<ParmVarDecl>(VD) && (VD->isStaticLocal() || !VD->isFileVarDecl())) {
       Why = Quoted(V) + " is not a file-scope variable the check could name";
       return false;
@@ -770,8 +809,29 @@ AliasAnalyzer::runtimeCheck(const FunctionDecl *F, SourceLocation At,
   std::string BA, BB, LA, EA, LB, EB;
   if (!Addr(A, BA) || !Addr(B, BB) || !Range(A, LA, EA) || !Range(B, LB, EB))
     return std::nullopt;
-  return "(" + BA + " + " + EA + " <= " + BB + " + " + LB + " || " + BB +
-         " + " + EB + " <= " + BA + " + " + LA + ")";
+  const std::string Apart = "(" + BA + " + " + EA + " <= " + BB + " + " + LB +
+                            " || " + BB + " + " + EB + " <= " + BA + " + " +
+                            LA + ")";
+  if (!NeedRuns)
+    return Apart;
+  // Phase 2.5: dereference a field path's pointers only when the loop runs
+  // (its first iteration dereferences them too).
+  auto Root = Acc.Ranges.find(Acc.RootIV);
+  if (!Acc.RootIV || Root == Acc.Ranges.end() || !Root->second.Lo ||
+      !Root->second.Hi) {
+    Why = "can't test before the loop that it runs";
+    return std::nullopt;
+  }
+  const AffineExpr &Lo = *Root->second.Lo, &Hi = *Root->second.Hi;
+  for (const AffineExpr *E : {&Lo, &Hi}) {
+    for (const auto &[S, C] : E->SymTerms)
+      if (!Nameable(S))
+        return std::nullopt;
+    for (const auto &[V, C] : E->IVTerms)
+      if (!Nameable(V))
+        return std::nullopt;
+  }
+  return "(" + asIntPtr(Hi) + " >= " + asIntPtr(Lo) + " && " + Apart + ")";
 }
 
 } // namespace p05
