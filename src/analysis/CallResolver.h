@@ -115,6 +115,23 @@ private:
   clang::CallGraph CG;
 };
 
+/// -known-functions (default on): see isKnownFunction.
+bool knownFunctionsFromFlags();
+
+/// Phase 2.5: a function with no body whose effects are known anyway, so
+/// the analysis can ignore its calls (no memory effects at all). Two kinds:
+///   - a const library builtin by Clang's own table (sqrt, floor, fabs, pow,
+///     __builtin_expect: Builtin::Context::isConst, or const but for errno
+///     and FP exceptions), with no pointer parameter and not variadic. A
+///     user-defined `sqrt` is not a builtin. errno is thread-local (C11), so
+///     calls in different threads don't race on it; a program that reads
+///     errno after a parallelized loop could tell (a stated assumption).
+///   - the assert-failure function a system <assert.h> calls (__assert_rtn,
+///     __assert_fail, __assert, _assert): it runs only when the program is
+///     already failing, and then aborts (stated assumption: as if -DNDEBUG).
+/// Never a function with a visible body, and never with -known-functions=off.
+bool isKnownFunction(const clang::FunctionDecl *FD);
+
 /// Reports, for each callee LoopAnalysis recorded on LI, everything that callee
 /// transitively reaches. Lives here rather than in LoopAnalysis.cpp because it
 /// is call-resolution reporting rather than loop-shape reporting, and here

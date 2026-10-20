@@ -153,6 +153,11 @@ struct LoopSafety {
   /// RegionPlanner sees them). The rest of mappability is RegionPlan's.
   bool CalleesMappable = true;
 
+  /// Phase 2.5: a callee (or one it reaches) imported from another input,
+  /// as "'f' (b.c)"; empty when none. Its device code would need `declare
+  /// target` in that file, which is not rewritten: no GPU offload.
+  std::string ForeignCallee;
+
   /// Phase 2.1: lastprivate and reduction scalars, which a GPU region must
   /// copy back (map(tofrom: ...)).
   std::vector<const clang::VarDecl *> HostScalars;

@@ -1,4 +1,5 @@
 #include "analysis/Profitability.h"
+#include "analysis/CrossTU.h"
 
 #include "clang/AST/ParentMapContext.h"
 #include "clang/AST/RecursiveASTVisitor.h"
@@ -301,7 +302,7 @@ private:
     QualType T = Base->getType();
     if (T->isPointerType())
       return Ctx.getTypeSizeInChars(T->getPointeeType()).getQuantity();
-    if (const ArrayType *AT = Ctx.getAsArrayType(T))
+    if (const clang::ArrayType *AT = Ctx.getAsArrayType(T))
       return Ctx.getTypeSizeInChars(AT->getElementType()).getQuantity();
     return Ctx.getTypeSizeInChars(T).getQuantity();
   }
@@ -444,12 +445,22 @@ llvm::Expected<MachineModel> machineModelFromFlags() {
 
 Policy policyFromFlags() { return FlagPolicy; }
 
+/// Phase 2.5: a known library function (sqrt, ...) is priced as one
+/// operation; compiler hints (__builtin_expect) and assert's failure path,
+/// which never runs, as none.
+static double knownFunctionOps(const FunctionDecl *FD) {
+  const unsigned ID = isKnownFunction(FD) ? FD->getBuiltinID() : 0;
+  const Builtin::Context &BI = FD->getASTContext().BuiltinInfo;
+  return ID && (BI.isLibFunction(ID) || BI.isPredefinedLibFunction(ID)) ? 1.0
+                                                                          : 0.0;
+}
+
 double ProfitabilityAnalyzer::getOpCount(const FunctionDecl *FD) {
   FD = FD->getCanonicalDecl();
   if (auto It = OpCache.find(FD); It != OpCache.end())
     return It->second;
 
-  double Count = 0.0;
+  double Count = knownFunctionOps(FD);
   if (const FunctionDecl *Def = FD->getDefinition()) {
     OpCountVisitor Visitor(Count);
     Visitor.TraverseStmt(Def->getBody());
@@ -541,6 +552,8 @@ void ProfitabilityAnalyzer::countOps(const Stmt *S, double &Own,
 
 double ProfitabilityAnalyzer::functionOps(const FunctionDecl *FD) {
   FD = FD->getCanonicalDecl();
+  if (isKnownFunction(FD))
+    return knownFunctionOps(FD);
   if (auto It = FnOps.find(FD); It != FnOps.end())
     return It->second;
   const FunctionDecl *Def = FD->getDefinition();
@@ -986,6 +999,25 @@ ProfitabilityAnalyzer::analyzeLoop(const LoopInfo &LI, const LoopSafety &Safety,
     }
   }
 
+  // Phase 2.5: code imported from another input runs on the device only
+  // with `declare target` there, in a file this tool does not rewrite.
+  if (V.Target == OffloadTarget::GpuOffload && !Safety.ForeignCallee.empty()) {
+    const std::string Why = "GPU offload declined: it calls " +
+                            Safety.ForeignCallee +
+                            ", defined in another file, which would need "
+                            "`declare target` there";
+    V.GuardExpr.reset();
+    if (V.CpuBeatsSeq) {
+      V.Target = OffloadTarget::CpuParallel;
+      V.Reasons.push_back(Why + " -> CPU_PARALLEL");
+    } else {
+      V.Target = OffloadTarget::Sequential;
+      V.CpuGuardExpr.reset();
+      V.Reasons.push_back(Why + ", and threading does not beat sequential "
+                                "-> SEQUENTIAL");
+    }
+  }
+
   // Interlock (Phase 1.3): every map() clause is `base[0:bound]`, which is
   // only the right region when each access is exactly `base[i]`. The
   // dependence tests now prove loops SAFE whose accesses are not
@@ -1172,14 +1204,22 @@ void declineNestedConstructs(
       if (!Kind[K] || Declined[K])
         continue;
       for (size_t J = 0; J < N; ++J) {
-        if (Kind[J] != 2 || !Fn[J] || !Reach[K].count(Fn[J]))
+        // Phase 2.5: another input's loops are decided in its own run, so
+        // any of them may get a target region there.
+        if (!(Kind[J] == 2 || Loops[J].Foreign) || !Fn[J] ||
+            !Reach[K].count(Fn[J]))
           continue;
         Declined[K] = Changed = true;
         Profit.declineNested(
             Loops[K].Loop,
-            "declined: it calls '" + Fn[J]->getNameAsString() +
-                "', which has a target region of its own, and one can't "
-                "run inside another construct -> SEQUENTIAL");
+            Loops[J].Foreign
+                ? "declined: it calls " + foreignLabel(Fn[J]) +
+                      ", defined in another file, whose loops may get a "
+                      "target region there, and one can't run inside "
+                      "another construct -> SEQUENTIAL"
+                : "declined: it calls '" + Fn[J]->getNameAsString() +
+                      "', which has a target region of its own, and one "
+                      "can't run inside another construct -> SEQUENTIAL");
         Verdicts[K] = Profit.analyzeLoop(Loops[K], Safety[K],
                                          Plans[K] ? &*Plans[K] : nullptr);
         break;

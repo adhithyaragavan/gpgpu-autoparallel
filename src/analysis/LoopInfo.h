@@ -100,6 +100,15 @@ struct LoopInfo {
   /// deduplicated. This is the hook the interprocedural pass builds on.
   std::vector<const clang::FunctionDecl *> Callees;
 
+  /// Phase 2.5: in a function imported from another input (CrossTU.h):
+  /// kept for the summaries of the loops that call it, but analysed,
+  /// reported and rewritten in its own file only.
+  bool Foreign = false;
+
+  /// Phase 2.5: callees with no memory effects (isKnownFunction), in source
+  /// order, deduplicated; never in Callees.
+  std::vector<const clang::FunctionDecl *> KnownCallees;
+
   /// A call in the body whose callee could not be resolved statically (a call
   /// through a function pointer). Tracked separately rather than dropped: an
   /// unresolvable call must block parallelization later, so losing it silently

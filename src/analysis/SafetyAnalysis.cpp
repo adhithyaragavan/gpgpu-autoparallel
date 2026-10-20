@@ -1,4 +1,5 @@
 #include "analysis/SafetyAnalysis.h"
+#include "analysis/CrossTU.h"
 
 #include "analysis/DependenceTest.h"
 
@@ -810,6 +811,14 @@ LoopSafety SafetyAnalyzer::analyzeLoop(const LoopInfo &LI,
     Safety.Reasons.push_back(R);
   }
   Safety.ScalarClauses = Scalars.clauseText();
+  for (const FunctionDecl *Callee : LI.Callees) {
+    std::vector<const FunctionDecl *> Fns{Callee};
+    for (const ResolvedCallee &RC : Resolver.getReachable(Callee).Reachable)
+      Fns.push_back(RC.Callee);
+    for (const FunctionDecl *F : Fns)
+      if (Safety.ForeignCallee.empty() && isForeign(F->getDefinition()))
+        Safety.ForeignCallee = foreignLabel(F);
+  }
   // Memory a callee reaches through a global, or through a pointer whose
   // accesses were not composed into the loop's, is not in any map() clause
   // this pass can size.

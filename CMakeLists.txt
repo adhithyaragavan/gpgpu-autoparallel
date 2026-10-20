@@ -18,6 +18,7 @@ add_executable(p05tool
   src/driver/main.cpp
   src/analysis/LoopAnalysis.cpp
   src/analysis/CallResolver.cpp
+  src/analysis/CrossTU.cpp
   src/analysis/SafetyAnalysis.cpp
   src/analysis/Profitability.cpp
   src/analysis/AffineAccess.cpp

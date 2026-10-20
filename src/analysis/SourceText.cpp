@@ -1,4 +1,5 @@
 #include "analysis/SourceText.h"
+#include "analysis/CrossTU.h"
 
 #include "clang/AST/RecursiveASTVisitor.h"
 #include "clang/Basic/SourceManager.h"
@@ -102,9 +103,20 @@ bool NameScope::nameable(const ValueDecl *D, std::string &Why) const {
       }
   if (VD->isFileVarDecl()) {
     const SourceManager &SM = Ctx.getSourceManager();
+    // Phase 2.5: an imported declaration is spelled in another file; this
+    // file may give its name to a different object (its own static).
     bool Before = false;
     for (const VarDecl *R : VD->redecls())
-      Before |= SM.isBeforeInTranslationUnit(R->getLocation(), At);
+      Before |= !isForeign(R) &&
+                SM.isBeforeInTranslationUnit(R->getLocation(), At);
+    if (!Before && llvm::any_of(VD->redecls(), [](const VarDecl *R) {
+          return isForeign(R);
+        }) && llvm::none_of(VD->redecls(), [](const VarDecl *R) {
+          return !isForeign(R);
+        })) {
+      Why = "global " + Quoted(D) + " is only declared in another file";
+      return false;
+    }
     if (!Before) {
       Why = "global " + Quoted(D) + " is declared after the loop";
       return false;

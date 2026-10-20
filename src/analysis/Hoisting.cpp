@@ -1,4 +1,5 @@
 #include "analysis/Hoisting.h"
+#include "analysis/CrossTU.h"
 #include "analysis/SourceText.h"
 
 #include "clang/AST/ParentMapContext.h"
@@ -486,6 +487,9 @@ struct HoistPlanner::Impl {
       for (size_t K = 0; K < N; ++K) {
         Fn[K] = functionOf(P.Ctx, P.Loops[K].Loop);
         Reach[K] = reachableFrom(P.Resolver, P.Loops[K]);
+        // Another input's loop may be a construct there (Phase 2.5).
+        if (P.Loops[K].Foreign)
+          HasCand.insert(Fn[K]);
         if (Emitted[K] || GpuAble[K]) {
           HasCand.insert(Fn[K]);
           CalledByCand.insert(Reach[K].begin(), Reach[K].end());
@@ -750,6 +754,15 @@ struct HoistPlanner::Impl {
                   I.contains(Fn->getBody(), K))
                 return fail("host code calls '" + Fn->getNameAsString() +
                             "', which offloads loops of its own");
+          // Another input's loops are decided in its own run (Phase 2.5).
+          if (Fn->getBody())
+            for (size_t K = 0; K < I.P.Loops.size(); ++K)
+              if (I.P.Loops[K].Foreign &&
+                  functionOf(I.P.Ctx, I.P.Loops[K].Loop) ==
+                      Fn->getCanonicalDecl())
+                return fail("host code calls " + foreignLabel(Fn) +
+                            ", defined in another file, whose loops may be "
+                            "offloaded there");
           const FunctionEffects &E = I.P.SafetyA.getEffects(Fn);
           if (E.AccessesThroughPointer || E.HasUnknownWrite)
             return fail("host code calls '" + Fn->getNameAsString() +

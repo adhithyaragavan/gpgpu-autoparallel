@@ -46,8 +46,8 @@ def lit(text):
                   lambda m: "{{\\[\\[}}" if m.group() == "[[" else "{{\\{\\{}}", text)
 
 
-def tool_output(path, flags=()):
-    args = [TOOL, *flags, path, "--"]
+def tool_output(path, flags=(), extra=()):
+    args = [TOOL, *flags, path, *extra, "--"]
     if platform.system() == "Darwin":
         sdk = subprocess.run(["xcrun", "--show-sdk-path"], capture_output=True,
                              text=True, check=True).stdout.strip()
@@ -72,12 +72,16 @@ def main(paths):
         # A fixture may run the tool with extra flags (`// RUN: %p05 -policy
         # naive %s ...`): keep its RUN line and snapshot with the same flags.
         run_line = next((l for l in lines if l.startswith("// RUN: ")), None)
-        flags = []
+        flags, extra = [], []
         if run_line:
-            m = re.match(r"// RUN: %p05 (.*?)%s", run_line)
+            m = re.match(r"// RUN: %p05 (.*?)%s(.*?)--", run_line)
             flags = m.group(1).split() if m else []
+            # Inputs after %s (Phase 2.5 cross-file fixtures): analysed after
+            # the fixture, so its report still comes first.
+            extra = m.group(2).split() if m else []
             # %S is lit's name for the fixture's directory.
             flags = [f.replace("%S", os.path.dirname(path)) for f in flags]
+            extra = [f.replace("%S", os.path.dirname(path)) for f in extra]
         src = [l for l in lines if not re.match(r"\s*// (CHECK|CHECK-NEXT|RUN): ", l)]
         # Run the tool on a stripped temp copy in the same directory (so its
         # line numbers match `src` and relative #includes still resolve), and
@@ -85,7 +89,7 @@ def main(paths):
         tmp = os.path.join(os.path.dirname(path), ".gen_" + os.path.basename(path))
         try:
             open(tmp, "w").write("\n".join(src))
-            out = tool_output(tmp, flags)
+            out = tool_output(tmp, flags, extra)
         finally:
             if os.path.exists(tmp):
                 os.remove(tmp)

@@ -507,6 +507,8 @@ const FunctionSummary &SummaryAnalyzer::summarize(const FunctionDecl *FD) {
       continue;
     }
     const FunctionDecl *GDef = visibleDefinition(CS.Callee);
+    if (!GDef && isKnownFunction(CS.Callee))
+      continue; // no memory effects
     if (!GDef) {
       S->Incomplete = true; // reported by the loop's call-chain walk
       continue;

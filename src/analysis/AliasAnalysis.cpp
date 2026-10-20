@@ -1,4 +1,5 @@
 #include "analysis/AliasAnalysis.h"
+#include "analysis/CrossTU.h"
 #include "analysis/SourceText.h"
 
 #include "analysis/Profitability.h" // optionCategory()
@@ -348,6 +349,22 @@ std::optional<Hint> AliasAnalyzer::restrictHint(const FunctionDecl *F,
   return std::nullopt;
 }
 
+/// Does a declaration of V name its symbol itself (`__asm__("x")`) or alias
+/// another (`__attribute__((alias))`)?
+static bool renamed(const ValueDecl *V) {
+  return V && llvm::any_of(V->redecls(), [](const Decl *D) {
+    return D->hasAttr<AsmLabelAttr>() || D->hasAttr<AliasAttr>();
+  });
+}
+
+/// Are all of Def's calls in this file?
+static bool callersAllHere(const FunctionDecl *Def, bool WholeProgram) {
+  if (isForeign(Def) || renamed(Def))
+    return false;
+  return !Def->isExternallyVisible() ||
+         (WholeProgram && !referencedInAnotherInput(Def));
+}
+
 AliasProof AliasAnalyzer::proof(const FunctionDecl *F, const ValueDecl *A,
                                 const ValueDecl *B) {
   return proofAt(F, A, B, 0);
@@ -384,6 +401,10 @@ AliasProof AliasAnalyzer::proofAt(const FunctionDecl *F, const ValueDecl *A,
     return typesMayAlias(Elem(A, RA), Elem(B, RB), Ctx) ? AliasProof::Unproven
                                                         : AliasProof::Types;
   }
+  // Two names, one symbol: an asm label or alias attribute can give an
+  // object a second name, here or in another file (review of Phase 2.5).
+  if (renamed(canon(A)) || renamed(canon(B)))
+    return AliasProof::Unproven;
   if (RA == Role::Object && RB == Role::Object)
     return AliasProof::Distinct;
   // A pointer parameter vs an object: it can't point into this call's own
@@ -398,7 +419,8 @@ AliasProof AliasAnalyzer::proofAt(const FunctionDecl *F, const ValueDecl *A,
   if (Obj) {
     const VarDecl *O = canon(Obj);
     indexCalls();
-    if (!Escaped.count(O) &&
+    // An imported static only if its own file keeps it in (CrossTU.h).
+    if (!Escaped.count(O) && (!isForeign(O) || isNonEscapingForeignStatic(O)) &&
         (O->isStaticLocal() || !O->isExternallyVisible()))
       return AliasProof::Distinct;
   }
@@ -413,6 +435,11 @@ AliasProof AliasAnalyzer::proofAt(const FunctionDecl *F, const ValueDecl *A,
   return AliasProof::Unproven;
 }
 
+bool AliasAnalyzer::addressEscapes(const VarDecl *VD) {
+  indexCalls();
+  return Escaped.count(VD->getCanonicalDecl());
+}
+
 bool AliasAnalyzer::callersProve(const FunctionDecl *F, const ValueDecl *A,
                                  const ValueDecl *B, unsigned Depth) {
   if (Depth >= MaxCallerDepth)
@@ -420,7 +447,9 @@ bool AliasAnalyzer::callersProve(const FunctionDecl *F, const ValueDecl *A,
   const FunctionDecl *Def = F->getDefinition();
   if (!Def || Def->isMain() || !Def->hasPrototype())
     return false;
-  if (Def->isExternallyVisible() && !WholeProgram)
+  // Phase 2.5: an imported function's callers in its own file are not here,
+  // nor (-whole-program with several inputs) callers in the other inputs.
+  if (!callersAllHere(Def, WholeProgram))
     return false;
   indexCalls();
   if (AddressTaken.count(Def->getCanonicalDecl()))
@@ -472,7 +501,7 @@ std::optional<int64_t> AliasAnalyzer::callerExtent(const FunctionDecl *F,
   const FunctionDecl *Def = F ? F->getDefinition() : nullptr;
   if (!Def || Def->isMain() || !Def->hasPrototype())
     return std::nullopt;
-  if (Def->isExternallyVisible() && !WholeProgram)
+  if (!callersAllHere(Def, WholeProgram))
     return std::nullopt;
   std::optional<unsigned> K = paramIndex(P, Def);
   if (!K || role(Def, P) != Role::PtrParam)

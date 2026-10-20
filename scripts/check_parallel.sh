@@ -15,6 +15,8 @@
 # map() section that misses an element, or a `from` over an element the loop
 # doesn't write, shows up as a mismatch too.
 # P05_FLAGS adds tool flags (e.g. -maps=bound, to see the old sections fail).
+# EXTRA names more input files (Phase 2.5 cross-file fixtures): the tool sees
+# them after the fixture, and both builds link them in unchanged.
 # POLICY overrides the policy (e.g. POLICY=gated OFFLOAD=1 runs the cost
 # model's own choices, guards and data regions included).
 set -euo pipefail
@@ -42,8 +44,14 @@ trap 'rm -rf "$WORK"' EXIT
 base=$(basename "$FIXTURE" .c)
 # Strip the FileCheck lines (they are comments, but keep the copy clean).
 grep -v -E '^\s*// (CHECK|CHECK-NEXT|RUN):' "$FIXTURE" > "$WORK/$base.c"
+EXTRAS=()
+for x in ${EXTRA:-}; do
+  mkdir -p "$WORK/extra"
+  cp "$x" "$WORK/extra/$(basename "$x")"
+  EXTRAS+=("$WORK/extra/$(basename "$x")")
+done
 
-"$TOOL" -rewrite -policy "$POLICY" ${P05_FLAGS:-} "$WORK/$base.c" -- "${SYSROOT[@]}" > "$WORK/report.txt"
+"$TOOL" -rewrite -policy "$POLICY" ${P05_FLAGS:-} "$WORK/$base.c" ${EXTRAS[@]+"${EXTRAS[@]}"} -- "${SYSROOT[@]}" > "$WORK/report.txt"
 pragmas=$(grep -c '#pragma omp' "$WORK/$base.omp.c" || true)
 targets=$(grep -c '#pragma omp target teams' "$WORK/$base.omp.c" || true)
 echo "rewrote $FIXTURE (-policy $POLICY): $pragmas pragma(s), $targets target region(s)"
@@ -53,8 +61,8 @@ echo "rewrote $FIXTURE (-policy $POLICY): $pragmas pragma(s), $targets target re
 # variable lives in memory and the race shows.
 fail=0
 for OPT in -O2 -O0; do
-  "$CC" $OPT -w "${SYSROOT[@]}" -DSRC="\"$WORK/$base.c\"" "$DRIVER" -o "$WORK/seq"
-  "$CC" $OPT -w "${SYSROOT[@]}" "${OMPFLAGS[@]}" -DSRC="\"$WORK/$base.omp.c\"" "$DRIVER" -o "$WORK/par"
+  "$CC" $OPT -w "${SYSROOT[@]}" -DSRC="\"$WORK/$base.c\"" "$DRIVER" ${EXTRAS[@]+"${EXTRAS[@]}"} -lm -o "$WORK/seq"
+  "$CC" $OPT -w "${SYSROOT[@]}" "${OMPFLAGS[@]}" -DSRC="\"$WORK/$base.omp.c\"" "$DRIVER" ${EXTRAS[@]+"${EXTRAS[@]}"} -lm -o "$WORK/par"
   "$WORK/seq" "$WORK/seq.bin"
   for ((r = 1; r <= RUNS; r++)); do
     OMP_NUM_THREADS=${OMP_NUM_THREADS:-8} "$WORK/par" "$WORK/par.bin"

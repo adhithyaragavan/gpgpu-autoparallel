@@ -1,4 +1,6 @@
 #include "analysis/LoopAnalysis.h"
+#include "analysis/CallResolver.h"
+#include "analysis/CrossTU.h"
 
 #include "clang/AST/ASTContext.h"
 #include "clang/AST/Expr.h"
@@ -117,9 +119,9 @@ void collectCalls(const Stmt *S, LoopInfo &LI) {
     return;
   if (const auto *CE = dyn_cast<CallExpr>(S)) {
     if (const FunctionDecl *Callee = CE->getDirectCallee()) {
-      if (std::find(LI.Callees.begin(), LI.Callees.end(), Callee) ==
-          LI.Callees.end())
-        LI.Callees.push_back(Callee);
+      auto &List = isKnownFunction(Callee) ? LI.KnownCallees : LI.Callees;
+      if (std::find(List.begin(), List.end(), Callee) == List.end())
+        List.push_back(Callee);
     } else {
       LI.HasIndirectCall = true;
     }
@@ -391,6 +393,7 @@ void LoopCollector::recordLoop(const ForStmt *FS) {
   }
   LI.InsideRepeatingContext = OpenRepeating > 0;
   LI.PerfectlyNested = bodyIsSingleFor(FS->getBody());
+  LI.Foreign = isForeignLocation(Ctx, FS->getBeginLoc());
 
   if (LI.Kind != LoopKind::Unrecognized) {
     // NestIVs holds only the enclosing loops' variables at this point. A
@@ -537,6 +540,12 @@ void printLoopReport(llvm::raw_ostream &OS, const LoopInfo &LI,
   }
   if (LI.HasIndirectCall)
     OS << "  callees    : <contains an unresolved indirect call>\n";
+  if (!LI.KnownCallees.empty()) {
+    OS << "  known calls: ";
+    for (size_t I = 0; I < LI.KnownCallees.size(); ++I)
+      OS << (I ? ", " : "") << LI.KnownCallees[I]->getNameAsString();
+    OS << " (no memory effects)\n";
+  }
 
   OS << "\n";
 }

@@ -1,0 +1,19 @@
+# Phase 2.5 known functions (tests/known.c pins the default verdicts).
+#
+# 1. The report names the calls it treated as having no memory effects.
+RUN: %p05 %S/known.c -- %cflags | FileCheck --check-prefix=ON %s
+ON-LABEL: known.c:33:3
+ON: known calls: sqrt, fabs, floor, pow (no memory effects)
+ON-LABEL: known.c:53:3
+ON: known calls: {{.*}}(no memory effects)
+#
+# 2. -known-functions=off: every call without a body is opaque again.
+RUN: %p05 -known-functions=off %S/known.c -- %cflags | FileCheck --check-prefix=OFF %s
+OFF-LABEL: known.c:33:3
+OFF: safety     : UNKNOWN
+OFF: - 'sqrt' has no visible body in this TU{{$}}
+OFF-LABEL: known.c:53:3
+OFF: safety     : UNKNOWN
+OFF-LABEL: known.c:98:3
+OFF: R b[i + koff] : non-affine: uses 'koff', which could be modified by a call inside the loop (global or address-taken){{$}}
+OFF: safety     : UNKNOWN

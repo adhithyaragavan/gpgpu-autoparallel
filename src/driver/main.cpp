@@ -12,6 +12,7 @@
 
 #include "analysis/AffineAccess.h"
 #include "analysis/CallResolver.h"
+#include "analysis/CrossTU.h"
 #include "analysis/DataRegions.h"
 #include "analysis/Hoisting.h"
 #include "analysis/LoopAnalysis.h"
@@ -32,6 +33,9 @@
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/raw_ostream.h"
+
+#include <algorithm>
+#include <map>
 
 using namespace clang;
 using namespace clang::tooling;
@@ -61,14 +65,37 @@ std::string rewriteOutputPath(StringRef InputFile) {
   return std::string(Path);
 }
 
+/// Phase 2.5 (-cross-tu): the index of every input, and the inputs whose
+/// imports failed validation (analysed again without, with the reason).
+struct CrossTUState {
+  p05::CrossTUIndex *Index = nullptr;
+  std::map<std::string, std::string> Dropped;
+  bool Rerun = false; ///< this run is the one without imports
+};
+
 class LoopAnalysisConsumer : public ASTConsumer {
 public:
   LoopAnalysisConsumer(p05::MachineModel Machine, p05::Policy PolicyMode,
-                       std::string InputFile)
+                       std::string InputFile, FileManager &Files,
+                       CrossTUState &CTU)
       : Machine(Machine), PolicyMode(PolicyMode),
-        InputFile(std::move(InputFile)) {}
+        InputFile(std::move(InputFile)), Files(Files), CTU(CTU) {}
 
   void HandleTranslationUnit(ASTContext &Context) override {
+    p05::beginTranslationUnit(Context);
+    p05::ImportResult Imports;
+    if (CTU.Index)
+      CTU.Index->beginFile(Context, InputFile);
+    if (CTU.Index && !CTU.Rerun) {
+      Imports = CTU.Index->importInto(Context, Files, InputFile);
+      if (!Imports.Conflict.empty()) {
+        // Nothing printed yet: the driver analyses this file again,
+        // without imports, and says why.
+        CTU.Dropped[InputFile] = Imports.Conflict;
+        return;
+      }
+    }
+
     p05::LoopCollector Collector(Context);
     Collector.TraverseDecl(Context.getTranslationUnitDecl());
 
@@ -95,7 +122,19 @@ public:
     p05::OmpRewriter OmpCodegen(Rewrite, Resolver, Context);
 
     const std::vector<p05::LoopInfo> &Loops = Collector.getLoops();
-    llvm::outs() << "Analyzed " << Loops.size() << " loop(s).\n";
+    // Phase 2.5: loops imported from another input are analysed there.
+    const size_t Own = llvm::count_if(
+        Loops, [](const p05::LoopInfo &LI) { return !LI.Foreign; });
+    llvm::outs() << "Analyzed " << Own << " loop(s).\n";
+    if (!Imports.Imported.empty()) {
+      llvm::outs() << "cross-file : imported ";
+      for (size_t I = 0; I < Imports.Imported.size(); ++I)
+        llvm::outs() << (I ? ", " : "") << Imports.Imported[I];
+      llvm::outs() << "\n";
+    }
+    if (CTU.Rerun && CTU.Dropped.count(InputFile))
+      llvm::outs() << "cross-file : nothing imported: "
+                   << CTU.Dropped[InputFile] << "\n";
     // Day 21: only printed for a non-default policy, so every -policy=gated
     // (and every pre-Day-21 invocation, which had no -policy at all) run's
     // report is byte-identical to yesterday's -- see NOTES.md's Day 21
@@ -112,6 +151,13 @@ public:
     std::vector<p05::LoopAccesses> AllAccesses;
     std::vector<p05::LoopSafety> AllSafety;
     for (const p05::LoopInfo &LI : Loops) {
+      if (LI.Foreign) {
+        p05::LoopSafety Skip;
+        Skip.Verdict = p05::SafetyVerdict::Unknown;
+        AllAccesses.emplace_back();
+        AllSafety.push_back(std::move(Skip));
+        continue;
+      }
       p05::LoopAccesses Accesses = Affine.analyzeLoop(&LI - Loops.data());
       p05::CallEffects CallFx;
       if (UseSummaries)
@@ -181,6 +227,8 @@ public:
     }
     for (const p05::LoopInfo &LI : Loops) {
       const size_t K = &LI - Loops.data();
+      if (LI.Foreign)
+        continue;
       p05::printLoopReport(llvm::outs(), LI, Loops);
       p05::printCallChains(llvm::outs(), LI, Resolver);
       p05::printAccessReport(llvm::outs(), AllAccesses[K]);
@@ -235,22 +283,26 @@ private:
   p05::MachineModel Machine;
   p05::Policy PolicyMode;
   std::string InputFile;
+  FileManager &Files;
+  CrossTUState &CTU;
 };
 
 class LoopAnalysisAction : public ASTFrontendAction {
 public:
-  LoopAnalysisAction(p05::MachineModel Machine, p05::Policy PolicyMode)
-      : Machine(Machine), PolicyMode(PolicyMode) {}
+  LoopAnalysisAction(p05::MachineModel Machine, p05::Policy PolicyMode,
+                     CrossTUState &CTU)
+      : Machine(Machine), PolicyMode(PolicyMode), CTU(CTU) {}
 
   std::unique_ptr<ASTConsumer> CreateASTConsumer(CompilerInstance &CI,
                                                  StringRef File) override {
-    return std::make_unique<LoopAnalysisConsumer>(Machine, PolicyMode,
-                                                   File.str());
+    return std::make_unique<LoopAnalysisConsumer>(
+        Machine, PolicyMode, File.str(), CI.getFileManager(), CTU);
   }
 
 private:
   p05::MachineModel Machine;
   p05::Policy PolicyMode;
+  CrossTUState &CTU;
 };
 
 /// Factory binding the MachineModel (read from cl::opt flags once, after
@@ -258,16 +310,18 @@ private:
 /// tool creates — one per input file.
 class LoopAnalysisActionFactory : public FrontendActionFactory {
 public:
-  LoopAnalysisActionFactory(p05::MachineModel Machine, p05::Policy PolicyMode)
-      : Machine(Machine), PolicyMode(PolicyMode) {}
+  LoopAnalysisActionFactory(p05::MachineModel Machine, p05::Policy PolicyMode,
+                            CrossTUState &CTU)
+      : Machine(Machine), PolicyMode(PolicyMode), CTU(CTU) {}
 
   std::unique_ptr<FrontendAction> create() override {
-    return std::make_unique<LoopAnalysisAction>(Machine, PolicyMode);
+    return std::make_unique<LoopAnalysisAction>(Machine, PolicyMode, CTU);
   }
 
 private:
   p05::MachineModel Machine;
   p05::Policy PolicyMode;
+  CrossTUState &CTU;
 };
 
 } // namespace
@@ -304,6 +358,23 @@ int main(int argc, const char **argv) {
     llvm::errs() << "p05tool: " << llvm::toString(Machine.takeError()) << "\n";
     return 1;
   }
-  LoopAnalysisActionFactory Factory(*Machine, p05::policyFromFlags());
-  return Tool.run(&Factory);
+  // Phase 2.5: with several inputs, each gets the others' definitions.
+  CrossTUState CTU;
+  p05::CrossTUIndex Index;
+  // -whole-program needs it too: callers in the other inputs.
+  if ((p05::crossTUFromFlags() || p05::wholeProgramFromFlags()) &&
+      Sources.size() > 1) {
+    Index.build(Tool);
+    CTU.Index = &Index;
+  }
+  LoopAnalysisActionFactory Factory(*Machine, p05::policyFromFlags(), CTU);
+  int Status = Tool.run(&Factory);
+  if (CTU.Dropped.empty())
+    return Status;
+  std::vector<std::string> Again;
+  for (const auto &[File, Why] : CTU.Dropped)
+    Again.push_back(File);
+  CTU.Rerun = true;
+  ClangTool Retry(OptionsParser.getCompilations(), Again);
+  return std::max(Status, Retry.run(&Factory));
 }

@@ -3179,3 +3179,137 @@ and unknown-start ranges; IPA composition.
   (`for (iOff = ..., ii = 0; ii < n; ii++, iOff++)`, 17 loops `loop-shape`), and its outer
   per-box loops dereference `s->atoms` only inside the inner loop, so the eager rule refuses
   their checks.
+
+### 2026-10-20 — Phase 2.5: known functions and calls into other files
+
+**Decision (user, 2026-10-20): known functions + cross-file calls before inspectors (item 2).** The
+re-survey after field paths found indirect subscripts on 2 XSBench loops and none in CoMD, while
+`opaque-callee` was the largest remaining category: 51 CoMD loops, 8 XSBench, 66 PolyBench (61 of
+them `fprintf` in print loops, correctly sequential). The opaque callees were of three kinds:
+libm (`sqrt`, `floor`), `assert` (`__assert_rtn`, `__builtin_expect`), and the program's own
+functions defined in another `.c` file (`getBoxFromTuple`, `getNRanks`). User's choices: assert's
+failure path is ignored (as if `-DNDEBUG`), and errno is assumed thread-local (stated, not
+required via `-fno-math-errno`).
+
+**Known functions** (`isKnownFunction` in `CallResolver.h`; `-known-functions=off`):
+- Clang's own builtin table decides, not a name list: a callee with no body whose
+  `getBuiltinID()` is const (`isConst`, or const but for errno/FP exceptions), not variadic, with
+  no pointer or array parameter. `frexp` (writes `*exp`), `strlen` (reads memory), `rand` and a
+  user's `fast_sqrt` stay opaque; a user *definition* has a body and is analysed as usual. A
+  builtin returning a pointer is not known either (`__builtin_thread_pointer` is "const" but
+  differs per thread).
+- Plus the assert-failure function a system `<assert.h>` calls (`__assert_rtn`, `__assert_fail`,
+  `__assert`, `_assert`): it only runs when the program is already failing.
+- Such calls are left out of the callee list (reported as `known calls: ... (no memory effects)`),
+  out of call resolution and summaries, and don't count as "a call that could change a global".
+  Priced as one operation (a library function) or none (`__builtin_expect`, assert).
+- Assumptions, stated: errno has thread storage duration (C11), so calls on different threads
+  don't race on it; a program that reads errno after a parallelized loop could tell. A failing
+  assert in a parallel loop may report a different iteration than the sequential run.
+
+**Cross-file calls** (`CrossTU.{h,cpp}`; `-cross-tu=off`): `p05tool a.c b.c c.c --`.
+- Every input is parsed once up front (`CrossTUIndex::build`, diagnostics suppressed) and its
+  externally visible function definitions are indexed by name (C has no overloading; a name
+  defined in two inputs is ambiguous and never imported; definitions in headers are ignored).
+- Before a file is analysed, each external callee without a body that one other input defines is
+  copied in with `clang::ASTImporter` (shared lookup state, what the static analyzer's CTU mode
+  does), repeated until nothing new is called. The callee then has a body; summaries, safety,
+  alias analysis and pricing are unchanged.
+- Foreign code: a location in a source-manager entry the import created (the importer gives every
+  file it copies from a new entry). Foreign loops are collected (a callee's own loops are needed
+  for its summary, `x_sum4` in the fixture) but not analysed, reported or rewritten here.
+- Proofs that need every caller or use visible: no caller-based proofs for a foreign function; a
+  foreign static is a distinct object only when its own file never lets its address out (the
+  escape scan runs on that file's AST, mapped back through `GetAlreadyImportedOrNull`).
+- Emitted code: `NameScope::nameable` refuses a global only declared in another file, so no
+  run-time check or map() section names it (found while building the fixture: a check named the
+  other file's `static double hidden[8]` in a file whose own `hidden` is an `int`).
+- GPU declined for a loop reaching foreign code (`ForeignCallee`): its device build would need
+  `declare target` in a file the tool does not rewrite.
+- Identity: every external object or function, at any scope (block-scope `extern` too), must be
+  one declaration per symbol name (`ASTNameGenerator`, so an asm label counts), and imported tags
+  and typedefs must merge with this file's of the same name. Otherwise two declarations would
+  stand for one object or type, and the distinct-objects or types proofs would lie.
+  `validate()` checks it whenever the import added anything (also when a failed import brought
+  declarations along); on failure the driver analyses that file again without imports and says
+  why (`cross-file : nothing imported: ...`).
+- Nesting and hoisting: another input's loops are decided in its own run, so any of them may get
+  a target region there. A loop that reaches one is declined ("whose loops may get a target
+  region there", `declineNestedConstructs`), and host code inside a `target data` region may not
+  call one (Hoisting). Cost: `c_rows` in the fixture (SAFE, calls `x_sum4`, which has a loop)
+  is SEQUENTIAL.
+- `-whole-program` with several inputs: a function some other input names (calls, or takes the
+  address of) has callers this file can't see, so no caller-based proofs for it
+  (`referencedInAnotherInput`; the index is built for this flag even with `-cross-tu=off`).
+- An input with compile errors is not imported from (error recovery drops statements).
+  A struct whose layouts differ makes the import itself fail (clang warns `-Wodr`): the callee
+  stays opaque.
+- Bug found while testing: the parsed inputs' diagnostic consumer was a local of `build()`; the
+  importer reports a layout mismatch on both sides, and the second report crashed. Now a member.
+
+**Tooling:** `scripts/check_parallel.sh` takes `EXTRA=` inputs (passed to the tool after the
+fixture, linked into both builds unchanged); `scripts/gen_filecheck.py` passes inputs written after
+`%s` in a RUN line. New fixtures `tests/known.{c,test}`, `tests/crosstu.{c,test}` (+
+`tests/Inputs/crosstu_other.c`, `crosstu_dup.c`), runtime drivers `eval/runtime/known_main.c`,
+`crosstu_main.c` (overlapping calls, including the other file's global and a leaked static), in CI
+(host and OFFLOAD).
+
+**Verification:** lit 28/28 (Mac and the Linux container). Both flags off: reports and rewrites
+byte-identical to ea056e9 on all fixtures and benchmarks under 9 flag sets (the one difference
+is the known path-artifact line in `summaries` under `-alias=assume`). Flags on: of the 24 older
+files, none changes. `check_parallel` OK on every fixture (Mac; container host, `OFFLOAD=1`
+naive, and gated for amortize/dependence/maps/hoist/fields/known/crosstu); `check_hints` exit 0;
+fuzz seeds 1-15 and 100-139 clean. Mutations caught: `-alias=assume` on crosstu (MISMATCH) and
+`isNonEscapingForeignStatic` forced true (`g_static` SAFE, MISMATCH).
+
+**Survey** (apps as whole programs: all of a program's files in one run; PolyBench with
+`utilities/polybench.c` as the second input; base = both flags off):
+
+| | SAFE base → on | opaque-callee base → on |
+|---|---|---|
+| PolyBench (333 loops) | 161 → 164 (correlation `sqrt`) | 66 → 61 (61 left are `fprintf`) |
+| XSBench (32) | 4 → 4 | 8 → 3 |
+| CoMD (111) | 16 → 19 (performanceTimers.c) | 51 → 21 |
+
+CoMD: known functions alone 51 → 43, cross-file alone 51 → 48, both 51 → 21 (most callees need
+both: a helper in another file that calls `sqrt`). Some loops go UNKNOWN → UNSAFE, all real
+dependences the callees now show (XSBench's RNG seed in GridInit.c:39 and Materials.c:104/105,
+CoMD's `atoms->nLocal` count in initAtoms.c and haloExchange.c). CoMD still opaque: `fscanf`,
+`malloc`, `fprintf` (6, 6, 5), `__builtin_object_size` 4, `free` 4, `gettimeofday` 4,
+`__builtin___memcpy_chk` 3, `qsort` 2. The review fixes changed no survey verdict.
+
+**Adversarial review** (separate agent): 3 false SAFEs and 1 wrong rewrite, all confirmed at run
+time, plus 3 minor; all fixed, each pinned in `tests/crosstu.test` or `tests/known.c`:
+1. Block-scope `extern double G[]` in this file, `G` defined with the imported callee: the
+   importer made a second file-scope `G`, and `validate()` only looked at top-level
+   declarations. MISMATCH. Now every external declaration at any scope, by symbol name.
+2. The mirror case (the block-scope `extern` inside the imported function). Same fix.
+3. Hoisting around host code that calls another file's function whose loop that file's run
+   offloads: the kernel updated the device copy, then `target update to` overwrote it with the
+   stale host one (separate-memory run in the container: checksum 212499 vs 899995). Before
+   cross-file such a callee was opaque, and hoisting refused it. Now refused again (above), and
+   the same rule declines nested constructs. The offload build now prints 899995.
+4. `-whole-program` with several inputs trusted callers here while another input called the
+   function with overlapping arguments. MISMATCH. Fixed (above).
+5. `__builtin_thread_pointer` was known (const). MISMATCH. Pointer-returning builtins excluded.
+6. An asm label giving `G` a second name (`extern double A[] __asm__("_G")`), also in one file:
+   a pre-existing false SAFE. Objects with an asm label or alias attribute are no longer
+   provably distinct (`renamed()`), and callers of such functions prove nothing.
+7. Importing from an input with errors (above), and validation after a partial import.
+Held up: `-fno-builtin`/`-ffreestanding` make libm opaque again; ODR layout mismatches fail the
+import cleanly; statics vs externs of one name across files; escapes through getters; recursion
+across three files; K&R declarations; the GPU decline under `-policy naive` and hoisting; all 29
+fixtures and benchmarks as one program (no crash). Splitting each fixture's static callees into a
+second file and running `check_parallel` on the pair: all OK.
+
+**Limits noted, not fixed:**
+- `check_hints.py` runs one file at a time; multi-file hints are unchecked.
+- Field paths inside callee summaries are still dropped (Summaries).
+- `malloc`/`free`/IO stay opaque; MPI calls in CoMD too.
+- GPU is declined for any loop reaching another file's code (would need `declare target` there),
+  and the nesting rule is conservative: it doesn't know the other file's actual decision.
+- The "Processing file" lines print twice in multi-file runs (parse for the index, then the run).
+- `check_parallel.sh` can't run a fixture that gets no pragma at all (no `.omp.c` is written);
+  the review's repros of that kind were checked by the report instead.
+- Defining a libm name (`fabs`) with side effects in another input is ignored (known functions
+  are never imported). That is undefined behaviour in C, and clang folds such calls anyway.

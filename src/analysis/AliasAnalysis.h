@@ -71,6 +71,9 @@ class AliasAnalyzer {
 public:
   AliasAnalyzer(clang::ASTContext &Ctx, bool WholeProgram);
 
+  /// Phase 2.5: may this translation unit let VD's address out?
+  bool addressEscapes(const clang::VarDecl *VD);
+
   /// Can A and B, bases of accesses in a loop of F, overlap?
   AliasProof proof(const clang::FunctionDecl *F, const clang::ValueDecl *A,
                    const clang::ValueDecl *B);

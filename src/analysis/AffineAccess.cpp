@@ -290,8 +290,8 @@ public:
         F.AddressTaken.insert(VD);
     return true;
   }
-  bool VisitCallExpr(CallExpr *) {
-    F.HasCall = true;
+  bool VisitCallExpr(CallExpr *CE) {
+    F.HasCall |= !isKnownFunction(CE->getDirectCallee());
     return true;
   }
   // Inline asm writes its output operands, and may write memory or anything

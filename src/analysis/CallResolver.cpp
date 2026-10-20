@@ -1,12 +1,58 @@
 #include "analysis/CallResolver.h"
+#include "analysis/Profitability.h" // optionCategory()
 
+#include "clang/Basic/Builtins.h"
+#include "clang/Basic/SourceManager.h"
 #include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/StringSwitch.h"
+#include "llvm/Support/CommandLine.h"
 
 #include <deque>
 
 using namespace clang;
 
 namespace p05 {
+
+namespace {
+enum class OnOff { On, Off };
+} // namespace
+
+static llvm::cl::opt<OnOff> FlagKnownFunctions(
+    "known-functions",
+    llvm::cl::desc("Calls without a body whose effects are known anyway "
+                   "(Phase 2.5)"),
+    llvm::cl::values(
+        clEnumValN(OnOff::On, "on",
+                   "const library builtins (sqrt, floor, ...) and assert's "
+                   "failure function have no memory effects (default)"),
+        clEnumValN(OnOff::Off, "off",
+                   "every call without a body is opaque (ablation "
+                   "baseline)")),
+    llvm::cl::init(OnOff::On), llvm::cl::cat(optionCategory()));
+
+bool knownFunctionsFromFlags() { return FlagKnownFunctions == OnOff::On; }
+
+bool isKnownFunction(const FunctionDecl *FD) {
+  if (!FD || !knownFunctionsFromFlags() || FD->hasBody())
+    return false;
+  const ASTContext &Ctx = FD->getASTContext();
+  if (const unsigned ID = FD->getBuiltinID()) {
+    const Builtin::Context &BI = Ctx.BuiltinInfo;
+    if (!(BI.isConst(ID) || BI.isConstWithoutErrnoAndExceptions(ID) ||
+          BI.isConstWithoutExceptions(ID)) ||
+        FD->isVariadic() || FD->getReturnType()->isPointerType())
+      return false; // a pointer may differ per thread or frame
+                    // (__builtin_thread_pointer, __builtin_sponentry)
+    return llvm::none_of(FD->parameters(), [](const ParmVarDecl *P) {
+      return P->getType()->isPointerType() || P->getType()->isArrayType();
+    });
+  }
+  return llvm::StringSwitch<bool>(FD->getName())
+             .Cases("__assert_rtn", "__assert_fail", "__assert", "_assert",
+                    true)
+             .Default(false) &&
+         Ctx.getSourceManager().isInSystemHeader(FD->getLocation());
+}
 
 CallResolver::CallResolver(ASTContext &Ctx) {
   // Recursively visits the whole TU once; every FunctionDecl *definition* it
@@ -39,6 +85,8 @@ CallResolver::getDirectCallees(const FunctionDecl *Caller) const {
     if (!FD)
       continue; // Blocks/ObjC methods: out of scope, this project targets C.
     FD = FD->getCanonicalDecl();
+    if (isKnownFunction(FD))
+      continue; // no effects to follow
 
     if (!Seen.insert(FD).second)
       continue; // Dedup, mirrors the LoopInfo::Callees convention.

@@ -1,0 +1,52 @@
+# Phase 2.5 cross-file calls (tests/crosstu.c pins the default verdicts).
+#
+# 1. The report names what it imported; the other input's own loop is
+#    analysed in its own report, not in crosstu.c's (9 loops there).
+RUN: %p05 %S/crosstu.c %S/Inputs/crosstu_other.c %S/Inputs/crosstu_dup.c -- %cflags | FileCheck --check-prefix=MAIN %s
+MAIN: Analyzed 9 loop(s).
+MAIN-NEXT: cross-file : imported x_scale (crosstu_other.c), x_bump (crosstu_other.c), x_chain (crosstu_other.c), x_read (crosstu_other.c), x_sum4 (crosstu_other.c), x_touch (crosstu_other.c), x_peek (crosstu_other.c){{$}}
+MAIN-NOT: crosstu_other.c:{{[0-9]+}}:3
+MAIN: Analyzed 1 loop(s).
+MAIN-NOT: cross-file
+MAIN: crosstu_other.c:20:3
+MAIN: Analyzed 0 loop(s).
+#
+# 2. -cross-tu=off, or crosstu.c alone: the callees are opaque again.
+RUN: %p05 -cross-tu=off %S/crosstu.c %S/Inputs/crosstu_other.c -- %cflags | FileCheck --check-prefix=OFF %s
+RUN: %p05 %S/crosstu.c -- %cflags | FileCheck --check-prefix=OFF %s
+OFF-NOT: cross-file
+OFF-LABEL: crosstu.c:42:3
+OFF: safety     : UNKNOWN
+OFF-NEXT: - 'x_scale' has no visible body in this TU{{$}}
+#
+# 3. No GPU offload through a callee defined in another file.
+RUN: %p05 -policy naive %S/crosstu.c %S/Inputs/crosstu_other.c -- %cflags | FileCheck --check-prefix=GPU %s
+GPU-LABEL: crosstu.c:59:3
+GPU: GPU offload declined: it calls 'x_bump' (crosstu_other.c), defined in another file, which would need `declare target` there -> CPU_PARALLEL{{$}}
+#
+# 4. Review fixes. A block-scope extern, here or in the imported function,
+#    must be the other file's object: it isn't merged, so the imports are
+#    dropped and the file analysed again without them.
+RUN: %p05 %S/Inputs/crosstu_local.c %S/Inputs/crosstu_local_def.c -- %cflags | FileCheck --check-prefix=LOCAL %s
+RUN: %p05 %S/Inputs/crosstu_mirror.c %S/Inputs/crosstu_mirror_def.c -- %cflags | FileCheck --check-prefix=LOCAL %s
+LOCAL: cross-file : nothing imported: 'G' did not merge with this file's declaration of it{{$}}
+LOCAL: safety     : UNKNOWN{{$}}
+#
+# 5. -whole-program with several inputs: a caller in another input counts
+#    (alone, the one caller here proves a and b apart).
+RUN: %p05 -whole-program %S/Inputs/crosstu_wp.c %S/Inputs/crosstu_wp_other.c -- %cflags | FileCheck --check-prefix=WP %s
+WP-LABEL: crosstu_wp.c:4:3
+WP: alias      : 'a' and 'b' may overlap: checked at run time{{$}}
+RUN: %p05 -whole-program %S/Inputs/crosstu_wp.c -- %cflags | FileCheck --check-prefix=WP1 %s
+WP1-LABEL: crosstu_wp.c:4:3
+WP1: alias      : 'a' and 'b' can't overlap (every call passes disjoint objects){{$}}
+#
+# 6. No target data region around host code that calls into another file
+#    whose loops that file's own run may offload.
+RUN: %p05 -policy naive %S/Inputs/crosstu_hoist.c %S/Inputs/crosstu_hoist_other.c -- %cflags | FileCheck --check-prefix=HOIST %s
+HOIST: data region (line 7): not hoisted: host code calls 'bstep' (crosstu_hoist_other.c), defined in another file, whose loops may be offloaded there{{$}}
+#
+# 7. An asm label makes A another name of G: no distinct-objects proof.
+RUN: %p05 %S/Inputs/crosstu_asm.c -- %cflags | FileCheck --check-prefix=ASM %s
+ASM-LABEL: crosstu_asm.c:6:3
+ASM: alias      : 'A' and 'G' may overlap: checked at run time{{$}}
