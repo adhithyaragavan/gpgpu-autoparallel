@@ -166,9 +166,51 @@ public:
         p05::invalidateFieldPaths(Accesses, Context, UseSummaries);
       if (p05::sizeBoundsFromFlags())
         Alias.assignExtents(Alias.enclosingFunction(LI.Loop), Accesses);
-      AllSafety.push_back(Safety.analyzeLoop(LI, Accesses,
-                                             Scalars.analyzeLoop(LI),
-                                             UseSummaries ? &CallFx : nullptr));
+      p05::LoopSafety S = Safety.analyzeLoop(
+          LI, Accesses, Scalars.analyzeLoop(LI),
+          UseSummaries ? &CallFx : nullptr);
+      // Phase 2.5: not SAFE as it stands, but maybe with the inner ranges
+      // an inspector before the loop can confirm (BoundAssumption).
+      if (S.Verdict != p05::SafetyVerdict::Safe &&
+          !Accesses.Assumptions.empty() &&
+          p05::aliasModeFromFlags() == p05::AliasMode::Check) {
+        p05::LoopAccesses With = Accesses;
+        With.Assumed = true;
+        for (const p05::BoundAssumption &BA : With.Assumptions)
+          With.Ranges[BA.IV] = BA.Range;
+        p05::LoopSafety S2 = Safety.analyzeLoop(
+            LI, With, Scalars.analyzeLoop(LI),
+            UseSummaries ? &CallFx : nullptr);
+        std::string Why;
+        if (S2.Verdict == p05::SafetyVerdict::Safe)
+          if (std::optional<std::string> Check = Alias.boundChecks(
+                  Alias.enclosingFunction(LI.Loop), LI.Loop->getBeginLoc(),
+                  With, Why)) {
+            S2.AliasGuard =
+                *Check + (S2.AliasGuard.empty() ? "" : " && " + S2.AliasGuard);
+            // Each inspector call reads one element per iteration.
+            size_t Calls = 0;
+            for (size_t At = S2.AliasGuard.find("p05_");
+                 At != std::string::npos;
+                 At = S2.AliasGuard.find("p05_", At + 1))
+              ++Calls;
+            S2.InspectBytesPerIter =
+                static_cast<double>(Calls) *
+                static_cast<double>(
+                    Context
+                        .getTypeSizeInChars(
+                            With.Assumptions.front().Bound->getType())
+                        .getQuantity());
+            for (const p05::BoundAssumption &BA : With.Assumptions)
+              S2.AliasNotes.push_back(
+                  "'" + BA.IV->getNameAsString() + "' stays below " +
+                  std::to_string(BA.Range.Hi->Const + 1) +
+                  ": its loop's bound checked at run time");
+            S = std::move(S2);
+            Accesses = std::move(With);
+          }
+      }
+      AllSafety.push_back(std::move(S));
       AllAccesses.push_back(std::move(Accesses));
     }
     if (RangeMaps)

@@ -42,6 +42,19 @@ enum class LoopKind {
 
 llvm::StringRef toString(LoopKind Kind);
 
+/// -linked-counters (Phase 2.5; default on).
+bool linkedCountersFromFlags();
+
+/// Phase 2.5: a second counter the header declares and steps alongside the
+/// induction variable (`for (int iOff = M * b, ii = 0; ii < n; ii++, iOff++)`).
+/// Nothing but the header may write it, so at every point of the body it
+/// equals Init + (Step / induction step) * (induction variable - start).
+struct LinkedCounter {
+  const clang::VarDecl *Var = nullptr;
+  const clang::Expr *Init = nullptr;
+  int64_t Step = 0; ///< a multiple of the induction variable's step
+};
+
 struct LoopInfo {
   const clang::ForStmt *Loop = nullptr;
 
@@ -60,6 +73,11 @@ struct LoopInfo {
 
   /// Signed per-iteration delta: +1 for `i++`, -4 for `i -= 4`.
   std::optional<int64_t> Step;
+
+  /// Phase 2.5: the other counters the header declares and steps, in
+  /// declaration order. Such a loop is not in OpenMP's canonical form, so it
+  /// never gets a pragma itself; the loops around it can.
+  std::vector<LinkedCounter> Linked;
 
   /// Comparison in the condition clause. Only meaningful when Kind is
   /// ConstantBound or VariableBound; BO_Comma is used as an "unset" marker

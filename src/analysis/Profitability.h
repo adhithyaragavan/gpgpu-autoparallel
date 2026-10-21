@@ -404,6 +404,7 @@ private:
   /// PolicyMode.
   ProfitabilityVerdict priceLoop(const LoopInfo &LI, const LoopSafety &Safety,
                                  const RegionPlan *Plan);
+  double inspectUsPerIter(const LoopSafety &Safety) const;
 
   /// Phase 2.1 op count of S: own operations, and callees' (counted at each
   /// call, transitively), each multiplied by the constant trip counts of the

@@ -6,6 +6,10 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <algorithm>
+#include <cstring>
+#include <set>
+
 using namespace clang;
 
 namespace p05 {
@@ -340,6 +344,34 @@ void OmpRewriter::collectDeclareTargets(const LoopInfo &LI) {
 
 void OmpRewriter::finalize() {
   const SourceManager &SM = Rewrite.getSourceMgr();
+
+  // Phase 2.5: the inspectors a guard calls (AliasAnalyzer::boundChecks),
+  // `p05_all_le_<type>` / `p05_any_gt_<type>`, defined once at the top of
+  // the file.
+  std::set<std::string> Helpers;
+  for (const RewriteSite &Site : Summary.Sites)
+    for (size_t At = Site.Pragma.find("p05_"); At != std::string::npos;
+         At = Site.Pragma.find("p05_", At + 1)) {
+      const size_t Paren = Site.Pragma.find('(', At);
+      if (Paren != std::string::npos)
+        Helpers.insert(Site.Pragma.substr(At, Paren - At));
+    }
+  std::string Defs;
+  for (const std::string &H : Helpers) {
+    const bool All = llvm::StringRef(H).starts_with("p05_all_le_");
+    if (!All && !llvm::StringRef(H).starts_with("p05_any_gt_"))
+      continue;
+    std::string Type = H.substr(std::strlen("p05_all_le_"));
+    std::replace(Type.begin(), Type.end(), '_', ' ');
+    Defs += "static int " + H + "(const " + Type +
+            " *b, __INTPTR_TYPE__ lo, __INTPTR_TYPE__ hi, __INTPTR_TYPE__ k) "
+            "{ for (__INTPTR_TYPE__ i = lo; i <= hi; i++) if (b[i] > k) "
+            "return " + (All ? "0" : "1") + "; return " + (All ? "1" : "0") +
+            "; }\n";
+  }
+  if (!Defs.empty())
+    Rewrite.InsertTextBefore(SM.getLocForStartOfFile(SM.getMainFileID()),
+                             Defs);
 
   // Deterministic, source-order processing: PendingDeclareTargets is a
   // DenseSet keyed on pointer identity, so iterating it directly makes the

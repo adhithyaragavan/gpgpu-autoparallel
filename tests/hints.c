@@ -621,10 +621,10 @@ void c_invariant_load(double *a, const struct mat *m, int n) {
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
   // CHECK: nest ivs   : i{{$}}
   // CHECK: accesses   : 2 (1 affine){{$}}
-  // CHECK-NEXT: W a[i * m->stride] : non-affine: subscript reads memory ('m->stride'){{$}}
+  // CHECK-NEXT: W a[i * m->stride] : non-affine: subscript multiplies two non-constant terms ('i * m->stride'){{$}}
   // CHECK-NEXT: R m->stride : [0]{{$}}
   // CHECK-NEXT: safety     : UNKNOWN{{$}}
-  // CHECK: - cannot test W a[i * m->stride]: W a[i * m->stride] is non-affine (subscript reads memory ('m->stride')){{$}}
+  // CHECK: - cannot test W a[i * m->stride]: W a[i * m->stride] is non-affine (subscript multiplies two non-constant terms ('i * m->stride')){{$}}
   // CHECK: rejected   : non-affine-subscript{{$}}
   // CHECK: deps       : 2 pair(s), 1 independent (1 type){{$}}
   // CHECK: profitability : SEQUENTIAL{{$}}

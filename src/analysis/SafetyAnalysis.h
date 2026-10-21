@@ -140,6 +140,9 @@ struct LoopSafety {
   /// Conjunction of the run-time no-overlap checks the loop's safety depends
   /// on; empty when none. Must guard every parallel pragma for this loop.
   std::string AliasGuard;
+  /// Phase 2.5: bytes AliasGuard's inspectors read per iteration of the
+  /// loop (BoundAssumption), sequentially, before a parallel run.
+  double InspectBytesPerIter = 0.0;
 
   /// Every access is exactly `base[i]` on a base declared outside the loop:
   /// the only shape today's map(...[0:bound]) clauses size correctly. When

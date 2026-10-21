@@ -90,6 +90,15 @@ public:
                                           const LoopAccesses &Acc,
                                           std::string &Why);
 
+  /// Phase 2.5: for a loop analysed with its BoundAssumptions (Acc.Assumed),
+  /// the inspector that confirms them before the loop starting at At: every
+  /// bound element the loop reads is at most its Limit. Nullopt, with Why,
+  /// when a name it needs can't be written there.
+  std::optional<std::string> boundChecks(const clang::FunctionDecl *F,
+                                         clang::SourceLocation At,
+                                         const LoopAccesses &Acc,
+                                         std::string &Why);
+
   /// Phase 2.5: fill ArrayAccess::Extents for the accesses of a loop in F:
   /// constant array types, and for a pointer parameter's first dimension the
   /// size of the constant array every call passes (callerExtent).

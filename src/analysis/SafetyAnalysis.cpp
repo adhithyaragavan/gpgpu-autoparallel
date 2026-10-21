@@ -853,6 +853,10 @@ void markCollapsible(const std::vector<LoopInfo> &Loops,
       No("the inner loop is not a counted loop");
       continue;
     }
+    if (!Inner.Linked.empty()) {
+      No("the inner loop steps several counters");
+      continue;
+    }
     const VarDecl *J = Inner.InductionVar->getCanonicalDecl();
     if (J == Outer.InductionVar->getCanonicalDecl()) {
       No("both loops use the same variable");

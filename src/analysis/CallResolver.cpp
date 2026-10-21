@@ -48,7 +48,7 @@ bool isKnownFunction(const FunctionDecl *FD) {
     });
   }
   return llvm::StringSwitch<bool>(FD->getName())
-             .Cases("__assert_rtn", "__assert_fail", "__assert", "_assert",
+             .Cases({"__assert_rtn", "__assert_fail", "__assert", "_assert"},
                     true)
              .Default(false) &&
          Ctx.getSourceManager().isInSystemHeader(FD->getLocation());

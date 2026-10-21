@@ -3313,3 +3313,124 @@ second file and running `check_parallel` on the pair: all OK.
   the review's repros of that kind were checked by the report instead.
 - Defining a libm name (`fabs`) with side effects in another input is ignored (known functions
   are never imported). That is undefined behaviour in C, and clang folds such calls anyway.
+
+### 2026-10-21 — Phase 2.5: CoMD's box loops (linked counters, bound inspector, field scalars)
+
+**Decision (user, 2026-10-21): all three parts for CoMD's per-box loops.** Measured first: two
+counters in the header alone gained little, because every box loop also needs a bound on the
+inner trip count. CoMD keeps the atoms of box `b` in slots `[MAXATOMS*b, MAXATOMS*b + nAtoms[b])`:
+```c
+for (int iBox = 0; iBox < s->boxes->nLocalBoxes; iBox++)
+  for (int iOff = MAXATOMS * iBox, ii = 0; ii < s->boxes->nAtoms[iBox]; ii++, iOff++)
+    s->atoms->p[iOff][0] += dt * s->atoms->f[iOff][0];
+```
+Boxes are disjoint only while no `nAtoms[b]` exceeds `MAXATOMS`, an invariant CoMD keeps but no
+static analysis of this loop can see. The user approved the design as proposed.
+
+**1. Linked counters** (`LoopInfo::Linked`, `-linked-counters=off`). A declaration init with
+several integer counters, each with a constant step, now forms a loop; the IV is the counter the
+condition tests (on its left), and the others must step by a multiple of its step. In subscripts
+a linked counter `v` becomes `init_v + (step_v/step_iv)*(iv - start)` when nothing in the body
+writes it, its init doesn't vary (built like any subscript at the loop's entry, so `o = base`
+with `base` changed by the outer loop is non-affine) and the IV is clean. Rejected, each with a
+reason: non-integer counters, an initializer using another counter, a bound using a counter, a
+counter never stepped or stepped twice, a step that is not a constant or not a multiple. The
+assignment form `for (iOff = ..., ii = 0; ...)` (haloExchange) stays unrecognized. A loop with
+linked counters never gets a pragma itself (OpenMP's canonical form has one counter: "declined:
+the header also steps 'iOff'"), and is never collapsed into ("no, the inner loop steps several
+counters").
+
+**2. Bound inspector** (`BoundAssumption`, `-bound-checks=off`). For an outer loop whose inner
+loop's bound is `B[iv + k]`, an int array, and whose accesses advance by M per outer iteration
+(the smallest |coefficient| of the outer IV among subscripts where the inner IV has coefficient
+1), the driver re-analyses the outer loop assuming the inner IV stays in `[start, start + M - 1]`.
+A loop SAFE without the assumption is unchanged (byte-identical). If the retry is SAFE, the
+pragma's `if(parallel:)` gets `(hi >= lo && p05_all_le_int(B, lo+k, hi+k, Limit))`, a static
+helper defined at the top of the rewritten file (one per element type; builtin integer types
+only). Required, else no assumption: no call in the loop (a call could change B), no write in
+the loop that may change B's element type, B's pointer path dereferenced on every iteration
+anyway, the inner loop reached on every iteration (in the body's statement list, nothing before
+it that can jump or call), inner step 1, `<`/`<=`, constant start, root bound exact.
+Pointers that only the inner loop dereferences (`s->atoms->p` when every box may be empty) get
+their overlap check behind `p05_any_gt_int(B, lo, hi, start)`: evaluated only if some inner loop
+runs, so the check dereferences nothing the loop wouldn't. CPU only. Priced: the inspector reads
+(number of helper calls) × sizeof(element) bytes per outer iteration on one core, added to the
+CPU rate ("inspector: reads N B/iteration ...").
+
+**3. Field scalars** (`FieldPath::Scalar`, `-field-scalars=off`). Found while testing: CoMD's
+root bound is `s->boxes->nLocalBoxes`, a load, so the retry above had no exact root. An integer
+struct field the loop cannot change is now a symbol: no call in the loop, root not declared in
+it, no write of the path, no indirect write of a type that may change the field. It may appear
+in a run-time check only where the loop's own condition already loads those pointers
+(`LoopAccesses::CondDerefs`, `symbolEvaluable`).
+
+**Fixture changes (allowed: reason text on rejected loops):**
+- `benchmarks/loop_unrecognized.c`'s first loop, `for (i = 0, j = 0; ...; i++, j++)`, is now a
+  recognized two-counter loop, so the benchmark (which pins UNRECOGNIZED) now uses `j += i`;
+  reason "a counter's step is not a compile-time constant".
+- `tests/hints.c` `c_invariant_load`: `m->stride` is now a symbol, so the reason changes from
+  "subscript reads memory ('m->stride')" to "subscript multiplies two non-constant terms
+  ('i * m->stride')". Still rejected, same category.
+
+**Tests:** `tests/boxes.{c,test}` (SAFE: advanceVelocity and setTemperature shapes, parameters,
+a constant inner bound (GPU), stride-3 counter, a field bound, an assignment `b_label`; twins:
+counter written in the body, a spill into the next box, the bound array written, a call, an inner
+loop under a branch, an int written through a pointer, a start the outer loop changes; one RUN per
+off-flag, each mutation-checked). `eval/runtime/boxes_main.c` runs each SAFE loop within capacity,
+over capacity on every 16th box (on chunk edges), with `f = p + 1`, and empty/null grids.
+Mutation-checked: an inspector that always passes, a "some box non-empty" test that always
+passes, and a dropped overlap check each produce a MISMATCH or a crash. In CI (host and OFFLOAD,
+gated too). With all three flags off, output is byte-identical to 6777b39 on every fixture and
+benchmark under default, naive, all-cpu, -whole-program, -fp-reductions, -maps=bound -hoist=off,
+-ipa=coarse and -alias=assume.
+
+**Survey (same tool, features on vs all three off):**
+- CoMD: SAFE 19 → 23, CPU_PARALLEL 9 → 11. `timestep.c:69` (advanceVelocity) and
+  `initAtoms.c:172` (setTemperature's rescale) are SAFE CPU_PARALLEL with an inspector; their
+  inner loops 174 and 193 SAFE SEQUENTIAL. UNKNOWN → UNSAFE (real dependences now visible
+  through `iOff`): eam.c 255/258/311/333/340/343, ljForce.c 185/189, initAtoms.c 212 (computeVcm
+  sums), timestep.c 104 (kineticEnergy).
+- XSBench: SAFE 4 → 5: `GridInit.c:85`, a copy bounded by `SD.length_unionized_energy_array`
+  (field scalar, overlap check). GridInit.c:106 UNKNOWN → UNSAFE.
+- PolyBench: unchanged.
+- Still blocked in CoMD: randomDisplacements (initAtoms.c:191) calls `mkSeed`/`lcg61` (the
+  no-calls rule); initAtoms.c 82/123/150 read `s->species[iSpecies]` indirectly.
+
+**Adversarial review** (separate agent): 1 false SAFE (runtime-confirmed), 1 wrong inspector
+proof, 3 codegen defects, 1 unconfirmed hole; all fixed, each pinned by a twin at the end of
+`tests/boxes.c` (checked: the same loop without the defect is SAFE):
+1. A narrow linked counter wraps while the loop still ends (`unsigned char o = 200, i = 0;
+   i < 100`): o was modelled as 200 + i, really wraps to 0..43, so box b wrote box b - 2's slots.
+   MISMATCH. A linked counter must now be signed and at least as wide as int ("a counter other
+   than the induction variable could wrap"); the IV needs no such rule (the condition bounds it).
+   `g_wrap` is in the runtime driver; with the rule disabled it MISMATCHes.
+2. An unsigned inner IV against a signed bound array (`unsigned i; i < n[b]`, n[b] = -1): the
+   condition compares as unsigned (huge), the signed check passes. No assumption now when the
+   comparison's converted type is unsigned and the element signed.
+3. An `__int128` bound produced `p05_all_le___int128(const   int128 *...)` (the name's '_'
+   turned back into spaces): compile error. Refused.
+4. A file that already spells the helper's name: redefinition error. The inspector is refused
+   when the identifier table has the name.
+5. A volatile bound array was accepted (a check before the loop proves nothing; qualifier
+   warning). Refused.
+6. Not confirmed, closed anyway: `reachedEveryIteration` accepted a loop before the inner one
+   that may never end; any loop statement before it now counts like a jump or call.
+Held up: linked loops never get a pragma or collapse under all-cpu/naive/gated; counters written,
+address-taken, stepped twice, non-multiple, varying start (also from a callee summary);
+descending IV with counter step -3; shadowed names; step overflow; `<=` (Limit 63); `n[b+1]`;
+descending outer loop; inner start 3; mixed strides (M = 32); two sibling inner loops; outer step
+2, continue/switch/break/call refused; writes of unsigned/enum/the bound/its pointer refused;
+field scalars vs union members, wider/char/struct writes, escaped locals, globals; inspected loops
+CPU-only under naive/gated; inside a hoisted `target data` region; several files with -rewrite.
+Survey unchanged by the fixes.
+
+**Limits noted, not fixed:**
+- Pricing counts the inner loop's work once per outer iteration (inner trips unknown), so the
+  guard thresholds are rough.
+- The Why string for "loaded through pointers the loop may not load" can name the first failing
+  symbol only.
+- GPU declined for loops with an inspector (no device copy of the helper, no map for paths).
+- Assignment-form multi-counter headers (`iOff = ..., ii = 0`) stay unrecognized.
+- Any call in the loop disables the inspector, including calls whose summaries show no writes.
+- Reports print a substituted counter by name: with an outer `i` and the header's own `i`, an
+  access reads `[64*b + i + i]` (the value is right, the text ambiguous).

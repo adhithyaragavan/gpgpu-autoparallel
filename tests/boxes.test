@@ -1,0 +1,30 @@
+# Phase 2.5 box loops (tests/boxes.c pins the default verdicts).
+#
+# 1. -linked-counters=off: a header with two counters is unrecognized again,
+#    and the box loop can't express the slot its inner loop touches.
+RUN: %p05 -linked-counters=off %S/boxes.c -- %cflags | FileCheck --check-prefix=LINKED %s
+LINKED-LABEL: boxes.c:73:3
+LINKED: safety     : UNKNOWN
+LINKED: is non-affine (uses 'iOff', which is assigned inside the loop)
+LINKED-LABEL: boxes.c:107:5
+LINKED: loop shape not recognized (init declares multiple induction variables)
+
+# 2. -bound-checks=off: no inspector, so box b's atoms may reach box b + 1's
+#    slots; and no overlap check for pointers only the inner loop
+#    dereferences.
+RUN: %p05 -bound-checks=off %S/boxes.c -- %cflags | FileCheck --check-prefix=BOUND %s
+BOUND-LABEL: boxes.c:73:3
+BOUND: safety     : UNKNOWN
+BOUND: could not prove RW s->atoms->p[iOff][0] independent
+BOUND: evaluating 's->atoms->p' before the loop would dereference a pointer the loop may never dereference
+BOUND-LABEL: boxes.c:198:3
+BOUND: safety     : UNKNOWN
+
+# 3. -field-scalars=off: s->boxes->nLocal is a load, not a symbol, so the
+#    rescale loop's subscript range can't be bounded.
+RUN: %p05 -field-scalars=off %S/boxes.c -- %cflags | FileCheck --check-prefix=SCALAR %s
+SCALAR-LABEL: boxes.c:145:3
+SCALAR: safety     : UNKNOWN
+SCALAR: could not prove RW s->atoms->p[iOff][0] independent
+SCALAR-LABEL: boxes.c:198:3
+SCALAR: safety     : SAFE

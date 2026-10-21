@@ -566,6 +566,13 @@ double ProfitabilityAnalyzer::functionOps(const FunctionDecl *FD) {
   return FnOps.try_emplace(FD, Own + Calls).first->second;
 }
 
+/// Phase 2.5: what the guard's inspectors cost per iteration: one core
+/// reading the bound array before the parallel run.
+double ProfitabilityAnalyzer::inspectUsPerIter(const LoopSafety &Safety) const {
+  return Safety.InspectBytesPerIter *
+         usPerByte(Machine.DramBandwidthGBs * Machine.SingleCoreDramShare);
+}
+
 ProfitabilityVerdict
 ProfitabilityAnalyzer::priceLoop(const LoopInfo &LI, const LoopSafety &Safety,
                                  const RegionPlan *Plan) {
@@ -682,6 +689,12 @@ ProfitabilityAnalyzer::priceLoop(const LoopInfo &LI, const LoopSafety &Safety,
            ? std::string("unreachable — aggregate CPU already >= GPU compute")
            : fmtNum(V.Costs.BreakEvenIntensity)) +
       " flop/byte)");
+  if (Safety.InspectBytesPerIter > 0)
+    V.Reasons.push_back("inspector: reads " +
+                        fmtNum(Safety.InspectBytesPerIter) +
+                        " B/iteration on one core before a parallel run (" +
+                        fmtUs(inspectUsPerIter(Safety)) +
+                        "/iter, in the cpu rate)");
 
   double CpuAggGFs = Machine.CpuThroughputGFs * Machine.CpuCores;
   // Phase 2.3: startup costs charged to this loop's runs, if any.
@@ -775,7 +788,8 @@ ProfitabilityAnalyzer::priceLoop(const LoopInfo &LI, const LoopSafety &Safety,
     double CpuCompute =
         std::max(V.Costs.Flops * usPerFlop(CpuAggGFs),
                  V.Costs.TouchedBytes * usPerByte(Machine.DramBandwidthGBs));
-    V.Costs.CpuUs = CpuCompute + ThreadFixedUs;
+    V.Costs.CpuUs = CpuCompute + ThreadFixedUs +
+                    static_cast<double>(N) * inspectUsPerIter(Safety);
     // Known unconditionally at this trip count: no CpuGuardExpr is needed
     // (or possible) — t_cpu vs t_seq was already decided numerically, not
     // symbolically, for this specific N.
@@ -835,7 +849,8 @@ ProfitabilityAnalyzer::priceLoop(const LoopInfo &LI, const LoopSafety &Safety,
     double RateGpu = GpuTransferRate + GpuComputeRate;
     double RateCpu =
         std::max(OpsPerIter * usPerFlop(CpuAggGFs),
-                 BytesPerIter * usPerByte(Machine.DramBandwidthGBs));
+                 BytesPerIter * usPerByte(Machine.DramBandwidthGBs)) +
+        inspectUsPerIter(Safety);
     // Single-core rate, for the same reason SeqUs uses SingleCoreDramShare
     // in the concrete-trip branch above: one core cannot saturate DRAM.
     double RateSeq =
@@ -1016,6 +1031,18 @@ ProfitabilityAnalyzer::analyzeLoop(const LoopInfo &LI, const LoopSafety &Safety,
       V.Reasons.push_back(Why + ", and threading does not beat sequential "
                                 "-> SEQUENTIAL");
     }
+  }
+
+  // Phase 2.5: `ii++, iOff++` is not OpenMP's canonical loop form; the
+  // loops around this one can still get a pragma.
+  if (V.Target != OffloadTarget::Sequential && !LI.Linked.empty()) {
+    V.Target = OffloadTarget::Sequential;
+    V.GuardExpr.reset();
+    V.CpuGuardExpr.reset();
+    V.Reasons.push_back("declined: the header also steps '" +
+                        LI.Linked.front().Var->getNameAsString() +
+                        "', which OpenMP's canonical loop form doesn't "
+                        "allow -> SEQUENTIAL");
   }
 
   // Interlock (Phase 1.3): every map() clause is `base[0:bound]`, which is

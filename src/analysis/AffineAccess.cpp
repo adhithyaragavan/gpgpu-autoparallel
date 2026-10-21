@@ -49,6 +49,32 @@ static llvm::cl::opt<OnOff> FlagFieldBases(
         clEnumValN(OnOff::Off, "off", "unknown base (ablation baseline)")),
     llvm::cl::init(OnOff::On), llvm::cl::cat(optionCategory()));
 
+static llvm::cl::opt<OnOff> FlagBoundChecks(
+    "bound-checks",
+    llvm::cl::desc("Check a loaded inner-loop bound before the loop "
+                   "(Phase 2.5)"),
+    llvm::cl::values(
+        clEnumValN(OnOff::On, "on",
+                   "max of s->nAtoms[lo..hi] <= the box stride, checked at "
+                   "run time (default)"),
+        clEnumValN(OnOff::Off, "off",
+                   "such an inner range is unknown (ablation baseline)")),
+    llvm::cl::init(OnOff::On), llvm::cl::cat(optionCategory()));
+
+bool boundChecksFromFlags() { return FlagBoundChecks == OnOff::On; }
+
+static llvm::cl::opt<OnOff> FlagFieldScalars(
+    "field-scalars",
+    llvm::cl::desc("Integer struct fields the loop can't change are symbols "
+                   "(Phase 2.5)"),
+    llvm::cl::values(
+        clEnumValN(OnOff::On, "on",
+                   "i < s->boxes->nLocalBoxes is a known range (default)"),
+        clEnumValN(OnOff::Off, "off",
+                   "such a value is unknown (ablation baseline)")),
+    llvm::cl::init(OnOff::On), llvm::cl::cat(optionCategory()));
+
+bool fieldScalarsFromFlags() { return FlagFieldScalars == OnOff::On; }
 bool valueBoundsFromFlags() { return FlagValueBounds == OnOff::On; }
 bool sizeBoundsFromFlags() { return FlagSizeBounds == OnOff::On; }
 bool fieldBasesFromFlags() { return FlagFieldBases == OnOff::On; }
@@ -398,7 +424,7 @@ std::optional<std::string> pathKey(const Expr *E) {
 /// atomic, the last a pointer to an object type (not to an array) or an
 /// array member. False when E is not one; the root variable's checks are
 /// the caller's.
-bool parsePath(const Expr *E, FieldPath &P) {
+bool parsePath(const Expr *E, FieldPath &P, bool Scalar = false) {
   const auto *ME = dyn_cast<MemberExpr>(peelLoads(E));
   if (!ME)
     return false;
@@ -449,7 +475,34 @@ bool parsePath(const Expr *E, FieldPath &P) {
   if (const ArrayType *AT = Last->getAsArrayTypeUnsafe())
     return !AT->getElementType().isVolatileQualified() &&
            !AT->getElementType()->isIncompleteType();
+  // Phase 2.5: an integer field read as a value (FieldPath::Scalar).
+  if (Scalar && Last->isIntegerType() && !Last->isEnumeralType()) {
+    P.LoadedTypes.push_back(Last);
+    P.Scalar = true;
+    return true;
+  }
   return false;
+}
+
+/// The registered path for Key (made from P the first time).
+const FieldPath &internPath(FieldPath P, const std::string &Key,
+                            ASTContext &Ctx) {
+  PathRegistry &Reg = registry();
+  auto It = Reg.ByKey.find(Key);
+  if (It == Reg.ByKey.end()) {
+    const QualType T = P.Links.back().first->getType();
+    auto *VD = VarDecl::Create(
+        Ctx, const_cast<DeclContext *>(P.Root->getDeclContext()),
+        P.Root->getLocation(), P.Root->getLocation(),
+        &Ctx.Idents.get(P.Spelling), T, Ctx.getTrivialTypeSourceInfo(T),
+        SC_None);
+    VD->setImplicit();
+    P.Decl = VD;
+    It = Reg.ByKey.emplace(Key, std::make_unique<FieldPath>(std::move(P)))
+             .first;
+    Reg.ByDecl[VD] = It->second.get();
+  }
+  return *It->second;
 }
 
 /// Could a write of an object of type W change a value of one of the types
@@ -484,7 +537,7 @@ bool hasJump(const Stmt *S);
 /// first statement that could jump or call (`->`, `*`, and the base of a
 /// subscript). Short-circuit and conditional operands, branches and inner
 /// loop bodies don't count.
-llvm::StringSet<> eagerDerefs(const ForStmt *FS) {
+llvm::StringSet<> eagerDerefs(const ForStmt *FS, bool CondOnly = false) {
   llvm::StringSet<> Out;
   struct Calls : RecursiveASTVisitor<Calls> {
     bool Found = false;
@@ -617,8 +670,45 @@ llvm::StringSet<> eagerDerefs(const ForStmt *FS) {
   };
   if (!FS->getConditionVariable() && !Risky(FS->getCond()))
     Collect(FS->getCond());
-  Walk(FS->getBody());
+  if (!CondOnly)
+    Walk(FS->getBody());
   return Out;
+}
+
+/// Does every iteration of Root's body reach the loop Inner: is it in the
+/// body's statement list (or a block in it), with nothing before it that
+/// could jump, call or loop?
+bool reachedEveryIteration(const ForStmt *Root, const ForStmt *Inner) {
+  struct Finder : RecursiveASTVisitor<Finder> {
+    const Stmt *Target = nullptr;
+    bool Calls = false, Found = false;
+    bool VisitStmt(Stmt *S) {
+      Found |= S == Target;
+      // A loop before Inner may never end.
+      Calls |= isa<CallExpr>(S) || isa<AsmStmt>(S) || isa<StmtExpr>(S) ||
+               isa<ForStmt>(S) || isa<WhileStmt>(S) || isa<DoStmt>(S);
+      return true;
+    }
+  };
+  std::function<int(const Stmt *)> Walk = [&](const Stmt *S) -> int {
+    if (!S)
+      return 0;
+    if (S == Inner)
+      return 1;
+    if (const auto *CS = dyn_cast<CompoundStmt>(S)) {
+      for (const Stmt *B : CS->body())
+        if (int R = Walk(B))
+          return R;
+      return 0;
+    }
+    Finder F;
+    F.Target = Inner;
+    F.TraverseStmt(const_cast<Stmt *>(S));
+    // Inside a branch or another loop it may be skipped; a jump or a call
+    // (which may not return) may skip what follows.
+    return F.Found || F.Calls || hasJump(S) ? -1 : 0;
+  };
+  return Walk(Root->getBody()) == 1;
 }
 
 const FunctionDecl *enclosingFunction(const Stmt *S, ASTContext &Ctx) {
@@ -638,12 +728,24 @@ const FunctionDecl *enclosingFunction(const Stmt *S, ASTContext &Ctx) {
 
 /// The statements through which a recognized loop legitimately updates its
 /// own induction variable: an assignment-form init, and the increment.
-llvm::SmallVector<const Stmt *, 2> headerUpdates(const LoopInfo &L) {
-  llvm::SmallVector<const Stmt *, 2> Out;
+llvm::SmallVector<const Stmt *, 4> headerUpdates(const LoopInfo &L) {
+  llvm::SmallVector<const Stmt *, 4> Out;
   if (const auto *Init = dyn_cast_or_null<BinaryOperator>(L.Loop->getInit()))
     Out.push_back(Init);
+  // Phase 2.5: each update of a comma list (`ii++, iOff++`), as the writes
+  // are recorded.
+  std::function<void(const Expr *)> Add = [&](const Expr *E) {
+    E = E->IgnoreParenImpCasts();
+    if (const auto *BO = dyn_cast<BinaryOperator>(E);
+        BO && BO->getOpcode() == BO_Comma) {
+      Add(BO->getLHS());
+      Add(BO->getRHS());
+      return;
+    }
+    Out.push_back(E);
+  };
   if (const Expr *Inc = L.Loop->getInc())
-    Out.push_back(Inc->IgnoreParenImpCasts());
+    Add(Inc);
   return Out;
 }
 
@@ -792,6 +894,16 @@ public:
     return nullptr;
   }
 
+  /// Phase 2.5: VD is a linked counter of a loop in scope: that loop's
+  /// position in IVs and the counter, else {npos, null}.
+  std::pair<size_t, const LinkedCounter *> linked(const VarDecl *VD) const {
+    for (size_t K = IVs.size(); K-- > 0;)
+      for (const LinkedCounter &L : IVs[K].Loop->Linked)
+        if (canon(L.Var) == VD)
+          return {K, &L};
+    return {static_cast<size_t>(-1), nullptr};
+  }
+
   /// Phase 2.5: the last load build() failed on, and whether its value can
   /// change between iterations (see ArrayAccess::Load).
   mutable ArrayAccess::SubscriptLoad Load = ArrayAccess::SubscriptLoad::None;
@@ -822,13 +934,34 @@ public:
   bool loadVaries(const Expr *E) const {
     if (const auto *DRE = dyn_cast<DeclRefExpr>(E))
       if (const auto *VD = canon(dyn_cast<VarDecl>(DRE->getDecl())))
-        if (binding(VD) || C.Facts.DeclaredHere.count(VD))
+        if (binding(VD) || linked(VD).second ||
+            C.Facts.DeclaredHere.count(VD))
           return true;
     for (const Stmt *Child : E->children())
       if (const auto *CE = dyn_cast_or_null<Expr>(Child))
         if (loadVaries(CE))
           return true;
     return false;
+  }
+
+  /// Phase 2.5: the symbol for E when it is a scalar field path
+  /// (FieldPath::Scalar) the loop can't change: no call, no write to its
+  /// root, and no write of a type that may change a value it loads.
+  const VarDecl *scalarPath(const Expr *E) const {
+    FieldPath P;
+    std::string W;
+    if (!fieldScalarsFromFlags() || !fieldBasesFromFlags() || C.FunctionMode ||
+        !isa<MemberExpr>(E) || !parsePath(E, P, /*Scalar=*/true) ||
+        !P.Scalar || C.Facts.HasCall || C.Facts.DeclaredHere.count(P.Root) ||
+        otherWrites(P.Root, C.Facts, {}, C, W) ||
+        llvm::any_of(C.Facts.IndirectWriteTypes, [&](QualType T) {
+          return writeMayChange(T, P.LoadedTypes, C.Ctx);
+        }))
+      return nullptr;
+    const std::optional<std::string> Key = pathKey(E);
+    if (!Key)
+      return nullptr;
+    return internPath(std::move(P), *Key, C.Ctx).Decl;
   }
 
   bool build(const Expr *E, AffineExpr &Out, std::string &Why,
@@ -881,6 +1014,42 @@ public:
         }
         Out = AffineExpr();
         Out.IVTerms[VD] = 1;
+        return true;
+      }
+      // Phase 2.5: a counter stepped with its loop's induction variable is
+      // Init + (Step / step) * (iv - start), evaluated with the loops around
+      // that loop in scope (the header's init runs once, before them).
+      if (auto [K, LC] = linked(VD); LC) {
+        const IVBinding &B = IVs[K];
+        const LoopInfo &L = *B.Loop;
+        std::string W;
+        if (binding(B.Var) != &B || !L.Step) {
+          Why = "uses the counter " + quoted(VD) +
+                ", whose loop's induction variable is shadowed here";
+          return false;
+        }
+        if (!isCleanIV(B, ivFacts(L, C), C, W) ||
+            otherWrites(VD, ivFacts(L, C), headerUpdates(L), C, W)) {
+          Why = "uses the counter " + quoted(VD) + ", which " + W;
+          return false;
+        }
+        AffineBuilder Sub(C, llvm::ArrayRef<IVBinding>(IVs).take_front(K),
+                          IVsAtDecl);
+        AffineExpr Init, Start;
+        if (!Sub.build(LC->Init, Init, Why, Depth + 1) ||
+            !(L.Start ? (Start.Const = *L.Start, true)
+                      : Sub.build(L.StartExpr, Start, Why, Depth + 1))) {
+          noteLoad(Sub.Load);
+          Why = "uses the counter " + quoted(VD) + " (starts at " +
+                exprText(LC->Init, C.Ctx) + "): " + Why;
+          return false;
+        }
+        AffineExpr Iter;
+        Iter.IVTerms[B.Var] = 1;
+        if (!scale(Start, -1, Why) || !add(Iter, Start, Why) ||
+            !scale(Iter, LC->Step / *L.Step, Why) || !add(Init, Iter, Why))
+          return false;
+        Out = std::move(Init);
         return true;
       }
       // A non-static local declared in the loop with an initializer and
@@ -978,6 +1147,12 @@ public:
       return false;
     }
 
+    // Phase 2.5: an integer field nothing in the loop can change.
+    if (const VarDecl *S = scalarPath(E)) {
+      Out = AffineExpr();
+      Out.SymTerms[S] = 1;
+      return true;
+    }
     if (isa<ArraySubscriptExpr>(E) || isa<MemberExpr>(E) ||
         (isa<UnaryOperator>(E) &&
          cast<UnaryOperator>(E)->getOpcode() == UO_Deref)) {
@@ -1299,6 +1474,7 @@ bool splitPointer(const Expr *E, const VarDecl *&Base,
 /// Walks one loop's body (and its condition/increment), recording every
 /// access.
 class AccessCollector : public RecursiveASTVisitor<AccessCollector> {
+  friend class AffineAnalyzer; // finishAssumptions
 public:
   /// RootIndex for a whole function body: there is no analyzed loop.
   static constexpr size_t NoRoot = static_cast<size_t>(-1);
@@ -1596,6 +1772,96 @@ private:
     R.Exact = R.Lo && R.Hi && L.Step && (*L.Step == 1 || *L.Step == -1) &&
               !hasJump(L.Loop->getBody());
     Out.Ranges[V] = R;
+    // Phase 2.5: an inner loop's loaded bound may become an assumption.
+    if (!Bound && RootIndex != NoRoot && L.Loop != C.Root)
+      Pending.push_back(&L);
+  }
+
+  /// Phase 2.5: Out.Assumptions, from the inner loops whose bound could not
+  /// be built (BoundAssumption). Called once the loop has been traversed.
+  void finishAssumptions() {
+    if (RootIndex == NoRoot || !boundChecksFromFlags() || !Out.RootIV ||
+        Out.Poisoned || C.Facts.HasCall)
+      return;
+    auto Root = Out.Ranges.find(Out.RootIV);
+    if (Root == Out.Ranges.end() || !Root->second.Exact)
+      return;
+    for (const LoopInfo *L : Pending) {
+      const VarDecl *V = canon(L->InductionVar);
+      if (!L->Start || !L->Step || *L->Step != 1 ||
+          (L->CmpOp != BO_LT && L->CmpOp != BO_LE) || !L->BoundExpr)
+        continue;
+      const auto *ASE =
+          dyn_cast<ArraySubscriptExpr>(L->BoundExpr->IgnoreParenImpCasts());
+      if (!ASE || !ASE->getType()->isIntegerType())
+        continue;
+      // The condition compares in the converted type: an unsigned one
+      // reads a negative element as huge, which a signed check passes.
+      const auto *Cmp = dyn_cast_or_null<BinaryOperator>(
+          L->Loop->getCond() ? L->Loop->getCond()->IgnoreParenImpCasts()
+                             : nullptr);
+      if (!Cmp || (Cmp->getLHS()->getType()->isUnsignedIntegerType() &&
+                   ASE->getType()->isSignedIntegerType()))
+        continue;
+      // Its read, indexed by the analyzed loop's variable plus a constant.
+      auto X = llvm::find_if(Out.Accesses, [&](const ArrayAccess &A) {
+        return A.E && A.E->IgnoreParenImpCasts() == ASE;
+      });
+      if (X == Out.Accesses.end() || !X->Base || X->BaseMayAlias ||
+          !X->Affine || X->Subscripts.size() != 1)
+        continue;
+      const AffineExpr &Idx = X->Subscripts.front();
+      if (!Idx.SymTerms.empty() || Idx.IVTerms.size() != 1 ||
+          Idx.coeff(Out.RootIV) != 1)
+        continue;
+      // Nothing in the loop may change the elements (no call, no write of a
+      // type that may alias them), and the check may load the base before
+      // the loop: the inner loop's condition loads it on every iteration.
+      const QualType Elem = ASE->getType();
+      if (llvm::any_of(C.Facts.IndirectWriteTypes, [&](QualType T) {
+            return writeMayChange(T, {Elem}, C.Ctx);
+          }))
+        continue;
+      if (const FieldPath *P = fieldPath(X->Base);
+          P && !llvm::all_of(P->DerefKeys, [&](const std::string &K) {
+            return Eager.contains(K);
+          }))
+        continue;
+      if (!reachedEveryIteration(C.Root, L->Loop))
+        continue;
+      // The stride: the smallest coefficient of the analyzed loop's variable
+      // next to the inner one in a subscript.
+      int64_t M = 0;
+      for (const ArrayAccess &A : Out.Accesses)
+        for (const AffineExpr &S : A.Subscripts) {
+          const int64_t K = S.coeff(Out.RootIV);
+          if (A.Affine && S.coeff(V) == 1 && K != 0 &&
+              K != std::numeric_limits<int64_t>::min())
+            M = M ? std::min(M, std::abs(K)) : std::abs(K);
+        }
+      int64_t Top;
+      if (M <= 0 || __builtin_add_overflow(*L->Start, M - 1, &Top) ||
+          Top == std::numeric_limits<int64_t>::max())
+        continue;
+      BoundAssumption BA;
+      BA.IV = V;
+      BA.Inner = L->Loop;
+      BA.Bound = ASE;
+      BA.Start = *L->Start;
+      BA.Limit = L->CmpOp == BO_LT ? Top + 1 : Top;
+      BA.Range.Lo = AffineExpr();
+      BA.Range.Lo->Const = *L->Start;
+      BA.Range.Hi = AffineExpr();
+      BA.Range.Hi->Const = Top;
+      const llvm::StringSet<> InnerKeys = eagerDerefs(L->Loop);
+      for (const ArrayAccess &A : Out.Accesses)
+        if (const FieldPath *P = fieldPath(A.Base))
+          if (llvm::all_of(P->DerefKeys, [&](const std::string &K) {
+                return Eager.contains(K) || InnerKeys.contains(K);
+              }))
+            BA.InnerEager.insert(P->Decl);
+      Out.Assumptions.push_back(std::move(BA));
+    }
   }
 
   /// Record that the access E (and any element it is a member of) has kind
@@ -1728,23 +1994,7 @@ private:
                   C.scope() + " may change it";
         return nullptr;
       }
-    const std::string Key = *pathKey(E);
-    PathRegistry &Reg = registry();
-    auto It = Reg.ByKey.find(Key);
-    if (It == Reg.ByKey.end()) {
-      const QualType T = P.Links.back().first->getType();
-      auto *VD = VarDecl::Create(
-          C.Ctx, const_cast<DeclContext *>(P.Root->getDeclContext()),
-          P.Root->getLocation(), P.Root->getLocation(),
-          &C.Ctx.Idents.get(P.Spelling), T, C.Ctx.getTrivialTypeSourceInfo(T),
-          SC_None);
-      VD->setImplicit();
-      P.Decl = VD;
-      It = Reg.ByKey.emplace(Key, std::make_unique<FieldPath>(std::move(P)))
-               .first;
-      Reg.ByDecl[VD] = It->second.get();
-    }
-    const FieldPath &FP = *It->second;
+    const FieldPath &FP = internPath(std::move(P), *pathKey(E), C.Ctx);
     if (RootIndex != NoRoot &&
         llvm::all_of(FP.DerefKeys,
                       [&](const std::string &K) { return Eager.contains(K); }))
@@ -2255,6 +2505,8 @@ private:
   llvm::DenseSet<const ArraySubscriptExpr *> Consumed;
   /// Phase 2.5: `p->buf` of an array member a path access already covers.
   llvm::DenseSet<const MemberExpr *> ConsumedMembers;
+  /// Phase 2.5: inner loops whose bound could not be built (recordRange).
+  std::vector<const LoopInfo *> Pending;
   /// Phase 2.5: eagerDerefs of the analyzed loop, and why the last field
   /// path pathBase() parsed was refused (empty when it wasn't).
   llvm::StringSet<> Eager;
@@ -2295,11 +2547,26 @@ LoopAccesses AffineAnalyzer::analyzeLoop(size_t Index) {
   for (const auto &[VD, Def] : C.Facts.DeclaredHere)
     if (Def->hasLocalStorage())
       Out.DeclaredInLoop.insert(VD);
+  if (fieldScalarsFromFlags() && fieldBasesFromFlags())
+    Out.CondDerefs = eagerDerefs(FS, /*CondOnly=*/true);
   AccessCollector Coll(*this, C, Index, Out);
   Coll.TraverseStmt(const_cast<Expr *>(FS->getCond()));
   Coll.TraverseStmt(const_cast<Expr *>(FS->getInc()));
   Coll.TraverseStmt(const_cast<Stmt *>(FS->getBody()));
+  Coll.finishAssumptions();
   return Out;
+}
+
+bool symbolEvaluable(const ValueDecl *V, const LoopAccesses &Acc,
+                     llvm::function_ref<bool(const ValueDecl *)> Nameable) {
+  const FieldPath *P = fieldPath(V);
+  if (!P || !P->Scalar)
+    return Nameable(V);
+  return llvm::all_of(P->DerefKeys,
+                      [&](const std::string &K) {
+                        return Acc.CondDerefs.contains(K);
+                      }) &&
+         Nameable(P->Root);
 }
 
 LoopAccesses AffineAnalyzer::analyzeFunction(const FunctionDecl *FD) {

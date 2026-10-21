@@ -601,6 +601,126 @@ void AliasAnalyzer::assignExtents(const FunctionDecl *F, LoopAccesses &A) {
       X.Extents.clear();
 }
 
+namespace {
+/// Phase 2.5: an inspector call over BA's bound array for one run of the
+/// loop Acc describes: `p05_<Name>_<type>(B, lo, hi, K)` reads B[lo..hi],
+/// the elements the loop reads (OmpRewriter defines the function).
+std::optional<std::string> inspector(ASTContext &Ctx, const char *Name,
+                                     const LoopAccesses &Acc,
+                                     const BoundAssumption &BA, int64_t K,
+                                     llvm::function_ref<bool(const ValueDecl *)>
+                                         Nameable,
+                                     std::string &Why) {
+  auto X = llvm::find_if(Acc.Accesses, [&](const ArrayAccess &A) {
+    return A.E && A.E->IgnoreParenImpCasts() == BA.Bound;
+  });
+  auto Root = Acc.Ranges.find(Acc.RootIV);
+  if (X == Acc.Accesses.end() || !X->Base || X->BaseMayAlias || !X->Affine ||
+      X->Subscripts.size() != 1 || Root == Acc.Ranges.end() ||
+      !Root->second.Lo || !Root->second.Hi) {
+    Why = "the inner bound's elements can't be named before the loop";
+    return std::nullopt;
+  }
+  const AffineExpr &Idx = X->Subscripts.front();
+  AffineExpr Lo = *Root->second.Lo, Hi = *Root->second.Hi;
+  for (const AffineExpr *E : {&Lo, &Hi}) {
+    for (const auto &[S, C] : E->SymTerms)
+      if (!Nameable(S))
+        return std::nullopt;
+    for (const auto &[V, C] : E->IVTerms)
+      if (!Nameable(V))
+        return std::nullopt;
+  }
+  if (__builtin_add_overflow(Lo.Const, Idx.Const, &Lo.Const) ||
+      __builtin_add_overflow(Hi.Const, Idx.Const, &Hi.Const)) {
+    Why = "the inner bound's index overflows";
+    return std::nullopt;
+  }
+  std::string Base;
+  const VarDecl *VD = canon(X->Base);
+  if (const FieldPath *P = fieldPath(VD)) {
+    if (!Nameable(P->Root))
+      return std::nullopt;
+    Base = P->Spelling;
+  } else if (VD && (isa<ParmVarDecl>(VD) ||
+                    (VD->isFileVarDecl() && !VD->isStaticLocal()))) {
+    if (!Nameable(VD))
+      return std::nullopt;
+    Base = VD->getNameAsString();
+  } else {
+    Why = "the inner bound's array is not a name the check could use";
+    return std::nullopt;
+  }
+  if (BA.Bound->getType().isVolatileQualified()) {
+    Why = "the inner bound is volatile: a check before the loop proves nothing";
+    return std::nullopt;
+  }
+  const QualType T = BA.Bound->getType().getCanonicalType().getUnqualifiedType();
+  const auto *BT = T->getAs<BuiltinType>();
+  // __int128 has no spelling the helper's name could carry.
+  if (!BT || !BT->isInteger() || BT->isCharType() || BT->isBooleanType() ||
+      BT->getKind() == BuiltinType::Int128 ||
+      BT->getKind() == BuiltinType::UInt128) {
+    Why = "the inner bound is not of a plain integer type";
+    return std::nullopt;
+  }
+  // `b[i] > k` compares in the element's type when it is the wider one: an
+  // unsigned element against a negative k would compare wrapped.
+  if (BT->isUnsignedInteger() && K < 0) {
+    Why = "the inner bound is unsigned and the check's limit negative";
+    return std::nullopt;
+  }
+  std::string Type = T.getAsString();
+  std::replace(Type.begin(), Type.end(), ' ', '_');
+  // The helper is defined at the top of the file: the program must not
+  // use its name for anything (the identifier table holds every name the
+  // file spells).
+  const std::string Fn = "p05_" + std::string(Name) + "_" + Type;
+  if (Ctx.Idents.find(Fn) != Ctx.Idents.end()) {
+    Why = "the file already uses the name '" + Fn + "'";
+    return std::nullopt;
+  }
+  return Fn + "(" + Base + ", " +
+         asIntPtr(Lo) + ", " + asIntPtr(Hi) + ", " + std::to_string(K) + ")";
+}
+} // namespace
+
+std::optional<std::string>
+AliasAnalyzer::boundChecks(const FunctionDecl *F, SourceLocation At,
+                           const LoopAccesses &Acc, std::string &Why) {
+  const NameScope Names(Ctx, F, At);
+  // Phase 2.5: a scalar field symbol only where the loop's condition loads
+  // it anyway (symbolEvaluable).
+  auto Nameable = [&](const ValueDecl *D) {
+    if (symbolEvaluable(D, Acc, [&](const ValueDecl *N) {
+          return Names.nameable(N, Why);
+        }))
+      return true;
+    if (Why.empty())
+      Why = "'" + D->getNameAsString() +
+            "' is loaded through pointers the loop may not load";
+    return false;
+  };
+  auto Root = Acc.Ranges.find(Acc.RootIV);
+  if (!Acc.Assumed || Root == Acc.Ranges.end() || !Root->second.Lo ||
+      !Root->second.Hi) {
+    Why = "can't test before the loop that it runs";
+    return std::nullopt;
+  }
+  std::string Out;
+  for (const BoundAssumption &BA : Acc.Assumptions) {
+    std::optional<std::string> C =
+        inspector(Ctx, "all_le", Acc, BA, BA.Limit, Nameable, Why);
+    if (!C)
+      return std::nullopt;
+    Out += " && " + *C;
+  }
+  // The base is loaded only when the loop runs (its first iteration loads
+  // it too).
+  return "(" + asIntPtr(*Root->second.Hi) + " >= " +
+         asIntPtr(*Root->second.Lo) + Out + ")";
+}
+
 std::optional<std::string>
 AliasAnalyzer::runtimeCheck(const FunctionDecl *F, SourceLocation At,
                             const ValueDecl *A, const ValueDecl *B,
@@ -774,7 +894,18 @@ AliasAnalyzer::runtimeCheck(const FunctionDecl *F, SourceLocation At,
   // typedef or function declared anywhere in it, in any block) may share
   // its name, and a global must already be declared at the loop.
   const NameScope Names(Ctx, F, At);
-  auto Nameable = [&](const ValueDecl *D) { return Names.nameable(D, Why); };
+  // Phase 2.5: a scalar field symbol only where the loop's condition loads
+  // it anyway (symbolEvaluable).
+  auto Nameable = [&](const ValueDecl *D) {
+    if (symbolEvaluable(D, Acc, [&](const ValueDecl *N) {
+          return Names.nameable(N, Why);
+        }))
+      return true;
+    if (Why.empty())
+      Why = "'" + D->getNameAsString() +
+            "' is loaded through pointers the loop may not load";
+    return false;
+  };
   // Every name in A's and B's accesses: subscripts' symbols and enclosing
   // loops' variables (what bounds leave behind), and row lengths.
   llvm::SmallPtrSet<const VarDecl *, 8> UsedIVs;
@@ -807,11 +938,25 @@ AliasAnalyzer::runtimeCheck(const FunctionDecl *F, SourceLocation At,
 
   // The base's address, as an integer.
   bool NeedRuns = false;
+  // Phase 2.5: a path only an inner loop's first iteration dereferences,
+  // evaluated only when some box is non-empty.
+  const BoundAssumption *NeedInner = nullptr;
   auto Addr = [&](const ValueDecl *V, std::string &Out) -> bool {
     const VarDecl *VD = canon(V);
     if (const FieldPath *P = fieldPath(VD)) {
       if (!Nameable(P->Root))
         return false;
+      if (!P->DerefKeys.empty() && !Acc.EagerPaths.count(P->Decl) &&
+          Acc.Assumed) {
+        for (const BoundAssumption &BA : Acc.Assumptions)
+          if (BA.InnerEager.count(P->Decl) &&
+              (!NeedInner || NeedInner == &BA)) {
+            NeedInner = &BA;
+            Out = "(" + std::string(IntPtrType) + ")" + P->Spelling;
+            NeedRuns = true;
+            return true;
+          }
+      }
       if (!P->DerefKeys.empty()) {
         if (!Acc.EagerPaths.count(P->Decl)) {
           Why = "evaluating " + Quoted(V) + " before the loop would "
@@ -859,6 +1004,14 @@ AliasAnalyzer::runtimeCheck(const FunctionDecl *F, SourceLocation At,
     for (const auto &[V, C] : E->IVTerms)
       if (!Nameable(V))
         return std::nullopt;
+  }
+  if (NeedInner) {
+    std::optional<std::string> Some =
+        inspector(Ctx, "any_gt", Acc, *NeedInner, NeedInner->Start, Nameable, Why);
+    if (!Some)
+      return std::nullopt;
+    return "(" + asIntPtr(Hi) + " >= " + asIntPtr(Lo) + " && " + *Some +
+           " && " + Apart + ")";
   }
   return "(" + asIntPtr(Hi) + " >= " + asIntPtr(Lo) + " && " + Apart + ")";
 }

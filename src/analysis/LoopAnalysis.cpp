@@ -1,6 +1,7 @@
 #include "analysis/LoopAnalysis.h"
 #include "analysis/CallResolver.h"
 #include "analysis/CrossTU.h"
+#include "analysis/Profitability.h" // optionCategory()
 
 #include "clang/AST/ASTContext.h"
 #include "clang/AST/Expr.h"
@@ -8,6 +9,7 @@
 #include "clang/Basic/SourceManager.h"
 #include "clang/Lex/Lexer.h"
 #include "llvm/ADT/APSInt.h"
+#include "llvm/Support/CommandLine.h"
 
 #include <algorithm>
 #include <limits>
@@ -27,6 +29,23 @@ llvm::StringRef toString(LoopKind Kind) {
   }
   return "UNRECOGNIZED";
 }
+
+namespace {
+enum class OnOff { On, Off };
+} // namespace
+
+static llvm::cl::opt<OnOff> FlagLinkedCounters(
+    "linked-counters",
+    llvm::cl::desc("Headers that declare and step several counters "
+                   "(Phase 2.5)"),
+    llvm::cl::values(
+        clEnumValN(OnOff::On, "on",
+                   "the others follow the tested one (default)"),
+        clEnumValN(OnOff::Off, "off",
+                   "such loops are not recognized (ablation baseline)")),
+    llvm::cl::init(OnOff::On), llvm::cl::cat(optionCategory()));
+
+bool linkedCountersFromFlags() { return FlagLinkedCounters == OnOff::On; }
 
 namespace {
 
@@ -222,6 +241,51 @@ bool bodyIsSingleFor(const Stmt *Body) {
   return false;
 }
 
+/// One counter update in an increment clause: `v++`, `--v`, `v += c`,
+/// `v -= c` with c a constant. The variable and its signed step, or why not.
+bool parseUpdate(const Expr *E, ASTContext &Ctx, const VarDecl *&Var,
+                 int64_t &Step, std::string &Why) {
+  E = E->IgnoreParenImpCasts();
+  const Expr *Target = nullptr;
+  if (const auto *UO = dyn_cast<UnaryOperator>(E);
+      UO && UO->isIncrementDecrementOp()) {
+    Target = UO->getSubExpr();
+    Step = UO->isIncrementOp() ? 1 : -1;
+  } else if (const auto *CAO = dyn_cast<CompoundAssignOperator>(E);
+             CAO && (CAO->getOpcode() == BO_AddAssign ||
+                     CAO->getOpcode() == BO_SubAssign)) {
+    std::optional<int64_t> Delta = evalInt(CAO->getRHS(), Ctx);
+    if (!Delta || *Delta == std::numeric_limits<int64_t>::min()) {
+      Why = "a counter's step is not a compile-time constant";
+      return false;
+    }
+    Target = CAO->getLHS();
+    Step = CAO->getOpcode() == BO_AddAssign ? *Delta : -*Delta;
+  } else {
+    Why = "increment clause is not a list of counter updates";
+    return false;
+  }
+  const auto *DRE = dyn_cast<DeclRefExpr>(Target->IgnoreParenImpCasts());
+  Var = DRE ? dyn_cast<VarDecl>(DRE->getDecl()) : nullptr;
+  if (!Var) {
+    Why = "increment updates something other than a variable";
+    return false;
+  }
+  return true;
+}
+
+/// The operands of a comma list, left to right.
+void flattenComma(const Expr *E, llvm::SmallVectorImpl<const Expr *> &Out) {
+  E = E->IgnoreParens();
+  if (const auto *BO = dyn_cast<BinaryOperator>(E);
+      BO && BO->getOpcode() == BO_Comma) {
+    flattenComma(BO->getLHS(), Out);
+    flattenComma(BO->getRHS(), Out);
+    return;
+  }
+  Out.push_back(E);
+}
+
 } // namespace
 
 LoopInfo analyzeForStmt(const ForStmt *FS, ASTContext &Ctx) {
@@ -252,7 +316,23 @@ LoopInfo analyzeForStmt(const ForStmt *FS, ASTContext &Ctx) {
   if (!Init)
     return reject("no init clause");
 
-  if (const auto *DS = dyn_cast<DeclStmt>(Init)) {
+  // Phase 2.5: several counters declared together (LinkedCounter).
+  std::vector<const VarDecl *> Counters;
+  if (const auto *DS = dyn_cast<DeclStmt>(Init);
+      DS && !DS->isSingleDecl() && linkedCountersFromFlags()) {
+    for (const Decl *D : DS->decls()) {
+      const auto *VD = dyn_cast<VarDecl>(D);
+      if (!VD)
+        return reject("init declares something other than a variable");
+      if (!VD->getType()->isIntegerType())
+        return reject("a counter the init declares is not of integer type");
+      if (!VD->getInit())
+        return reject("a counter the init declares has no initializer");
+      if (referencesAnyVar(VD->getInit(), Counters))
+        return reject("a counter's initializer uses another counter");
+      Counters.push_back(VD);
+    }
+  } else if (const auto *DS = dyn_cast<DeclStmt>(Init)) {
     if (!DS->isSingleDecl())
       return reject("init declares multiple induction variables");
     const auto *VD = dyn_cast<VarDecl>(DS->getSingleDecl());
@@ -296,6 +376,20 @@ LoopInfo analyzeForStmt(const ForStmt *FS, ASTContext &Ctx) {
   if (!CmpBO || !isRelationalOp(CmpBO->getOpcode()))
     return reject("condition is not a simple relational comparison");
 
+  // The counter the condition tests is the induction variable.
+  if (!Counters.empty()) {
+    for (const VarDecl *VD : Counters)
+      if (refersToVar(CmpBO->getLHS(), VD))
+        LI.InductionVar = VD;
+    if (!LI.InductionVar)
+      return reject("condition does not test one of the counters on its "
+                    "left");
+    LI.StartExpr = LI.InductionVar->getInit();
+    LI.Start = evalInt(LI.StartExpr, Ctx);
+    if (referencesAnyVar(CmpBO->getRHS(), Counters))
+      return reject("bound expression uses a counter");
+  }
+
   if (!refersToVar(CmpBO->getLHS(), LI.InductionVar)) {
     if (refersToVar(CmpBO->getRHS(), LI.InductionVar))
       return reject("mirrored condition (bound on the left) is not handled");
@@ -334,7 +428,48 @@ LoopInfo analyzeForStmt(const ForStmt *FS, ASTContext &Ctx) {
     return reject("no increment clause");
 
   const Expr *IncE = Inc->IgnoreParenImpCasts();
-  if (const auto *UO = dyn_cast<UnaryOperator>(IncE)) {
+  if (!Counters.empty()) {
+    // Every counter stepped exactly once, by a constant.
+    llvm::SmallVector<const Expr *, 4> Updates;
+    flattenComma(Inc, Updates);
+    llvm::DenseMap<const VarDecl *, int64_t> Steps;
+    for (const Expr *U : Updates) {
+      const VarDecl *VD = nullptr;
+      int64_t S = 0;
+      std::string Why;
+      if (!parseUpdate(U, Ctx, VD, S, Why))
+        return reject(Why);
+      if (!llvm::is_contained(Counters, VD))
+        return reject("increment updates a variable the init does not "
+                      "declare");
+      if (!Steps.try_emplace(VD->getCanonicalDecl(), S).second)
+        return reject("increment updates a counter twice");
+    }
+    for (const VarDecl *VD : Counters) {
+      auto It = Steps.find(VD->getCanonicalDecl());
+      if (It == Steps.end())
+        return reject("a counter the init declares is never stepped");
+      if (VD == LI.InductionVar) {
+        LI.Step = It->second;
+      } else {
+        // The loop's end bounds the induction variable, nothing bounds the
+        // others: one that may wrap (unsigned, or narrower than int and
+        // converted back) would leave the affine form behind.
+        const QualType T = VD->getType();
+        if (!T->isSignedIntegerType() ||
+            Ctx.getTypeSize(T) < Ctx.getTypeSize(Ctx.IntTy))
+          return reject("a counter other than the induction variable could "
+                        "wrap (unsigned, or narrower than int)");
+        LI.Linked.push_back({VD, VD->getInit(), It->second});
+      }
+    }
+    if (*LI.Step == 0)
+      return reject("increment step is zero");
+    for (const LinkedCounter &K : LI.Linked)
+      if (K.Step % *LI.Step != 0)
+        return reject("a counter's step is not a multiple of the induction "
+                      "variable's");
+  } else if (const auto *UO = dyn_cast<UnaryOperator>(IncE)) {
     if (!UO->isIncrementDecrementOp())
       return reject("increment is not ++ or --");
     if (!refersToVar(UO->getSubExpr(), LI.InductionVar))

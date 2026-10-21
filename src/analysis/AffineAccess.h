@@ -79,6 +79,8 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/MapVector.h"
+#include "llvm/ADT/STLFunctionalExtras.h"
+#include "llvm/ADT/StringSet.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <cstdint>
@@ -137,6 +139,17 @@ struct ValueBound {
 bool valueBoundsFromFlags();
 bool sizeBoundsFromFlags();
 bool fieldBasesFromFlags();
+/// -bound-checks (Phase 2.5; default on): BoundAssumption.
+bool boundChecksFromFlags();
+/// -field-scalars (Phase 2.5; default on): FieldPath::Scalar symbols.
+bool fieldScalarsFromFlags();
+
+struct LoopAccesses;
+/// Phase 2.5: can a check placed before the loop Acc describes write the
+/// symbol V: a scalar field path needs every pointer it loads to be one the
+/// loop's condition loads anyway, and its root nameable.
+bool symbolEvaluable(const clang::ValueDecl *V, const LoopAccesses &Acc,
+                     llvm::function_ref<bool(const clang::ValueDecl *)> Nameable);
 
 /// Phase 2.5: a base reached through struct fields: a root variable, then
 /// `.f` / `->f` links, ending in a pointer field (`s->atoms->r[i]`,
@@ -164,6 +177,10 @@ struct FieldPath {
   /// record it goes through by `.`.
   std::vector<clang::QualType> LoadedTypes;
   const clang::VarDecl *Decl = nullptr;
+  /// Phase 2.5: an integer field (`s->boxes->nLocalBoxes`) the loop can't
+  /// change, used as a symbol: a check may name it only where the loop's
+  /// condition loads it (LoopAccesses::CondDerefs).
+  bool Scalar = false;
 };
 
 /// The path Base stands for, or null when Base is an ordinary variable.
@@ -306,6 +323,27 @@ struct CallSite {
   std::vector<const clang::VarDecl *> InnerIVs;
 };
 
+/// Phase 2.5: what a run-time check before the loop (an inspector) could
+/// let it assume about an inner loop whose bound is loaded
+/// (`for (... ii = 0; ii < s->nAtoms[b]; ...)`, b the analyzed loop's
+/// variable): Bound <= Limit for every b the loop runs, so the inner
+/// variable stays in Range. Limit is Start plus the smallest stride the
+/// analyzed loop's variable has in a subscript next to the inner one
+/// (`MAXATOMS * b + ii`): a box then never spills into the next.
+struct BoundAssumption {
+  const clang::VarDecl *IV = nullptr;
+  const clang::ForStmt *Inner = nullptr;
+  /// The bound, `B[b + k]`; its read is one of the loop's accesses.
+  const clang::ArraySubscriptExpr *Bound = nullptr;
+  int64_t Start = 0;
+  int64_t Limit = 0;
+  IVRange Range;
+  /// Field paths every first iteration of the inner loop dereferences: a
+  /// check may evaluate them behind a test that some box isn't empty
+  /// (some B[b] > Start).
+  llvm::DenseSet<const clang::VarDecl *> InnerEager;
+};
+
 struct LoopAccesses {
   std::vector<ArrayAccess> Accesses;
   /// Every call in the analyzed code, in source order.
@@ -331,6 +369,14 @@ struct LoopAccesses {
   /// anything that could jump or call): a run-time check may evaluate them
   /// before the loop, behind a test that the loop runs.
   llvm::DenseSet<const clang::VarDecl *> EagerPaths;
+  /// Phase 2.5: inner bounds an inspector could check (BoundAssumption);
+  /// Assumed when Ranges already use them (the copy main.cpp analyses
+  /// again when the loop isn't SAFE without).
+  std::vector<BoundAssumption> Assumptions;
+  bool Assumed = false;
+  /// Phase 2.5: keys (pathKey) of what the analyzed loop's condition
+  /// dereferences: evaluated whenever the loop is reached.
+  llvm::StringSet<> CondDerefs;
 
   unsigned numAffine() const;
 };
