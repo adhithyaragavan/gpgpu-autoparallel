@@ -3691,3 +3691,32 @@ GPU sections incl. hoisted hulls in Docker under naive and gated).
   past `g_ext` (UB; it hit the driver's FILE pointer). The call now passes `g_ext` itself.
 - Not from this change, noted: a narrow or unsigned counter that wraps makes `Lo = Start` /
   `Hi = Bound - 1` invalid; widening passes such a range on but doesn't create it.
+
+## 2026-11-20 — Phase 3.1: PolyBench on the M4 (CPU), P05 vs Polly vs GCC autopar
+
+`eval/polybench/run.py` (+ `summarize.py`; raw `results/m4-large.csv`, tables `results/m4-large.md`).
+LARGE_DATASET, -O3, Homebrew clang 22 / gcc-15, min of 5 runs, OMP_NUM_THREADS 4 (P-cores) and 10
+(all). Variants: clang-seq (baseline), p05 (gated, `-machine machine/m4.json`), p05-all
+(`-policy all-cpu`: every SAFE loop parallel, the analysis without the cost model), polly-seq,
+polly (`-polly-parallel`), gcc-seq, gcc-auto (`-ftree-parallelize-loops=T`). Correctness: a
+separate `POLYBENCH_DUMP_ARRAYS` build with `%a` headers at T=10, against the same compiler's
+sequential build. Polly loop counts come from a `-fno-inline` object (at -O3 the kernel is
+inlined into main and its outlined loops are named after main).
+
+Geomean speedup over clang-seq, 30 kernels (T=10): p05 1.00, p05-all 1.49, polly 2.64, gcc-auto
+0.98, polly-seq alone 1.31. Every P05 build exact. Polly: ludcmp differs at 2.6e-9 relative
+(likely reassociation; not investigated), 4 kernels within 1e-9.
+
+**Main finding: the analysis finds parallelism, the cost model throws it away.** Gated P05 is
+within 10% of the better of {sequential, p05-all} on only 10/30 kernels; on 18 it declines a
+parallel win (gemm 1.00 vs 4.82, 2mm 1.00 vs 6.22, adi 0.98 vs 4.91). Two pricing bugs, both
+measured here, neither seen by the fixtures (they check guarded/unguarded, not where the guard sits):
+1. **Symbolic inner trip counts count as 1.** gemm's outer loop: "ops/iteration: 7" where an
+   iteration does nj + 3·nk·nj ≈ 3.6M; guard `ni >= 262144` vs LARGE ni = 1000.
+2. **A map section that doesn't depend on the loop is charged per iteration.** atax:81's inner
+   `j` loop is priced with `A[i:1][0:2100]` = 16800 B *per j*, so seq = 0.193 us/iter (real
+   ~0.4 ns), the guard `n >= 2048` passes at n = 2100, and the region forks 1900 times per call:
+   gated p05 0.06x (also p05-all). The same shape costs durbin and jacobi-1d under p05-all.
+Where P05 wins without Polly: symm (3.2x vs polly 1.4x), deriche (3.6x vs 1.0x), heat-3d and
+jacobi-2d (p05-all 2.8/3.0x; Polly 0.5/0.7x: no parallel loops, tiling hurts). Where Polly wins
+big: tiling (polly-seq alone 1.31x geomean) on top of parallelism; cholesky/lu (wavefront).

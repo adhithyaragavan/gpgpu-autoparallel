@@ -29,3 +29,4 @@ demo/*.omp.c
 
 # Phase 2.5 item 4: fetched PolyBench and build products
 eval/llm_baseline/work/
+eval/polybench/work/
