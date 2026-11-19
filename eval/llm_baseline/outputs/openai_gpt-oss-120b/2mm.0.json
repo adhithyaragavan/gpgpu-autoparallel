@@ -1,0 +1,46 @@
+{
+ "provider": "groq",
+ "model": "openai/gpt-oss-120b",
+ "kernel": "linear-algebra/kernels/2mm/2mm.c",
+ "sample": 0,
+ "requested": "2026-11-18T21:56:11.823641+00:00",
+ "outcome": "complete",
+ "temperature": "default",
+ "response": {
+  "id": "chatcmpl-a9051802-1efd-4ce5-8864-b4420af8ea7c",
+  "object": "chat.completion",
+  "created": 1795038992,
+  "model": "openai/gpt-oss-120b",
+  "choices": [
+   {
+    "index": 0,
+    "message": {
+     "role": "assistant",
+     "content": "```c\n/**\n * This version is stamped on May 10, 2016\n *\n * Contact:\n *   Louis-Noel Pouchet <pouchet.ohio-state.edu>\n *   Tomofumi Yuki <tomofumi.yuki.fr>\n *\n * Web address: http://polybench.sourceforge.net\n */\n/* 2mm.c: this file is part of PolyBench/C */\n\n#include <stdio.h>\n#include <unistd.h>\n#include <string.h>\n#include <math.h>\n\n/* Include polybench common header. */\n#include <polybench.h>\n\n/* Include benchmark-specific header. */\n#include \"2mm.h\"\n\n\n/* Array initialization. */\nstatic\nvoid init_array(int ni, int nj, int nk, int nl,\n\t\tDATA_TYPE *alpha,\n\t\tDATA_TYPE *beta,\n\t\tDATA_TYPE POLYBENCH_2D(A,NI,NK,ni,nk),\n\t\tDATA_TYPE POLYBENCH_2D(B,NK,NJ,nk,nj),\n\t\tDATA_TYPE POLYBENCH_2D(C,NJ,NL,nj,nl),\n\t\tDATA_TYPE POLYBENCH_2D(D,NI,NL,ni,nl))\n{\n  int i, j;\n\n  *alpha = 1.5;\n  *beta = 1.2;\n#pragma omp parallel for collapse(2)\n  for (i = 0; i < ni; i++)\n    for (j = 0; j < nk; j++)\n      A[i][j] = (DATA_TYPE) ((i*j+1) % ni) / ni;\n#pragma omp parallel for collapse(2)\n  for (i = 0; i < nk; i++)\n    for (j = 0; j < nj; j++)\n      B[i][j] = (DATA_TYPE) (i*(j+1) % nj) / nj;\n#pragma omp parallel for collapse(2)\n  for (i = 0; i < nj; i++)\n    for (j = 0; j < nl; j++)\n      C[i][j] = (DATA_TYPE) ((i*(j+3)+1) % nl) / nl;\n#pragma omp parallel for collapse(2)\n  for (i = 0; i < ni; i++)\n    for (j = 0; j < nl; j++)\n      D[i][j] = (DATA_TYPE) (i*(j+2) % nk) / nk;\n}\n\n\n/* DCE code. Must scan the entire live-out data.\n   Can be used also to check the correctness of the output. */\nstatic\nvoid print_array(int ni, int nl,\n\t\t DATA_TYPE POLYBENCH_2D(D,NI,NL,ni,nl))\n{\n  int i, j;\n\n  POLYBENCH_DUMP_START;\n  POLYBENCH_DUMP_BEGIN(\"D\");\n  for (i = 0; i < ni; i++)\n    for (j = 0; j < nl; j++) {\n\tif ((i * ni + j) % 20 == 0) fprintf (POLYBENCH_DUMP_TARGET, \"\\n\");\n\tfprintf (POLYBENCH_DUMP_TARGET, DATA_PRINTF_MODIFIER, D[i][j]);\n    }\n  POLYBENCH_DUMP_END(\"D\");\n  POLYBENCH_DUMP_FINISH;\n}\n\n\n/* Main computational kernel. The whole function will be timed,\n   including the call and return. */\nstatic\nvoid kernel_2mm(int ni, int nj, int nk, int nl,\n\t\tDATA_TYPE alpha,\n\t\tDATA_TYPE beta,\n\t\tDATA_TYPE POLYBENCH_2D(tmp,NI,NJ,ni,nj),\n\t\tDATA_TYPE POLYBENCH_2D(A,NI,NK,ni,nk),\n\t\tDATA_TYPE POLYBENCH_2D(B,NK,NJ,nk,nj),\n\t\tDATA_TYPE POLYBENCH_2D(C,NJ,NL,nj,nl),\n\t\tDATA_TYPE POLYBENCH_2D(D,NI,NL,ni,nl))\n{\n  int i, j, k;\n\n#pragma scop\n  /* D := alpha*A*B*C + beta*D */\n#pragma omp parallel for collapse(2)\n  for (i = 0; i < _PB_NI; i++)\n    for (j = 0; j < _PB_NJ; j++)\n      {\n\ttmp[i][j] = SCALAR_VAL(0.0);\n\tfor (k = 0; k < _PB_NK; ++k)\n\t  tmp[i][j] += alpha * A[i][k] * B[k][j];\n      }\n#pragma omp parallel for collapse(2)\n  for (i = 0; i < _PB_NI; i++)\n    for (j = 0; j < _PB_NL; j++)\n      {\n\tD[i][j] *= beta;\n\tfor (k = 0; k < _PB_NJ; ++k)\n\t  D[i][j] += tmp[i][k] * C[k][j];\n      }\n#pragma endscop\n\n}\n\n\nint main(int argc, char** argv)\n{\n  /* Retrieve problem size. */\n  int ni = NI;\n  int nj = NJ;\n  int nk = NK;\n  int nl = NL;\n\n  /* Variable declaration/allocation. */\n  DATA_TYPE alpha;\n  DATA_TYPE beta;\n  POLYBENCH_2D_ARRAY_DECL(tmp,DATA_TYPE,NI,NJ,ni,nj);\n  POLYBENCH_2D_ARRAY_DECL(A,DATA_TYPE,NI,NK,ni,nk);\n  POLYBENCH_2D_ARRAY_DECL(B,DATA_TYPE,NK,NJ,nk,nj);\n  POLYBENCH_2D_ARRAY_DECL(C,DATA_TYPE,NJ,NL,nj,nl);\n  POLYBENCH_2D_ARRAY_DECL(D,DATA_TYPE,NI,NL,ni,nl);\n\n  /* Initialize array(s). */\n  init_array (ni, nj, nk, nl, &alpha, &beta,\n\t      POLYBENCH_ARRAY(A),\n\t      POLYBENCH_ARRAY(B),\n\t      POLYBENCH_ARRAY(C),\n\t      POLYBENCH_ARRAY(D));\n\n  /* Start timer. */\n  polybench_start_instruments;\n\n  /* Run kernel. */\n  kernel_2mm (ni, nj, nk, nl,\n\t      alpha, beta,\n\t      POLYBENCH_ARRAY(tmp),\n\t      POLYBENCH_ARRAY(A),\n\t      POLYBENCH_ARRAY(B),\n\t      POLYBENCH_ARRAY(C),\n\t      POLYBENCH_ARRAY(D));\n\n  /* Stop and print timer. */\n  polybench_stop_instruments;\n  polybench_print_instruments;\n\n  /* Prevent dead-code elimination. All live-out data must be printed\n     by the function call in argument. */\n  polybench_prevent_dce(print_array(ni, nl,  POLYBENCH_ARRAY(D)));\n\n  /* Be clean. */\n  POLYBENCH_FREE_ARRAY(tmp);\n  POLYBENCH_FREE_ARRAY(A);\n  POLYBENCH_FREE_ARRAY(B);\n  POLYBENCH_FREE_ARRAY(C);\n  POLYBENCH_FREE_ARRAY(D);\n\n  return 0;\n}\n```",
+     "reasoning": "We need to add OpenMP pragmas to loops that can be safely parallelized. Must insert lines starting with #pragma omp only. No other changes. Determine loops:\n\nIn init_array: loops fill arrays A,B,C,D. They are independent across i and j? For each array, loops nested i then j writing each element uniquely; there are no dependencies across iterations. So we can parallelize outer loops or collapse? We need to add #pragma omp parallel for for outer loop? But need to ensure that inner loops are also parallelizable? Typically we add pragma before outermost for. For each pair of nested loops, we can use collapse(2) to parallelize both loops. Simpler: add pragma before outermost loop, with collapse(2). But we need private variables i, j already. With OpenMP, loop variables are private automatically. So we can add:\n\n#pragma omp parallel for collapse(2) schedule(static)\n\nBut we must not change lines; just add pragma lines.\n\nWe have four separate double loops in init_array. We can add pragma before each outer for. However outer for is followed by inner for directly (no braces). So we need to place pragma before the outer for line. Example:\n\nfor (i = 0; i < ni; i++)\n    for (j = 0; j < nk; j++)\n      A[i][j] = ...\n\nAdd pragma before outer for:\n\n#pragma omp parallel for collapse(2) private(i,j) // but i and j are automatically private; still okay.\n\nBut we should not add private clause if not needed. Simpler: \"#pragma omp parallel for collapse(2)\". This works.\n\nSimilarly for B, C, D loops.\n\nIn print_array: loops printing D; they have side-effect of printing, order may change but still correct? Changing order may affect output order but still deterministic? The requirement: leave a loop without pragma if parallelizing could change program's results. Printing order changes output, which may be considered different result. So we should not parallelize print_array loops.\n\nIn kernel_2mm: loops compute tmp and D. Need to see dependencies.\n\nFirst double nested loops:\n\nfor (i = 0; i < _PB_NI; i++)\n    for (j = 0; j < _PB_NJ; j++)\n      {\n      tmp[i][j] = 0;\n      for (k = 0; k < _PB_NK; ++k)\n        tmp[i][j] += alpha * A[i][k] * B[k][j];\n      }\n\nHere each tmp[i][j] computed independently; reads A[i][k] row i, B[k][j]; no cross-iteration dependencies. So we can parallelize outer i loop or collapse i,j loops. Use collapse(2). Add pragma before outer for.\n\nSecond double loop:\n\nfor (i = 0; i < _PB_NI; i++)\n    for (j = 0; j < _PB_NL; j++)\n      {\n      D[i][j] *= beta;\n      for (k = 0; k < _PB_NJ; ++k)\n        D[i][j] += tmp[i][k] * C[k][j];\n      }\n\nAgain D[i][j] independent. So can parallelize.\n\nNow also loops inside kernel have nested loops; we need to add pragma before outermost for.\n\nPotential issue: In the first loop there is a reduction across k (tmp[i][j] += ...). But each iteration of i,j uses its own tmp element; the accumulation is a reduction on a scalar variable tmp[i][j] inside the innermost loop. Since each thread works on separate (i,j) element, no race; we can keep as is without reduction clause.\n\nThus add pragmas.\n\nAlso ensure not to break #pragma scop / #pragma endscop lines\u2014they are PolyBench directives. We can still add OpenMP pragmas inside the region.\n\nImplementation: Insert \"#pragma omp parallel for collapse(2)\" before each outer for loop.\n\nNeed to be careful about line numbers.\n\nLet's produce modified file.\n\nWe must only insert lines starting with #pragma omp. No other modifications.\n\nLet's write final code.\n\n"
+    },
+    "logprobs": null,
+    "finish_reason": "stop"
+   }
+  ],
+  "usage": {
+   "queue_time": 0.049003244,
+   "prompt_tokens": 1686,
+   "prompt_time": 0.073867022,
+   "completion_tokens": 2390,
+   "completion_time": 4.968558522,
+   "total_tokens": 4076,
+   "total_time": 5.042425544,
+   "completion_tokens_details": {
+    "reasoning_tokens": 869
+   }
+  },
+  "usage_breakdown": null,
+  "system_fingerprint": "fp_d577f40f11",
+  "x_groq": {
+   "id": "req_01m7rajgtqenqaggeb5a3r4c63",
+   "seed": 1639566307
+  },
+  "service_tier": "on_demand"
+ }
+}

@@ -1,0 +1,47 @@
+{
+ "provider": "groq",
+ "model": "openai/gpt-oss-120b",
+ "kernel": "medley/floyd-warshall/floyd-warshall.c",
+ "sample": 1,
+ "requested": "2026-11-19T09:57:32.769890+00:00",
+ "outcome": "complete",
+ "temperature": "default",
+ "max_tokens": 32768,
+ "response": {
+  "id": "chatcmpl-18d308a6-61c9-43f6-a9a7-7665409c9506",
+  "object": "chat.completion",
+  "created": 1795082331,
+  "model": "openai/gpt-oss-120b",
+  "choices": [
+   {
+    "index": 0,
+    "message": {
+     "role": "assistant",
+     "content": "```c\n/**\n * This version is stamped on May 10, 2016\n *\n * Contact:\n *   Louis-Noel Pouchet <pouchet.ohio-state.edu>\n *   Tomofumi Yuki <tomofumi.yuki.fr>\n *\n * Web address: http://polybench.sourceforge.net\n */\n/* floyd-warshall.c: this file is part of PolyBench/C */\n\n#include <stdio.h>\n#include <unistd.h>\n#include <string.h>\n#include <math.h>\n\n/* Include polybench common header. */\n#include <polybench.h>\n\n/* Include benchmark-specific header. */\n#include \"floyd-warshall.h\"\n\n\n/* Array initialization. */\nstatic\nvoid init_array (int n,\n\t\t DATA_TYPE POLYBENCH_2D(path,N,N,n,n))\n{\n  int i, j;\n\n#pragma omp parallel for private(j)\n  for (i = 0; i < n; i++)\n    for (j = 0; j < n; j++) {\n      path[i][j] = i*j%7+1;\n      if ((i+j)%13 == 0 || (i+j)%7==0 || (i+j)%11 == 0)\n         path[i][j] = 999;\n    }\n}\n\n\n/* DCE code. Must scan the entire live-out data.\n   Can be used also to check the correctness of the output. */\nstatic\nvoid print_array(int n,\n\t\t DATA_TYPE POLYBENCH_2D(path,N,N,n,n))\n\n{\n  int i, j;\n\n  POLYBENCH_DUMP_START;\n  POLYBENCH_DUMP_BEGIN(\"path\");\n  for (i = 0; i < n; i++)\n    for (j = 0; j < n; j++) {\n      if ((i * n + j) % 20 == 0) fprintf (POLYBENCH_DUMP_TARGET, \"\\n\");\n      fprintf (POLYBENCH_DUMP_TARGET, DATA_PRINTF_MODIFIER, path[i][j]);\n    }\n  POLYBENCH_DUMP_END(\"path\");\n  POLYBENCH_DUMP_FINISH;\n}\n\n\n/* Main computational kernel. The whole function will be timed,\n   including the call and return. */\nstatic\nvoid kernel_floyd_warshall(int n,\n\t\t\t   DATA_TYPE POLYBENCH_2D(path,N,N,n,n))\n{\n  int i, j, k;\n\n#pragma scop\n  for (k = 0; k < _PB_N; k++)\n    {\n#pragma omp parallel for private(j)\n      for(i = 0; i < _PB_N; i++)\n\tfor (j = 0; j < _PB_N; j++)\n\t  path[i][j] = path[i][j] < path[i][k] + path[k][j] ?\n\t    path[i][j] : path[i][k] + path[k][j];\n    }\n#pragma endscop\n\n}\n\n\nint main(int argc, char** argv)\n{\n  /* Retrieve problem size. */\n  int n = N;\n\n  /* Variable declaration/allocation. */\n  POLYBENCH_2D_ARRAY_DECL(path, DATA_TYPE, N, N, n, n);\n\n\n  /* Initialize array(s). */\n  init_array (n, POLYBENCH_ARRAY(path));\n\n  /* Start timer. */\n  polybench_start_instruments;\n\n  /* Run kernel. */\n  kernel_floyd_warshall (n, POLYBENCH_ARRAY(path));\n\n  /* Stop and print timer. */\n  polybench_stop_instruments;\n  polybench_print_instruments;\n\n  /* Prevent dead-code elimination. All live-out data must be printed\n     by the function call in argument. */\n  polybench_prevent_dce(print_array(n, POLYBENCH_ARRAY(path)));\n\n  /* Be clean. */\n  POLYBENCH_FREE_ARRAY(path);\n\n  return 0;\n}\n```",
+     "reasoning": "We need to add OpenMP pragmas to loops that can be safely parallelized.\n\nWe have loops:\n\ninit_array: two nested loops, each iteration writes to distinct path[i][j], no dependencies, can be parallelized. Need collapse? Outer i loop independent, inner j independent. Use #pragma omp parallel for collapse(2) maybe. Or parallelize outer loop with private j. Simpler: add \"#pragma omp parallel for private(j)\" before outer for i loop. That's safe. Or collapse(2). We'll add.\n\nprint_array: similar reading only, printing may cause race due to output ordering, cannot parallelize because order matters for output (though could parallel with critical). Better not parallelize.\n\nkernel_floyd_warshall: triple nested loops with dependencies across k iteration: the algorithm updates path based on previous k iteration; k loop cannot be parallelized. Inside, for each k, the i and j loops compute new values based on path[i][k] and path[k][j] which are from previous state of same k iteration? Actually algorithm uses path[i][j] = min(path[i][j], path[i][k] + path[k][j]); This update can be done in parallel across i and j because each iteration reads path[i][k] and path[k][j] which are not being modified within same k iteration (they are read only). However path[i][j] is being updated, each i,j independent. So we can parallelize inner loops: for i loop parallel for, with j private. Use \"#pragma omp parallel for private(j)\" before i loop. Also we could collapse i and j loops: \"#pragma omp parallel for collapse(2) private(i,j)\" but i is loop variable. We'll add pragma before i loop.\n\nNeed to ensure correct scoping of variables: i, j, k are defined outside loops. In pragma, we can specify private(i,j) maybe but they are loop variables automatically private. So just \"#pragma omp parallel for\" is fine.\n\nAdd pragmas lines start with #pragma omp.\n\nWe must not modify other code.\n\nLet's prepare modified file.\n\nInsert after for (i = 0; i < n; i++) line? Actually we need to put pragma before the outer for loop. So in init_array function, before \"for (i = 0; i < n; i++)\". Insert \"#pragma omp parallel for private(j)\" line.\n\nIn kernel_floyd_warshall, before \"for(i = 0; i < _PB_N; i++)\". Insert \"#pragma omp parallel for private(j)\". Also need to ensure that the pragma is inside the k loop; it's per iteration. That's okay.\n\nPotential need of \"schedule(static)\" default fine.\n\nReturn whole file.\n\n"
+    },
+    "logprobs": null,
+    "finish_reason": "stop"
+   }
+  ],
+  "usage": {
+   "queue_time": 0.156968586,
+   "prompt_tokens": 1012,
+   "prompt_time": 0.044770774,
+   "completion_tokens": 1378,
+   "completion_time": 2.882651685,
+   "total_tokens": 2390,
+   "total_time": 2.9274224589999998,
+   "completion_tokens_details": {
+    "reasoning_tokens": 565
+   }
+  },
+  "usage_breakdown": null,
+  "system_fingerprint": "fp_5a93aea882",
+  "x_groq": {
+   "id": "req_01m7skx69nepwrb5njm877c1j6",
+   "seed": 1981051765
+  },
+  "service_tier": "on_demand"
+ }
+}

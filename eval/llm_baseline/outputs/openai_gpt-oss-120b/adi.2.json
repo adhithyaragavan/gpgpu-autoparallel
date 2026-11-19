@@ -1,0 +1,47 @@
+{
+ "provider": "groq",
+ "model": "openai/gpt-oss-120b",
+ "kernel": "stencils/adi/adi.c",
+ "sample": 2,
+ "requested": "2026-11-19T10:00:57.754814+00:00",
+ "outcome": "complete",
+ "temperature": "default",
+ "max_tokens": 32768,
+ "response": {
+  "id": "chatcmpl-b7feab14-a31e-4943-8a3c-7657cfb972b5",
+  "object": "chat.completion",
+  "created": 1795082498,
+  "model": "openai/gpt-oss-120b",
+  "choices": [
+   {
+    "index": 0,
+    "message": {
+     "role": "assistant",
+     "content": "```c\n/**\n * This version is stamped on May 10, 2016\n *\n * Contact:\n *   Louis-Noel Pouchet <pouchet.ohio-state.edu>\n *   Tomofumi Yuki <tomofumi.yuki.fr>\n *\n * Web address: http://polybench.sourceforge.net\n */\n/* adi.c: this file is part of PolyBench/C */\n\n#include <stdio.h>\n#include <unistd.h>\n#include <string.h>\n#include <math.h>\n\n/* Include polybench common header. */\n#include <polybench.h>\n\n/* Include benchmark-specific header. */\n#include \"adi.h\"\n\n\n/* Array initialization. */\nstatic\nvoid init_array (int n,\n\t\t DATA_TYPE POLYBENCH_2D(u,N,N,n,n))\n{\n  int i, j;\n\n#pragma omp parallel for private(j)\n  for (i = 0; i < n; i++)\n    for (j = 0; j < n; j++)\n      {\n\tu[i][j] =  (DATA_TYPE)(i + n-j) / n;\n      }\n}\n\n\n/* DCE code. Must scan the entire live-out data.\n   Can be used also to check the correctness of the output. */\nstatic\nvoid print_array(int n,\n\t\t DATA_TYPE POLYBENCH_2D(u,N,N,n,n))\n\n{\n  int i, j;\n\n  POLYBENCH_DUMP_START;\n  POLYBENCH_DUMP_BEGIN(\"u\");\n  for (i = 0; i < n; i++)\n    for (j = 0; j < n; j++) {\n      if ((i * n + j) % 20 == 0) fprintf(POLYBENCH_DUMP_TARGET, \"\\n\");\n      fprintf (POLYBENCH_DUMP_TARGET, DATA_PRINTF_MODIFIER, u[i][j]);\n    }\n  POLYBENCH_DUMP_END(\"u\");\n  POLYBENCH_DUMP_FINISH;\n}\n\n\n/* Main computational kernel. The whole function will be timed,\n   including the call and return. */\n/* Based on a Fortran code fragment from Figure 5 of\n * \"Automatic Data and Computation Decomposition on Distributed Memory Parallel Computers\"\n * by Peizong Lee and Zvi Meir Kedem, TOPLAS, 2002\n */\nstatic\nvoid kernel_adi(int tsteps, int n,\n\t\tDATA_TYPE POLYBENCH_2D(u,N,N,n,n),\n\t\tDATA_TYPE POLYBENCH_2D(v,N,N,n,n),\n\t\tDATA_TYPE POLYBENCH_2D(p,N,N,n,n),\n\t\tDATA_TYPE POLYBENCH_2D(q,N,N,n,n))\n{\n  int t, i, j;\n  DATA_TYPE DX, DY, DT;\n  DATA_TYPE B1, B2;\n  DATA_TYPE mul1, mul2;\n  DATA_TYPE a, b, c, d, e, f;\n\n#pragma scop\n\n  DX = SCALAR_VAL(1.0)/(DATA_TYPE)_PB_N;\n  DY = SCALAR_VAL(1.0)/(DATA_TYPE)_PB_N;\n  DT = SCALAR_VAL(1.0)/(DATA_TYPE)_PB_TSTEPS;\n  B1 = SCALAR_VAL(2.0);\n  B2 = SCALAR_VAL(1.0);\n  mul1 = B1 * DT / (DX * DX);\n  mul2 = B2 * DT / (DY * DY);\n\n  a = -mul1 /  SCALAR_VAL(2.0);\n  b = SCALAR_VAL(1.0)+mul1;\n  c = a;\n  d = -mul2 / SCALAR_VAL(2.0);\n  e = SCALAR_VAL(1.0)+mul2;\n  f = d;\n\n for (t=1; t<=_PB_TSTEPS; t++) {\n    //Column Sweep\n#pragma omp parallel for private(j)\n    for (i=1; i<_PB_N-1; i++) {\n      v[0][i] = SCALAR_VAL(1.0);\n      p[i][0] = SCALAR_VAL(0.0);\n      q[i][0] = v[0][i];\n      for (j=1; j<_PB_N-1; j++) {\n        p[i][j] = -c / (a*p[i][j-1]+b);\n        q[i][j] = (-d*u[j][i-1]+(SCALAR_VAL(1.0)+SCALAR_VAL(2.0)*d)*u[j][i] - f*u[j][i+1]-a*q[i][j-1])/(a*p[i][j-1]+b);\n      }\n\n      v[_PB_N-1][i] = SCALAR_VAL(1.0);\n      for (j=_PB_N-2; j>=1; j--) {\n        v[j][i] = p[i][j] * v[j+1][i] + q[i][j];\n      }\n    }\n    //Row Sweep\n#pragma omp parallel for private(j)\n    for (i=1; i<_PB_N-1; i++) {\n      u[i][0] = SCALAR_VAL(1.0);\n      p[i][0] = SCALAR_VAL(0.0);\n      q[i][0] = u[i][0];\n      for (j=1; j<_PB_N-1; j++) {\n        p[i][j] = -f / (d*p[i][j-1]+e);\n        q[i][j] = (-a*v[i-1][j]+(SCALAR_VAL(1.0)+SCALAR_VAL(2.0)*a)*v[i][j] - c*v[i+1][j]-d*q[i][j-1])/(d*p[i][j-1]+e);\n      }\n      u[i][_PB_N-1] = SCALAR_VAL(1.0);\n      for (j=_PB_N-2; j>=1; j--) {\n        u[i][j] = p[i][j] * u[i][j+1] + q[i][j];\n      }\n    }\n  }\n#pragma endscop\n}\n\n\nint main(int argc, char** argv)\n{\n  /* Retrieve problem size. */\n  int n = N;\n  int tsteps = TSTEPS;\n\n  /* Variable declaration/allocation. */\n  POLYBENCH_2D_ARRAY_DECL(u, DATA_TYPE, N, N, n, n);\n  POLYBENCH_2D_ARRAY_DECL(v, DATA_TYPE, N, N, n, n);\n  POLYBENCH_2D_ARRAY_DECL(p, DATA_TYPE, N, N, n, n);\n  POLYBENCH_2D_ARRAY_DECL(q, DATA_TYPE, N, N, n, n);\n\n\n  /* Initialize array(s). */\n  init_array (n, POLYBENCH_ARRAY(u));\n\n  /* Start timer. */\n  polybench_start_instruments;\n\n  /* Run kernel. */\n  kernel_adi (tsteps, n, POLYBENCH_ARRAY(u), POLYBENCH_ARRAY(v), POLYBENCH_ARRAY(p), POLYBENCH_ARRAY(q));\n\n  /* Stop and print timer. */\n  polybench_stop_instruments;\n  polybench_print_instruments;\n\n  /* Prevent dead-code elimination. All live-out data must be printed\n     by the function call in argument. */\n  polybench_prevent_dce(print_array(n, POLYBENCH_ARRAY(u)));\n\n  /* Be clean. */\n  POLYBENCH_FREE_ARRAY(u);\n  POLYBENCH_FREE_ARRAY(v);\n  POLYBENCH_FREE_ARRAY(p);\n  POLYBENCH_FREE_ARRAY(q);\n\n  return 0;\n}\n```\n",
+     "reasoning": "We need to add #pragma omp parallel for directives to loops that can be safely parallelized. Must not change code else. Identify loops:\n\n1. init_array: loops over i and j. The nested loops: i outer, j inner. They write u[i][j] independent of other indices, so can parallelize outer loop. Need #pragma omp parallel for private(j). Add before for(i...). Should be placed directly before the outer loop line. Also maybe collapse both loops? Could use collapse(2) but safe with private variables. Use #pragma omp parallel for private(j) schedule(static). We'll just add line.\n\n2. print_array: loops i and j nested with printing; order matters for output, but printing interleaved may change ordering but results not needed for computation? This is DCE code, but could change output format. Safer to leave without pragma.\n\n3. In kernel_adi: many loops.\n\nFirst outer loop: for (t=1; t<=_PB_TSTEPS; t++) { ... } This loop has dependencies across timesteps because u, v, p, q updated each step; cannot parallelize.\n\nInside t loop:\n\n- Column Sweep outer for (i=1; i<_PB_N-1; i++) { ... } Inside this i loop there are operations that write to v[0][i], p[i][0], q[i][0]; then inner j loop writes p[i][j] and q[i][j]; then later v[_PB_N-1][i] and then backward j loop writes v[j][i] using p[i][j] and v[j+1][i]. These operations for different i are independent? Let's examine dependencies: p[i][*] and q[i][*] are per i, they don't interact across i. v[0][i] and v[_PB_N-1][i] are per i. The backward loop reads v[j+1][i] which is same i column but different rows; that is sequential within j loop but not across i. So i iterations are independent. So we can parallelize outer i loop with private(j). However p and q arrays are shared, but each i accesses distinct row i (p[i][j], q[i][j]) and v column i (v[j][i]), no overlap across i. So safe.\n\nAdd #pragma omp parallel for private(j) schedule(static) before for(i=1...).\n\n- Inside that i loop, there is inner forward j loop and backward j loop. The forward j loop depends on previous j (p[i][j-1] and q[i][j-1]), so cannot parallelize; keep.\n\n- Backward j loop depends on v[j+1][i] computed earlier in same i iteration, so sequential; keep.\n\nSimilarly Row Sweep: for (i=1; i<_PB_N-1; i++) { ... } Similar independence across i; we can parallelize.\n\nAdd #pragma omp parallel for private(j) before that i loop.\n\nOther loops: inside init_array we added.\n\nAlso there are loops in main? Not needed.\n\nPotential other loops: In kernel_adi, there is the forward j loops inside each i; cannot parallelize.\n\nPotential loops over t steps not parallel.\n\nThus we need to insert three pragmas: before init_array outer loop, before column sweep i loop, before row sweep i loop.\n\nMake sure we don't break syntax.\n\nInsert lines exactly \"#pragma omp parallel for private(j)\" before the relevant for statements.\n\nWe must ensure that variable j is declared in the scope (i loop's inner). Since j is defined in function, it's okay.\n\nPotential need to also make i private? i is loop variable, automatically private.\n\nThus final code with inserted pragmas.\n\nLet's produce final file."
+    },
+    "logprobs": null,
+    "finish_reason": "stop"
+   }
+  ],
+  "usage": {
+   "queue_time": 0.340486366,
+   "prompt_tokens": 1823,
+   "prompt_time": 0.149463021,
+   "completion_tokens": 2414,
+   "completion_time": 5.160044835,
+   "total_tokens": 4237,
+   "total_time": 5.309507856,
+   "completion_tokens_details": {
+    "reasoning_tokens": 782
+   }
+  },
+  "usage_breakdown": null,
+  "system_fingerprint": "fp_69334c0be3",
+  "x_groq": {
+   "id": "req_01m7sm27a2ey2a23rhr2491jn8",
+   "seed": 795709697
+  },
+  "service_tier": "on_demand"
+ }
+}

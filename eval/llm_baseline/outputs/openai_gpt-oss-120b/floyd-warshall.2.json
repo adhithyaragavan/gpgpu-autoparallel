@@ -1,0 +1,47 @@
+{
+ "provider": "groq",
+ "model": "openai/gpt-oss-120b",
+ "kernel": "medley/floyd-warshall/floyd-warshall.c",
+ "sample": 2,
+ "requested": "2026-11-19T09:58:51.412997+00:00",
+ "outcome": "complete",
+ "temperature": "default",
+ "max_tokens": 32768,
+ "response": {
+  "id": "chatcmpl-3335ebe9-94cc-4a89-8a17-ddc7c0003508",
+  "object": "chat.completion",
+  "created": 1795082335,
+  "model": "openai/gpt-oss-120b",
+  "choices": [
+   {
+    "index": 0,
+    "message": {
+     "role": "assistant",
+     "content": "```c\n/**\n * This version is stamped on May 10, 2016\n *\n * Contact:\n *   Louis-Noel Pouchet <pouchet.ohio-state.edu>\n *   Tomofumi Yuki <tomofumi.yuki.fr>\n *\n * Web address: http://polybench.sourceforge.net\n */\n/* floyd-warshall.c: this file is part of PolyBench/C */\n\n#include <stdio.h>\n#include <unistd.h>\n#include <string.h>\n#include <math.h>\n\n/* Include polybench common header. */\n#include <polybench.h>\n\n/* Include benchmark-specific header. */\n#include \"floyd-warshall.h\"\n\n\n/* Array initialization. */\nstatic\nvoid init_array (int n,\n\t\t DATA_TYPE POLYBENCH_2D(path,N,N,n,n))\n{\n  int i, j;\n\n#pragma omp parallel for collapse(2)\n  for (i = 0; i < n; i++)\n    for (j = 0; j < n; j++) {\n      path[i][j] = i*j%7+1;\n      if ((i+j)%13 == 0 || (i+j)%7==0 || (i+j)%11 == 0)\n         path[i][j] = 999;\n    }\n}\n\n\n/* DCE code. Must scan the entire live-out data.\n   Can be used also to check the correctness of the output. */\nstatic\nvoid print_array(int n,\n\t\t DATA_TYPE POLYBENCH_2D(path,N,N,n,n))\n\n{\n  int i, j;\n\n  POLYBENCH_DUMP_START;\n  POLYBENCH_DUMP_BEGIN(\"path\");\n  for (i = 0; i < n; i++)\n    for (j = 0; j < n; j++) {\n      if ((i * n + j) % 20 == 0) fprintf (POLYBENCH_DUMP_TARGET, \"\\n\");\n      fprintf (POLYBENCH_DUMP_TARGET, DATA_PRINTF_MODIFIER, path[i][j]);\n    }\n  POLYBENCH_DUMP_END(\"path\");\n  POLYBENCH_DUMP_FINISH;\n}\n\n\n/* Main computational kernel. The whole function will be timed,\n   including the call and return. */\nstatic\nvoid kernel_floyd_warshall(int n,\n\t\t\t   DATA_TYPE POLYBENCH_2D(path,N,N,n,n))\n{\n  int i, j, k;\n\n#pragma scop\n  for (k = 0; k < _PB_N; k++)\n    {\n#pragma omp parallel for private(j)\n      for(i = 0; i < _PB_N; i++)\n\tfor (j = 0; j < _PB_N; j++)\n\t  path[i][j] = path[i][j] < path[i][k] + path[k][j] ?\n\t    path[i][j] : path[i][k] + path[k][j];\n    }\n#pragma endscop\n\n}\n\n\nint main(int argc, char** argv)\n{\n  /* Retrieve problem size. */\n  int n = N;\n\n  /* Variable declaration/allocation. */\n  POLYBENCH_2D_ARRAY_DECL(path, DATA_TYPE, N, N, n, n);\n\n\n  /* Initialize array(s). */\n  init_array (n, POLYBENCH_ARRAY(path));\n\n  /* Start timer. */\n  polybench_start_instruments;\n\n  /* Run kernel. */\n  kernel_floyd_warshall (n, POLYBENCH_ARRAY(path));\n\n  /* Stop and print timer. */\n  polybench_stop_instruments;\n  polybench_print_instruments;\n\n  /* Prevent dead-code elimination. All live-out data must be printed\n     by the function call in argument. */\n  polybench_prevent_dce(print_array(n, POLYBENCH_ARRAY(path)));\n\n  /* Be clean. */\n  POLYBENCH_FREE_ARRAY(path);\n\n  return 0;\n}\n```",
+     "reasoning": "We need to add OpenMP pragmas to loops that can safely run in parallel without changing results. Let's analyze loops.\n\n1. init_array: nested loops i, j independent. Write to path[i][j] only each element. So can parallelize outer loop or collapse. Use `#pragma omp parallel for collapse(2)` maybe. However need private i j automatically? In for loops they are private. So add before first for: `#pragma omp parallel for collapse(2)`. That is safe.\n\n2. print_array: loops i,j reading path and printing. The order of printing matters for output format; parallelizing could change order, which may change output. So leave without pragma.\n\n3. kernel_floyd_warshall: triple nested loops with data dependencies across k: Floyd-Warshall algorithm has dependency on previous k iteration; can't parallelize outermost k loop. Within each k, the inner i loop can be parallelized because each iteration of i writes to path[i][j] reading path[i][k] and path[k][j]; reading path[i][k] is from same row i, same k; path[k][j] from row k (fixed). Since different i rows independent. However there is also dependence on path[i][j] being read and updated, but each (i,j) unique per i iteration, j loop inside i. So we can parallelize i loop with j loop nested sequentially. Use `#pragma omp parallel for private(j)` before i loop. Ensure that j is private by default; loop variable is private. So add pragma before `for(i = 0; i < _PB_N; i++)`. Also need collapse maybe to parallelize both i and j? Not safe because they share path[i][j] across i and j combos, but each iteration of (i,j) unique, could collapse 2 loops; but there is still reading path[i][k] (i variable) and path[k][j] (j variable). That's fine. Could collapse for better parallelism: `#pragma omp parallel for collapse(2) private(i,j)` but i and j are loop variables. Simpler: parallelize i loop only.\n\nPotential race condition: multiple threads writing to path[i][j] for different i rows, no conflict. So safe.\n\nWe also need to consider that path[i][k] is read; same row i; but each thread works on distinct i, reads its own row i. No race.\n\nThus add pragma before i loop.\n\nAlso maybe the outermost loop over k can't be parallel.\n\nThus modifications: add `#pragma omp parallel for collapse(2)` before first for in init_array (i loop). Also add `#pragma omp parallel for` before i loop inside kernel_floyd_warshall.\n\nMake sure we don't break scoping: Need to put after `#pragma scop`? The code currently has:\n\n#pragma scop\n  for (k = 0; k < _PB_N; k++)\n    {\n      for(i = 0; i < _PB_N; i++)\n        for (j = 0; j < _PB_N; j++)\n          path[i][j] = ...\n    }\n#pragma endscop\n\nWe can insert pragma before inner i loop (inside the braces). So after opening brace line. Add line: `#pragma omp parallel for private(j)` maybe. Since j is loop variable, not needed but okay.\n\nMake sure syntax correct.\n\nNow produce modified file with added pragmas.\n\nLet's write final code."
+    },
+    "logprobs": null,
+    "finish_reason": "stop"
+   }
+  ],
+  "usage": {
+   "queue_time": 0.369857799,
+   "prompt_tokens": 1012,
+   "prompt_time": 0.076480649,
+   "completion_tokens": 1540,
+   "completion_time": 3.22009258,
+   "total_tokens": 2552,
+   "total_time": 3.296573229,
+   "completion_tokens_details": {
+    "reasoning_tokens": 726
+   }
+  },
+  "usage_breakdown": null,
+  "system_fingerprint": "fp_b1dd3e7a63",
+  "x_groq": {
+   "id": "req_01m7skx9dre0nt0qjsw640ebnf",
+   "seed": 1565229934
+  },
+  "service_tier": "on_demand"
+ }
+}

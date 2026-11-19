@@ -1,0 +1,47 @@
+{
+ "provider": "groq",
+ "model": "openai/gpt-oss-120b",
+ "kernel": "stencils/fdtd-2d/fdtd-2d.c",
+ "sample": 0,
+ "requested": "2026-11-19T10:01:38.854447+00:00",
+ "outcome": "complete",
+ "temperature": "default",
+ "max_tokens": 32768,
+ "response": {
+  "id": "chatcmpl-7c968c58-7d48-406b-ad91-36b4691fc94a",
+  "object": "chat.completion",
+  "created": 1795082540,
+  "model": "openai/gpt-oss-120b",
+  "choices": [
+   {
+    "index": 0,
+    "message": {
+     "role": "assistant",
+     "content": "```c\n/**\n * This version is stamped on May 10, 2016\n *\n * Contact:\n *   Louis-Noel Pouchet <pouchet.ohio-state.edu>\n *   Tomofumi Yuki <tomofumi.yuki.fr>\n *\n * Web address: http://polybench.sourceforge.net\n */\n/* fdtd-2d.c: this file is part of PolyBench/C */\n\n#include <stdio.h>\n#include <unistd.h>\n#include <string.h>\n#include <math.h>\n\n/* Include polybench common header. */\n#include <polybench.h>\n\n/* Include benchmark-specific header. */\n#include \"fdtd-2d.h\"\n\n\n/* Array initialization. */\nstatic\nvoid init_array (int tmax,\n\t\t int nx,\n\t\t int ny,\n\t\t DATA_TYPE POLYBENCH_2D(ex,NX,NY,nx,ny),\n\t\t DATA_TYPE POLYBENCH_2D(ey,NX,NY,nx,ny),\n\t\t DATA_TYPE POLYBENCH_2D(hz,NX,NY,nx,ny),\n\t\t DATA_TYPE POLYBENCH_1D(_fict_,TMAX,tmax))\n{\n  int i, j;\n\n#pragma omp parallel for\n  for (i = 0; i < tmax; i++)\n    _fict_[i] = (DATA_TYPE) i;\n#pragma omp parallel for collapse(2) private(i,j)\n  for (i = 0; i < nx; i++)\n    for (j = 0; j < ny; j++)\n      {\n\tex[i][j] = ((DATA_TYPE) i*(j+1)) / nx;\n\tey[i][j] = ((DATA_TYPE) i*(j+2)) / ny;\n\thz[i][j] = ((DATA_TYPE) i*(j+3)) / nx;\n      }\n}\n\n\n/* DCE code. Must scan the entire live-out data.\n   Can be used also to check the correctness of the output. */\nstatic\nvoid print_array(int nx,\n\t\t int ny,\n\t\t DATA_TYPE POLYBENCH_2D(ex,NX,NY,nx,ny),\n\t\t DATA_TYPE POLYBENCH_2D(ey,NX,NY,nx,ny),\n\t\t DATA_TYPE POLYBENCH_2D(hz,NX,NY,nx,ny))\n{\n  int i, j;\n\n  POLYBENCH_DUMP_START;\n  POLYBENCH_DUMP_BEGIN(\"ex\");\n  for (i = 0; i < nx; i++)\n    for (j = 0; j < ny; j++) {\n      if ((i * nx + j) % 20 == 0) fprintf(POLYBENCH_DUMP_TARGET, \"\\n\");\n      fprintf(POLYBENCH_DUMP_TARGET, DATA_PRINTF_MODIFIER, ex[i][j]);\n    }\n  POLYBENCH_DUMP_END(\"ex\");\n  POLYBENCH_DUMP_FINISH;\n\n  POLYBENCH_DUMP_BEGIN(\"ey\");\n  for (i = 0; i < nx; i++)\n    for (j = 0; j < ny; j++) {\n      if ((i * nx + j) % 20 == 0) fprintf(POLYBENCH_DUMP_TARGET, \"\\n\");\n      fprintf(POLYBENCH_DUMP_TARGET, DATA_PRINTF_MODIFIER, ey[i][j]);\n    }\n  POLYBENCH_DUMP_END(\"ey\");\n\n  POLYBENCH_DUMP_BEGIN(\"hz\");\n  for (i = 0; i < nx; i++)\n    for (j = 0; j < ny; j++) {\n      if ((i * nx + j) % 20 == 0) fprintf(POLYBENCH_DUMP_TARGET, \"\\n\");\n      fprintf(POLYBENCH_DUMP_TARGET, DATA_PRINTF_MODIFIER, hz[i][j]);\n    }\n  POLYBENCH_DUMP_END(\"hz\");\n}\n\n\n/* Main computational kernel. The whole function will be timed,\n   including the call and return. */\nstatic\nvoid kernel_fdtd_2d(int tmax,\n\t\t    int nx,\n\t\t    int ny,\n\t\t    DATA_TYPE POLYBENCH_2D(ex,NX,NY,nx,ny),\n\t\t    DATA_TYPE POLYBENCH_2D(ey,NX,NY,nx,ny),\n\t\t    DATA_TYPE POLYBENCH_2D(hz,NX,NY,nx,ny),\n\t\t    DATA_TYPE POLYBENCH_1D(_fict_,TMAX,tmax))\n{\n  int t, i, j;\n\n#pragma scop\n\n  for(t = 0; t < _PB_TMAX; t++)\n    {\n#pragma omp parallel for private(j)\n      for (j = 0; j < _PB_NY; j++)\n\tey[0][j] = _fict_[t];\n#pragma omp parallel for collapse(2) private(i,j)\n      for (i = 1; i < _PB_NX; i++)\n\tfor (j = 0; j < _PB_NY; j++)\n\t  ey[i][j] = ey[i][j] - SCALAR_VAL(0.5)*(hz[i][j]-hz[i-1][j]);\n#pragma omp parallel for collapse(2) private(i,j)\n      for (i = 0; i < _PB_NX; i++)\n\tfor (j = 1; j < _PB_NY; j++)\n\t  ex[i][j] = ex[i][j] - SCALAR_VAL(0.5)*(hz[i][j]-hz[i][j-1]);\n#pragma omp parallel for collapse(2) private(i,j)\n      for (i = 0; i < _PB_NX - 1; i++)\n\tfor (j = 0; j < _PB_NY - 1; j++)\n\t  hz[i][j] = hz[i][j] - SCALAR_VAL(0.7)*  (ex[i][j+1] - ex[i][j] +\n\t\t\t\t       ey[i+1][j] - ey[i][j]);\n    }\n\n#pragma endscop\n}\n\n\nint main(int argc, char** argv)\n{\n  /* Retrieve problem size. */\n  int tmax = TMAX;\n  int nx = NX;\n  int ny = NY;\n\n  /* Variable declaration/allocation. */\n  POLYBENCH_2D_ARRAY_DECL(ex,DATA_TYPE,NX,NY,nx,ny);\n  POLYBENCH_2D_ARRAY_DECL(ey,DATA_TYPE,NX,NY,nx,ny);\n  POLYBENCH_2D_ARRAY_DECL(hz,DATA_TYPE,NX,NY,nx,ny);\n  POLYBENCH_1D_ARRAY_DECL(_fict_,DATA_TYPE,TMAX,tmax);\n\n  /* Initialize array(s). */\n  init_array (tmax, nx, ny,\n\t      POLYBENCH_ARRAY(ex),\n\t      POLYBENCH_ARRAY(ey),\n\t      POLYBENCH_ARRAY(hz),\n\t      POLYBENCH_ARRAY(_fict_));\n\n  /* Start timer. */\n  polybench_start_instruments;\n\n  /* Run kernel. */\n  kernel_fdtd_2d (tmax, nx, ny,\n\t\t  POLYBENCH_ARRAY(ex),\n\t\t  POLYBENCH_ARRAY(ey),\n\t\t  POLYBENCH_ARRAY(hz),\n\t\t  POLYBENCH_ARRAY(_fict_));\n\n\n  /* Stop and print timer. */\n  polybench_stop_instruments;\n  polybench_print_instruments;\n\n  /* Prevent dead-code elimination. All live-out data must be printed\n     by the function call in argument. */\n  polybench_prevent_dce(print_array(nx, ny, POLYBENCH_ARRAY(ex),\n\t\t\t\t    POLYBENCH_ARRAY(ey),\n\t\t\t\t    POLYBENCH_ARRAY(hz)));\n\n  /* Be clean. */\n  POLYBENCH_FREE_ARRAY(ex);\n  POLYBENCH_FREE_ARRAY(ey);\n  POLYBENCH_FREE_ARRAY(hz);\n  POLYBENCH_FREE_ARRAY(_fict_);\n\n  return 0;\n}\n```",
+     "reasoning": "We need to add #pragma omp parallel for directives to every loop that can safely run its iterations in parallel, without changing results. Must not modify code except add pragmas. Identify loops:\n\nIn init_array:\n- for (i = 0; i < tmax; i++) _fict_[i] = (DATA_TYPE) i; independent, can parallel.\n- nested loops i over nx, j over ny: each iteration writes distinct ex[i][j], ey[i][j], hz[i][j]; independent, can parallelize outer i loop with collapse? Could do #pragma omp parallel for collapse(2) private(i,j) maybe. Simpler: add pragma before outermost for i loop with collapse(2). Need to ensure j defined inside loop. We can use collapse(2). That requires both loops to be perfectly nested. Yes.\n\nIn print_array: loops over i, j for printing, but printing to same file with interleaved writes may cause race condition (output order). Should not parallelize because order matters. So leave unchanged.\n\nIn kernel_fdtd_2d: inside t loop there are several loops:\n\n- for (j = 0; j < _PB_NY; j++) ey[0][j] = _fict_[t]; writes distinct ey[0][j]; can parallelize over j.\n\n- for (i = 1; i < _PB_NX; i++) for (j = 0; j < _PB_NY; j++) ey[i][j] = ey[i][j] - ... depends on hz[i][j] and hz[i-1][j] which are read from previous iteration of i? Actually each iteration of i reads hz[i][j] and hz[i-1][j]; these are not modified in this loop. So i iterations independent; can parallelize outer i loop. Could use collapse(2) too.\n\n- for (i = 0; i < _PB_NX; i++) for (j = 1; j < _PB_NY; j++) ex[i][j] = ex[i][j] - ... depends on hz[i][j] and hz[i][j-1]; reads only hz, not modified in this loop. So independent; can parallelize outer i.\n\n- for (i = 0; i < _PB_NX - 1; i++) for (j = 0; j < _PB_NY - 1; j++) hz[i][j] = hz[i][j] - ... depends on ex[i][j+1], ex[i][j], ey[i+1][j], ey[i][j]; ex and ey have been updated earlier in this t iteration, but this loop only reads them, and writes distinct hz[i][j] entries. No overlap. So can parallelize outer i.\n\nAlso the outermost t loop: cannot parallelize because each iteration uses previous results (ex, ey, hz) updated; must stay sequential.\n\nThus we need to insert pragmas before each inner loops.\n\nMake sure we include necessary private clauses for loop indices. By default loop index variables are private in OpenMP for loops. No reduction needed.\n\nAdd #pragma omp parallel for before each applicable for.\n\nNeed to ensure placement: before the for line. Also ensure we are inside #pragma scop region; adding pragmas inside is okay.\n\nLet's produce modified file with added pragmas.\n\nWe'll add:\n\nIn init_array after declaration: before first for i loop: #pragma omp parallel for\n\nBefore outer i loop (the nested loops) we can use collapse(2):\n\n#pragma omp parallel for collapse(2) private(i,j)\n\nBut i,j are loop variables, they are already private, but it's okay.\n\nAdd before for (i = 0; i < nx; i++) line.\n\nIn kernel_fdtd_2d:\n\n- before for (j = 0; j < _PB_NY; j++) line.\n\n- before for (i = 1; i < _PB_NX; i++) line; could also collapse(2). Use collapse(2) maybe.\n\n- before for (i = 0; i < _PB_NX; i++) line; collapse(2) as well.\n\n- before for (i = 0; i < _PB_NX - 1; i++) line; collapse(2).\n\nMake sure each pragma is on its own line before loop.\n\nLet's craft final code."
+    },
+    "logprobs": null,
+    "finish_reason": "stop"
+   }
+  ],
+  "usage": {
+   "queue_time": 0.31663451,
+   "prompt_tokens": 1839,
+   "prompt_time": 0.086724008,
+   "completion_tokens": 2608,
+   "completion_time": 5.475366574,
+   "total_tokens": 4447,
+   "total_time": 5.562090582,
+   "completion_tokens_details": {
+    "reasoning_tokens": 922
+   }
+  },
+  "usage_breakdown": null,
+  "system_fingerprint": "fp_02b0d31eca",
+  "x_groq": {
+   "id": "req_01m7sm3fdyeq8b2d80xxxsywf9",
+   "seed": 1790300702
+  },
+  "service_tier": "on_demand"
+ }
+}

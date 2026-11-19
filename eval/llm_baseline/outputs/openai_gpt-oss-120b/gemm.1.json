@@ -1,0 +1,46 @@
+{
+ "provider": "groq",
+ "model": "openai/gpt-oss-120b",
+ "kernel": "linear-algebra/blas/gemm/gemm.c",
+ "sample": 1,
+ "requested": "2026-11-18T21:47:23.282778+00:00",
+ "outcome": "complete",
+ "temperature": "default",
+ "response": {
+  "id": "chatcmpl-2b637b52-6a64-4a03-bda7-3c5663a37d03",
+  "object": "chat.completion",
+  "created": 1795038483,
+  "model": "openai/gpt-oss-120b",
+  "choices": [
+   {
+    "index": 0,
+    "message": {
+     "role": "assistant",
+     "content": "```c\n/**\n * This version is stamped on May 10, 2016\n *\n * Contact:\n *   Louis-Noel Pouchet <pouchet.ohio-state.edu>\n *   Tomofumi Yuki <tomofumi.yuki.fr>\n *\n * Web address: http://polybench.sourceforge.net\n */\n/* gemm.c: this file is part of PolyBench/C */\n\n#include <stdio.h>\n#include <unistd.h>\n#include <string.h>\n#include <math.h>\n\n/* Include polybench common header. */\n#include <polybench.h>\n\n/* Include benchmark-specific header. */\n#include \"gemm.h\"\n\n\n/* Array initialization. */\nstatic\nvoid init_array(int ni, int nj, int nk,\n\t\tDATA_TYPE *alpha,\n\t\tDATA_TYPE *beta,\n\t\tDATA_TYPE POLYBENCH_2D(C,NI,NJ,ni,nj),\n\t\tDATA_TYPE POLYBENCH_2D(A,NI,NK,ni,nk),\n\t\tDATA_TYPE POLYBENCH_2D(B,NK,NJ,nk,nj))\n{\n  int i, j;\n\n  *alpha = 1.5;\n  *beta = 1.2;\n#pragma omp parallel for private(j) schedule(static)\n  for (i = 0; i < ni; i++)\n    for (j = 0; j < nj; j++)\n      C[i][j] = (DATA_TYPE) ((i*j+1) % ni) / ni;\n#pragma omp parallel for private(j) schedule(static)\n  for (i = 0; i < ni; i++)\n    for (j = 0; j < nk; j++)\n      A[i][j] = (DATA_TYPE) (i*(j+1) % nk) / nk;\n#pragma omp parallel for private(j) schedule(static)\n  for (i = 0; i < nk; i++)\n    for (j = 0; j < nj; j++)\n      B[i][j] = (DATA_TYPE) (i*(j+2) % nj) / nj;\n}\n\n\n/* DCE code. Must scan the entire live-out data.\n   Can be used also to check the correctness of the output. */\nstatic\nvoid print_array(int ni, int nj,\n\t\t DATA_TYPE POLYBENCH_2D(C,NI,NJ,ni,nj))\n{\n  int i, j;\n\n  POLYBENCH_DUMP_START;\n  POLYBENCH_DUMP_BEGIN(\"C\");\n  for (i = 0; i < ni; i++)\n    for (j = 0; j < nj; j++) {\n\tif ((i * ni + j) % 20 == 0) fprintf (POLYBENCH_DUMP_TARGET, \"\\n\");\n\tfprintf (POLYBENCH_DUMP_TARGET, DATA_PRINTF_MODIFIER, C[i][j]);\n    }\n  POLYBENCH_DUMP_END(\"C\");\n  POLYBENCH_DUMP_FINISH;\n}\n\n\n/* Main computational kernel. The whole function will be timed,\n   including the call and return. */\nstatic\nvoid kernel_gemm(int ni, int nj, int nk,\n\t\t DATA_TYPE alpha,\n\t\t DATA_TYPE beta,\n\t\t DATA_TYPE POLYBENCH_2D(C,NI,NJ,ni,nj),\n\t\t DATA_TYPE POLYBENCH_2D(A,NI,NK,ni,nk),\n\t\t DATA_TYPE POLYBENCH_2D(B,NK,NJ,nk,nj))\n{\n  int i, j, k;\n\n//BLAS PARAMS\n//TRANSA = 'N'\n//TRANSB = 'N'\n// => Form C := alpha*A*B + beta*C,\n//A is NIxNK\n//B is NKxNJ\n//C is NIxNJ\n#pragma scop\n#pragma omp parallel for private(j,k) schedule(static)\n  for (i = 0; i < _PB_NI; i++) {\n    for (j = 0; j < _PB_NJ; j++)\n\tC[i][j] *= beta;\n    for (k = 0; k < _PB_NK; k++) {\n       for (j = 0; j < _PB_NJ; j++)\n\t  C[i][j] += alpha * A[i][k] * B[k][j];\n    }\n  }\n#pragma endscop\n\n}\n\n\nint main(int argc, char** argv)\n{\n  /* Retrieve problem size. */\n  int ni = NI;\n  int nj = NJ;\n  int nk = NK;\n\n  /* Variable declaration/allocation. */\n  DATA_TYPE alpha;\n  DATA_TYPE beta;\n  POLYBENCH_2D_ARRAY_DECL(C,DATA_TYPE,NI,NJ,ni,nj);\n  POLYBENCH_2D_ARRAY_DECL(A,DATA_TYPE,NI,NK,ni,nk);\n  POLYBENCH_2D_ARRAY_DECL(B,DATA_TYPE,NK,NJ,nk,nj);\n\n  /* Initialize array(s). */\n  init_array (ni, nj, nk, &alpha, &beta,\n\t      POLYBENCH_ARRAY(C),\n\t      POLYBENCH_ARRAY(A),\n\t      POLYBENCH_ARRAY(B));\n\n  /* Start timer. */\n  polybench_start_instruments;\n\n  /* Run kernel. */\n  kernel_gemm (ni, nj, nk,\n\t       alpha, beta,\n\t       POLYBENCH_ARRAY(C),\n\t       POLYBENCH_ARRAY(A),\n\t       POLYBENCH_ARRAY(B));\n\n  /* Stop and print timer. */\n  polybench_stop_instruments;\n  polybench_print_instruments;\n\n  /* Prevent dead-code elimination. All live-out data must be printed\n     by the function call in argument. */\n  polybench_prevent_dce(print_array(ni, nj,  POLYBENCH_ARRAY(C)));\n\n  /* Be clean. */\n  POLYBENCH_FREE_ARRAY(C);\n  POLYBENCH_FREE_ARRAY(A);\n  POLYBENCH_FREE_ARRAY(B);\n\n  return 0;\n}\n```",
+     "reasoning": "The task: Add OpenMP pragmas to loops that can be safely parallelized. We must only insert lines starting with `#pragma omp`. No other modifications. Need to examine loops:\n\nIn init_array: loops set C, A, B; they are independent. So we can parallelize each outer loop. For i loops, each iteration writes distinct rows; safe. So add pragma before each outer for.\n\nSpecifically:\n\nfor (i = 0; i < ni; i++)\n    for (j = 0; j < nj; j++)\n        C[i][j] = ...\n\nAdd `#pragma omp parallel for private(j) schedule(static)` before outer for. Need private j because loop variable j is local; but it's already declared in outer scope as int i,j; j is shared among threads but each iteration of outer loop will have its own j variable, but j is reused each iteration; OpenMP automatically makes loop index variables private. Since j is not declared inside the for, but is a variable outside, we need to ensure it's private. Usually you list it in private clause. So we add `private(j)`.\n\nSimilarly for A: outer i loop with inner j loop. Add pragma before i loop, private(j).\n\nSimilarly for B: outer i loop over nk with inner j. Add pragma.\n\nNext, print_array: loops printing C. It's for i then for j; writing to output is not thread-safe (multiple threads writing to same file). So we cannot parallelize safely; keep as is.\n\nKernel_gemm: loops:\n\nfor i over NI:\n   for j over NJ: C[i][j] *= beta;\n   for k over NK:\n       for j over NJ: C[i][j] += alpha * A[i][k] * B[k][j];\n\nWe need to see dependencies. The first inner loop multiplies each C[i][j] by beta. Then later loops add contributions. The loops over i are independent (each row). However there is a data race on C[i][j] because first loop writes C[i][j] then later loops read/write same C[i][j] within same i iteration. But if we parallelize outer i loop, each thread works on distinct i, so no race across i. Within each i, there are two sequential parts: first scaling, then accumulation over k. That is fine as they are sequential within same thread. So we can parallelize outer i loop (the whole i loop) with `#pragma omp parallel for private(j,k) schedule(static)` . Since j and k are loop indices, they need private.\n\nBut there is also inner j loop after scaling that could be parallelized across j as well, but that would be nested loops. Simpler to parallelize outer i.\n\nWe need to consider that there are two separate loops inside i: first j loop, then k loop containing j loop. All within same i iteration. Parallelizing outer i is safe.\n\nAdd pragma before for (i = 0; i < _PB_NI; i++) line.\n\nNow also inside kernel there is `#pragma scop` and `#pragma endscop`. We need to place OpenMP pragma after `#pragma scop` maybe before outer loop. Should not interfere. So we add `#pragma omp parallel for private(j,k) schedule(static)` just after `#pragma scop` line.\n\nAlso maybe collapse loops? Not needed.\n\nThus modifications:\n\n- Insert pragma before each outer for in init_array (three times).\n- Insert pragma before outer i loop in kernel_gemm after `#pragma scop`.\n\nMake sure we don't alter any other lines.\n\nLet's write the final file with added pragmas.\n\nNeed to keep formatting, just insert lines.\n\nCheck that we have correct macro names: _PB_NI, _PB_NJ, _PB_NK defined by PolyBench.\n\nAdd `#pragma omp parallel for private(j) schedule(static)` before each outer for.\n\nSimilarly for kernel: `#pragma omp parallel for private(j,k) schedule(static)`.\n\nPotential also need `firstprivate` for alpha, beta? They are scalar shared read-only, fine.\n\nNow produce final code block."
+    },
+    "logprobs": null,
+    "finish_reason": "stop"
+   }
+  ],
+  "usage": {
+   "queue_time": 0.154381305,
+   "prompt_tokens": 1425,
+   "prompt_time": 0.063293157,
+   "completion_tokens": 2105,
+   "completion_time": 4.368812753,
+   "total_tokens": 3530,
+   "total_time": 4.43210591,
+   "completion_tokens_details": {
+    "reasoning_tokens": 852
+   }
+  },
+  "usage_breakdown": null,
+  "system_fingerprint": "fp_c15aa9c1b7",
+  "x_groq": {
+   "id": "req_01m7ra30b5ecfvar54qtqctjq9",
+   "seed": 987324436
+  },
+  "service_tier": "on_demand"
+ }
+}

@@ -1,0 +1,50 @@
+{
+ "provider": "groq",
+ "model": "openai/gpt-oss-120b",
+ "kernel": "medley/nussinov/nussinov.c",
+ "sample": 0,
+ "requested": "2026-11-19T09:58:55.200318+00:00",
+ "outcome": "complete",
+ "temperature": "default",
+ "max_tokens": 32768,
+ "response": {
+  "id": "chatcmpl-0cbe0100-0cc4-47b6-b4f4-4b230ea03f0d",
+  "object": "chat.completion",
+  "created": 1795082339,
+  "model": "openai/gpt-oss-120b",
+  "choices": [
+   {
+    "index": 0,
+    "message": {
+     "role": "assistant",
+     "content": "```c\n/**\n * This version is stamped on May 10, 2016\n *\n * Contact:\n *   Louis-Noel Pouchet <pouchet.ohio-state.edu>\n *   Tomofumi Yuki <tomofumi.yuki.fr>\n *\n * Web address: http://polybench.sourceforge.net\n */\n/* nussinov.c: this file is part of PolyBench/C */\n\n#include <stdio.h>\n#include <unistd.h>\n#include <string.h>\n#include <math.h>\n\n/* Include polybench common header. */\n#include <polybench.h>\n\n/* Include benchmark-specific header. */\n#include \"nussinov.h\"\n\n/* RNA bases represented as chars, range is [0,3] */\ntypedef char base;\n\n#define match(b1, b2) (((b1)+(b2)) == 3 ? 1 : 0)\n#define max_score(s1, s2) ((s1 >= s2) ? s1 : s2)\n\n/* Array initialization. */\nstatic\nvoid init_array (int n,\n                 base POLYBENCH_1D(seq,N,n),\n\t\t DATA_TYPE POLYBENCH_2D(table,N,N,n,n))\n{\n  int i, j;\n\n  //base is AGCT/0..3\n#pragma omp parallel for\n  for (i=0; i <n; i++) {\n     seq[i] = (base)((i+1)%4);\n  }\n\n#pragma omp parallel for collapse(2)\n  for (i=0; i <n; i++)\n     for (j=0; j <n; j++)\n       table[i][j] = 0;\n}\n\n\n/* DCE code. Must scan the entire live-out data.\n   Can be used also to check the correctness of the output. */\nstatic\nvoid print_array(int n,\n\t\t DATA_TYPE POLYBENCH_2D(table,N,N,n,n))\n\n{\n  int i, j;\n  int t = 0;\n\n  POLYBENCH_DUMP_START;\n  POLYBENCH_DUMP_BEGIN(\"table\");\n  for (i = 0; i < n; i++) {\n    for (j = i; j < n; j++) {\n      if (t % 20 == 0) fprintf (POLYBENCH_DUMP_TARGET, \"\\n\");\n      fprintf (POLYBENCH_DUMP_TARGET, DATA_PRINTF_MODIFIER, table[i][j]);\n      t++;\n    }\n  }\n  POLYBENCH_DUMP_END(\"table\");\n  POLYBENCH_DUMP_FINISH;\n}\n\n\n/* Main computational kernel. The whole function will be timed,\n   including the call and return. */\n/*\n  Original version by Dave Wonnacott at Haverford College <davew@cs.haverford.edu>,\n  with help from Allison Lake, Ting Zhou, and Tian Jin,\n  based on algorithm by Nussinov, described in Allison Lake's senior thesis.\n*/\nstatic\nvoid kernel_nussinov(int n, base POLYBENCH_1D(seq,N,n),\n\t\t\t   DATA_TYPE POLYBENCH_2D(table,N,N,n,n))\n{\n  int i, j, k;\n\n#pragma scop\n for (i = _PB_N-1; i >= 0; i--) {\n  for (j=i+1; j<_PB_N; j++) {\n\n   if (j-1>=0)\n      table[i][j] = max_score(table[i][j], table[i][j-1]);\n   if (i+1<_PB_N)\n      table[i][j] = max_score(table[i][j], table[i+1][j]);\n\n   if (j-1>=0 && i+1<_PB_N) {\n     /* don't allow adjacent elements to bond */\n     if (i<j-1)\n        table[i][j] = max_score(table[i][j], table[i+1][j-1]+match(seq[i], seq[j]));\n     else\n        table[i][j] = max_score(table[i][j], table[i+1][j-1]);\n   }\n\n   for (k=i+1; k<j; k++) {\n      table[i][j] = max_score(table[i][j], table[i][k] + table[k+1][j]);\n   }\n  }\n }\n#pragma endscop\n\n}\n\n\nint main(int argc, char** argv)\n{\n  /* Retrieve problem size. */\n  int n = N;\n\n  /* Variable declaration/alocation. */\n  POLYBENCH_1D_ARRAY_DECL(seq, base, N, n);\n  POLYBENCH_2D_ARRAY_DECL(table, DATA_TYPE, N, N, n, n);\n\n  /* Initialize array(s). */\n  init_array (n, POLYBENCH_ARRAY(seq), POLYBENCH_ARRAY(table));\n\n  /* Start timer. */\n  polybench_start_instruments;\n\n  /* Run kernel. */\n  kernel_nussinov (n, POLYBENCH_ARRAY(seq), POLYBENCH_ARRAY(table));\n\n  /* Stop and print timer. */\n  polybench_stop_instruments;\n  polybench_print_instruments;\n\n  /* Prevent dead-code elimination. All live-out data must be printed\n     by the function call in argument. */\n  polybench_prevent_dce(print_array(n, POLYBENCH_ARRAY(table)));\n\n  /* Be clean. */\n  POLYBENCH_FREE_ARRAY(seq);\n  POLYBENCH_FREE_ARRAY(table);\n\n  return 0;\n}\n```",
+     "reasoning": "We need to add OpenMP pragmas to loops that can safely be parallelized without changing results. Must only insert lines starting with \"#pragma omp\". No code changes else.\n\nWe have loops:\n\n- init_array: first loop over i for seq initialization: independent, can parallelize. Second nested loops for table zeroing: i and j independent; can parallelize outer loop with collapse? We can add \"#pragma omp parallel for collapse(2)\" before outer loop, but need to ensure that POLYBENCH macros may not support? It's fine.\n\n- print_array: loops over i and j for output; output order matters for correctness (printing order). Parallelizing may change output order, which could be considered change in program's results (printing). Should not parallelize.\n\n- kernel_nussinov: loops are nested with dependencies across i and j and k. This algorithm processes dynamic programming over anti-diagonals; cannot parallelize naive i loop because later iterations depend on earlier ones. But perhaps we could parallelize inner k loop for each (i,j) as independent reductions? The inner loop updates table[i][j] using max of previous value and table[i][k]+table[k+1][j]. Since table[i][j] is being updated multiple times in same iteration, parallelizing k would require reduction with max. That could be done: use private variable to compute best and then assign. However current code updates table[i][j] each iteration using max_score. Parallelizing k with reduction could be safe if we compute local max and then assign after loop. But they are directly updating table[i][j] which is shared; race condition. We cannot just add pragma without altering code. So we must leave kernel loops unchanged.\n\n- Any other loops? In main there are none.\n\nThus we will add pragmas to init_array loops.\n\nNeed to add \"#pragma omp parallel for\" before first for (i=0; i < n; i++) in init_array.\n\nSimilarly for double loop: we could add \"#pragma omp parallel for collapse(2)\" before outer for (i=0; i < n; i++) to parallelize both dimensions.\n\nCheck macro definitions: POLYBENCH_2D(table,N,N,n,n) expands to pointer, but fine.\n\nWe must ensure we add after opening brace of function? Must insert line before loops.\n\nWe cannot modify indentation? The rule says do not reformat existing lines, but inserting new line is okay; indentation may not match but it's fine.\n\nThus final file with added pragmas.\n\nLet's produce final code block."
+    },
+    "logprobs": null,
+    "finish_reason": "stop"
+   }
+  ],
+  "usage": {
+   "queue_time": 0.367899791,
+   "prompt_tokens": 1344,
+   "prompt_time": 0.158385917,
+   "completion_tokens": 1669,
+   "completion_time": 3.802799206,
+   "total_tokens": 3013,
+   "total_time": 3.961185123,
+   "prompt_tokens_details": {
+    "cached_tokens": 256
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 525
+   }
+  },
+  "usage_breakdown": null,
+  "system_fingerprint": "fp_b1dd3e7a63",
+  "x_groq": {
+   "id": "req_01m7skxd42edtvctmv04kwdtd5",
+   "seed": 242233128
+  },
+  "service_tier": "on_demand"
+ }
+}

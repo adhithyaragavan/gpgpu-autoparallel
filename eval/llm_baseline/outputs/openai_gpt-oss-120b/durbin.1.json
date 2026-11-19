@@ -1,0 +1,49 @@
+{
+ "provider": "groq",
+ "model": "openai/gpt-oss-120b",
+ "kernel": "linear-algebra/solvers/durbin/durbin.c",
+ "sample": 1,
+ "requested": "2026-11-18T22:05:28.870934+00:00",
+ "outcome": "complete",
+ "temperature": "default",
+ "response": {
+  "id": "chatcmpl-b478ff23-c2c1-4b69-9506-9bef5984eca4",
+  "object": "chat.completion",
+  "created": 1795039547,
+  "model": "openai/gpt-oss-120b",
+  "choices": [
+   {
+    "index": 0,
+    "message": {
+     "role": "assistant",
+     "content": "```c\n/**\n * This version is stamped on May 10, 2016\n *\n * Contact:\n *   Louis-Noel Pouchet <pouchet.ohio-state.edu>\n *   Tomofumi Yuki <tomofumi.yuki.fr>\n *\n * Web address: http://polybench.sourceforge.net\n */\n/* durbin.c: this file is part of PolyBench/C */\n\n#include <stdio.h>\n#include <unistd.h>\n#include <string.h>\n#include <math.h>\n\n/* Include polybench common header. */\n#include <polybench.h>\n\n/* Include benchmark-specific header. */\n#include \"durbin.h\"\n\n\n/* Array initialization. */\nstatic\nvoid init_array (int n,\n\t\t DATA_TYPE POLYBENCH_1D(r,N,n))\n{\n  int i, j;\n\n#pragma omp parallel for\n  for (i = 0; i < n; i++)\n    {\n      r[i] = (n+1-i);\n    }\n}\n\n\n/* DCE code. Must scan the entire live-out data.\n   Can be used also to check the correctness of the output. */\nstatic\nvoid print_array(int n,\n\t\t DATA_TYPE POLYBENCH_1D(y,N,n))\n\n{\n  int i;\n\n  POLYBENCH_DUMP_START;\n  POLYBENCH_DUMP_BEGIN(\"y\");\n  for (i = 0; i < n; i++) {\n    if (i % 20 == 0) fprintf (POLYBENCH_DUMP_TARGET, \"\\n\");\n    fprintf (POLYBENCH_DUMP_TARGET, DATA_PRINTF_MODIFIER, y[i]);\n  }\n  POLYBENCH_DUMP_END(\"y\");\n  POLYBENCH_DUMP_FINISH;\n}\n\n\n/* Main computational kernel. The whole function will be timed,\n   including the call and return. */\nstatic\nvoid kernel_durbin(int n,\n\t\t   DATA_TYPE POLYBENCH_1D(r,N,n),\n\t\t   DATA_TYPE POLYBENCH_1D(y,N,n))\n{\n DATA_TYPE z[N];\n DATA_TYPE alpha;\n DATA_TYPE beta;\n DATA_TYPE sum;\n\n int i,k;\n\n#pragma scop\n y[0] = -r[0];\n beta = SCALAR_VAL(1.0);\n alpha = -r[0];\n\n for (k = 1; k < _PB_N; k++) {\n   beta = (1-alpha*alpha)*beta;\n   sum = SCALAR_VAL(0.0);\n#pragma omp parallel for reduction(+:sum)\n   for (i=0; i<k; i++) {\n      sum += r[k-i-1]*y[i];\n   }\n   alpha = - (r[k] + sum)/beta;\n\n#pragma omp parallel for\n   for (i=0; i<k; i++) {\n      z[i] = y[i] + alpha*y[k-i-1];\n   }\n#pragma omp parallel for\n   for (i=0; i<k; i++) {\n     y[i] = z[i];\n   }\n   y[k] = alpha;\n }\n#pragma endscop\n\n}\n\n\nint main(int argc, char** argv)\n{\n  /* Retrieve problem size. */\n  int n = N;\n\n  /* Variable declaration/allocation. */\n  POLYBENCH_1D_ARRAY_DECL(r, DATA_TYPE, N, n);\n  POLYBENCH_1D_ARRAY_DECL(y, DATA_TYPE, N, n);\n\n\n  /* Initialize array(s). */\n  init_array (n, POLYBENCH_ARRAY(r));\n\n  /* Start timer. */\n  polybench_start_instruments;\n\n  /* Run kernel. */\n  kernel_durbin (n,\n\t\t POLYBENCH_ARRAY(r),\n\t\t POLYBENCH_ARRAY(y));\n\n  /* Stop and print timer. */\n  polybench_stop_instruments;\n  polybench_print_instruments;\n\n  /* Prevent dead-code elimination. All live-out data must be printed\n     by the function call in argument. */\n  polybench_prevent_dce(print_array(n, POLYBENCH_ARRAY(y)));\n\n  /* Be clean. */\n  POLYBENCH_FREE_ARRAY(r);\n  POLYBENCH_FREE_ARRAY(y);\n\n  return 0;\n}\n```",
+     "reasoning": "We need to add #pragma omp parallel for directives to loops that can be safely parallelized without changing results.\n\nWe have loops:\n\n1. init_array: for i = 0; i < n; i++ { r[i] = (n+1-i); } This loop writes each element independent, can parallelize. Use #pragma omp parallel for\n\n2. print_array: for i=0; i < n; i++ { ... } This prints in order; parallelizing may change order of output, so we should not parallelize because output order matters. So leave no pragma.\n\n3. kernel_durbin: Contains loops inside outer loop over k. The outer loop has dependencies: each iteration updates y and uses previous y values. So cannot parallelize outer loop. However inner loops inside each iteration:\n\n- sum = 0; for i=0; i<k; i++ { sum += r[k-i-1]*y[i]; } This sum reduction across i; can be parallelized with reduction(+:sum). However note that sum depends on y[i] which are from previous iteration of k, but within given k iteration it's okay. Parallelizing this inner loop with reduction is safe.\n\n- for (i=0; i<k; i++) { z[i] = y[i] + alpha*y[k-i-1]; } This writes to distinct z[i]; reads y[] (old). No dependency across i, can parallelize. Use private(i) by default.\n\n- for (i=0; i<k; i++) { y[i] = z[i]; } This writes back to y[i]; reads from z[i] which were computed earlier in same iteration. Since each i independent, can parallelize.\n\nPotential issue: The loop bound k changes each iteration, but we are only parallelizing inner loops inside each iteration, which is fine.\n\nAdd pragmas before those loops. Need to ensure we are inside #pragma scop ... #pragma endscop region. That's fine.\n\nWe need to add any necessary clauses: for sum reduction, we need reduction(+:sum). Also need to ensure sum is a scalar variable; we also need maybe private(i) but default is private for loop index. Also need to ensure alpha, beta, etc not shared incorrectly. Inside inner loops they read alpha and y; alpha is scalar computed earlier in same iteration, shared across threads but not modified inside loop, okay.\n\nAdd #pragma omp parallel for reduction(+:sum) schedule? Not needed.\n\nAdd #pragma omp parallel for before z[i] loop.\n\nAdd #pragma omp parallel for before y[i] = z[i] loop.\n\nAlso add #pragma omp parallel for before init_array.\n\nMake sure not to add after variable declarations interfering. Insert directly before loops.\n\nWe need to not modify other lines.\n\nLet's produce final file with added pragmas.\n\nCheck indentation: just add line starting with #pragma omp... exactly before loop.\n\nIn init_array function:\n\nfor (i = 0; i < n; i++) { ... } Add pragma before that.\n\nIn kernel_durbin:\n\nfor (k = 1; k < _PB_N; k++) { ... } not parallel.\n\nInside that:\n\nsum = 0; for (i=0; i<k; i++) { sum += ... } Add pragma before that loop.\n\nThen after that, alpha computed.\n\nThen for (i=0; i<k; i++) { z[i] = ... } Add pragma.\n\nThen for (i=0; i<k; i++) { y[i] = z[i]; } Add pragma.\n\nPotential issue: The first inner loop uses sum variable that is updated inside loop. Use reduction.\n\nAdd:\n\n#pragma omp parallel for reduction(+:sum) private(i) // but private(i) default.\n\nOk.\n\nSecond inner loop:\n\n#pragma omp parallel for private(i) // default.\n\nThird inner loop:\n\n#pragma omp parallel for\n\nNow produce final file."
+    },
+    "logprobs": null,
+    "finish_reason": "stop"
+   }
+  ],
+  "usage": {
+   "queue_time": 0.050320608,
+   "prompt_tokens": 1058,
+   "prompt_time": 0.051836979,
+   "completion_tokens": 1679,
+   "completion_time": 3.5011081600000002,
+   "total_tokens": 2737,
+   "total_time": 3.552945139,
+   "prompt_tokens_details": {
+    "cached_tokens": 256
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 810
+   }
+  },
+  "usage_breakdown": null,
+  "system_fingerprint": "fp_7a4ab09ae4",
+  "x_groq": {
+   "id": "req_01m7rb3gvke6w9bb2ctd414qr2",
+   "seed": 450539564
+  },
+  "service_tier": "on_demand"
+ }
+}

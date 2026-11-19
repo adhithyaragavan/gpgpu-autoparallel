@@ -1,0 +1,47 @@
+{
+ "provider": "groq",
+ "model": "openai/gpt-oss-120b",
+ "kernel": "medley/nussinov/nussinov.c",
+ "sample": 2,
+ "requested": "2026-11-19T09:59:40.445803+00:00",
+ "outcome": "complete",
+ "temperature": "default",
+ "max_tokens": 32768,
+ "response": {
+  "id": "chatcmpl-363d3a4a-ed2f-4628-b24d-73216c09331e",
+  "object": "chat.completion",
+  "created": 1795082399,
+  "model": "openai/gpt-oss-120b",
+  "choices": [
+   {
+    "index": 0,
+    "message": {
+     "role": "assistant",
+     "content": "```c\n/**\n * This version is stamped on May 10, 2016\n *\n * Contact:\n *   Louis-Noel Pouchet <pouchet.ohio-state.edu>\n *   Tomofumi Yuki <tomofumi.yuki.fr>\n *\n * Web address: http://polybench.sourceforge.net\n */\n/* nussinov.c: this file is part of PolyBench/C */\n\n#include <stdio.h>\n#include <unistd.h>\n#include <string.h>\n#include <math.h>\n\n/* Include polybench common header. */\n#include <polybench.h>\n\n/* Include benchmark-specific header. */\n#include \"nussinov.h\"\n\n/* RNA bases represented as chars, range is [0,3] */\ntypedef char base;\n\n#define match(b1, b2) (((b1)+(b2)) == 3 ? 1 : 0)\n#define max_score(s1, s2) ((s1 >= s2) ? s1 : s2)\n\n/* Array initialization. */\nstatic\nvoid init_array (int n,\n                 base POLYBENCH_1D(seq,N,n),\n\t\t DATA_TYPE POLYBENCH_2D(table,N,N,n,n))\n{\n  int i, j;\n\n  //base is AGCT/0..3\n#pragma omp parallel for\n  for (i=0; i <n; i++) {\n     seq[i] = (base)((i+1)%4);\n  }\n\n#pragma omp parallel for\n  for (i=0; i <n; i++)\n     for (j=0; j <n; j++)\n       table[i][j] = 0;\n}\n\n\n/* DCE code. Must scan the entire live-out data.\n   Can be used also to check the correctness of the output. */\nstatic\nvoid print_array(int n,\n\t\t DATA_TYPE POLYBENCH_2D(table,N,N,n,n))\n\n{\n  int i, j;\n  int t = 0;\n\n  POLYBENCH_DUMP_START;\n  POLYBENCH_DUMP_BEGIN(\"table\");\n  for (i = 0; i < n; i++) {\n    for (j = i; j < n; j++) {\n      if (t % 20 == 0) fprintf (POLYBENCH_DUMP_TARGET, \"\\n\");\n      fprintf (POLYBENCH_DUMP_TARGET, DATA_PRINTF_MODIFIER, table[i][j]);\n      t++;\n    }\n  }\n  POLYBENCH_DUMP_END(\"table\");\n  POLYBENCH_DUMP_FINISH;\n}\n\n\n/* Main computational kernel. The whole function will be timed,\n   including the call and return. */\n/*\n  Original version by Dave Wonnacott at Haverford College <davew@cs.haverford.edu>,\n  with help from Allison Lake, Ting Zhou, and Tian Jin,\n  based on algorithm by Nussinov, described in Allison Lake's senior thesis.\n*/\nstatic\nvoid kernel_nussinov(int n, base POLYBENCH_1D(seq,N,n),\n\t\t\t   DATA_TYPE POLYBENCH_2D(table,N,N,n,n))\n{\n  int i, j, k;\n\n#pragma scop\n for (i = _PB_N-1; i >= 0; i--) {\n  for (j=i+1; j<_PB_N; j++) {\n\n   if (j-1>=0)\n      table[i][j] = max_score(table[i][j], table[i][j-1]);\n   if (i+1<_PB_N)\n      table[i][j] = max_score(table[i][j], table[i+1][j]);\n\n   if (j-1>=0 && i+1<_PB_N) {\n     /* don't allow adjacent elements to bond */\n     if (i<j-1)\n        table[i][j] = max_score(table[i][j], table[i+1][j-1]+match(seq[i], seq[j]));\n     else\n        table[i][j] = max_score(table[i][j], table[i+1][j-1]);\n   }\n\n   for (k=i+1; k<j; k++) {\n      table[i][j] = max_score(table[i][j], table[i][k] + table[k+1][j]);\n   }\n  }\n }\n#pragma endscop\n\n}\n\n\nint main(int argc, char** argv)\n{\n  /* Retrieve problem size. */\n  int n = N;\n\n  /* Variable declaration/alocation. */\n  POLYBENCH_1D_ARRAY_DECL(seq, base, N, n);\n  POLYBENCH_2D_ARRAY_DECL(table, DATA_TYPE, N, N, n, n);\n\n  /* Initialize array(s). */\n  init_array (n, POLYBENCH_ARRAY(seq), POLYBENCH_ARRAY(table));\n\n  /* Start timer. */\n  polybench_start_instruments;\n\n  /* Run kernel. */\n  kernel_nussinov (n, POLYBENCH_ARRAY(seq), POLYBENCH_ARRAY(table));\n\n  /* Stop and print timer. */\n  polybench_stop_instruments;\n  polybench_print_instruments;\n\n  /* Prevent dead-code elimination. All live-out data must be printed\n     by the function call in argument. */\n  polybench_prevent_dce(print_array(n, POLYBENCH_ARRAY(table)));\n\n  /* Be clean. */\n  POLYBENCH_FREE_ARRAY(seq);\n  POLYBENCH_FREE_ARRAY(table);\n\n  return 0;\n}\n```\n",
+     "reasoning": "We need to add #pragma omp parallel for directives to loops that can be safely parallelized. Must not change code otherwise.\n\nWe have loops:\n\n1. init_array: first loop over i to fill seq. Independent writes to seq[i]; no dependencies. So can parallelize. Need `#pragma omp parallel for` before that loop. It's a simple for i from 0 to n-1. No reduction, no private needed. Use default.\n\n2. second nested loops initializing table to zero: outer i loop, inner j loop. Could parallelize outer i loop with inner loop inside; but each iteration writes to table[i][j] distinct rows, no overlap. Use `#pragma omp parallel for collapse(2)`? Could also just parallel for outer i, inner sequential. Simpler: `#pragma omp parallel for` before outer i; inner remains. That works.\n\n3. print_array: loops for printing are for i, then j from i to n-1, and writes to output only, not affecting data. Parallelizing could change order of printing, which would change results (output order). So we should NOT parallelize.\n\n4. kernel_nussinov: loops nested with dependencies: outer i decreasing, inner j increasing; there are data dependencies across i and j (table values). Likely cannot parallelize naive loops. However maybe inner most k loop can be parallelized? The k loop computes max over k using previous values table[i][k] and table[k+1][j] which are already computed earlier? Since i is outermost, and j inner, for each (i,j) we compute using values where i <= k < j, and k+1 > i. Those dependencies are within same i level but across k. However they are reads only, and updating table[i][j] is reduction-like max across k. The loop updates table[i][j] = max_score(table[i][j], table[i][k] + table[k+1][j]); This is a reduction over k with max. Could parallelize using reduction(max: ) but OpenMP reduction for max is supported for C? Since OpenMP supports reduction operators like max for built-in types, but need to specify `reduction(max:tmp)`. However table[i][j] is being updated in each iteration; reduction would require a temporary variable. Simpler to not parallelize due to complexity.\n\nThus only parallelize init loops.\n\nAdd pragma lines exactly before loops.\n\nNeed to ensure proper syntax: place pragma before for statements, line starts with #pragma omp parallel for\n\nPotential need of `schedule(static)` not required.\n\nFor nested initialization second loop: we can add `#pragma omp parallel for` before outer i.\n\nAdd before first for in init_array (i loop). Also before second outer i loop.\n\nLet's produce modified file.\n\nBe careful to keep line numbers; just insert new lines.\n\nLet's craft final code.\n\n"
+    },
+    "logprobs": null,
+    "finish_reason": "stop"
+   }
+  ],
+  "usage": {
+   "queue_time": 0.318559933,
+   "prompt_tokens": 1344,
+   "prompt_time": 0.055171826,
+   "completion_tokens": 1739,
+   "completion_time": 3.609303772,
+   "total_tokens": 3083,
+   "total_time": 3.664475598,
+   "completion_tokens_details": {
+    "reasoning_tokens": 597
+   }
+  },
+  "usage_breakdown": null,
+  "system_fingerprint": "fp_4200b3f836",
+  "x_groq": {
+   "id": "req_01m7skz85we6xbmrsszbmsn8aj",
+   "seed": 105371382
+  },
+  "service_tier": "on_demand"
+ }
+}

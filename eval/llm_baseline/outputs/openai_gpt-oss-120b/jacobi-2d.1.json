@@ -1,0 +1,47 @@
+{
+ "provider": "groq",
+ "model": "openai/gpt-oss-120b",
+ "kernel": "stencils/jacobi-2d/jacobi-2d.c",
+ "sample": 1,
+ "requested": "2026-11-19T12:41:08.671277+00:00",
+ "outcome": "complete",
+ "temperature": "default",
+ "max_tokens": 32768,
+ "response": {
+  "id": "chatcmpl-1a249448-3845-43a0-aaa1-7bdd9ce88942",
+  "object": "chat.completion",
+  "created": 1795092072,
+  "model": "openai/gpt-oss-120b",
+  "choices": [
+   {
+    "index": 0,
+    "message": {
+     "role": "assistant",
+     "content": "```c\n/**\n * This version is stamped on May 10, 2016\n *\n * Contact:\n *   Louis-Noel Pouchet <pouchet.ohio-state.edu>\n *   Tomofumi Yuki <tomofumi.yuki.fr>\n *\n * Web address: http://polybench.sourceforge.net\n */\n/* jacobi-2d.c: this file is part of PolyBench/C */\n\n#include <stdio.h>\n#include <unistd.h>\n#include <string.h>\n#include <math.h>\n\n/* Include polybench common header. */\n#include <polybench.h>\n\n/* Include benchmark-specific header. */\n#include \"jacobi-2d.h\"\n\n\n/* Array initialization. */\nstatic\nvoid init_array (int n,\n\t\t DATA_TYPE POLYBENCH_2D(A,N,N,n,n),\n\t\t DATA_TYPE POLYBENCH_2D(B,N,N,n,n))\n{\n  int i, j;\n\n#pragma omp parallel for collapse(2)\n  for (i = 0; i < n; i++)\n    for (j = 0; j < n; j++)\n      {\n\tA[i][j] = ((DATA_TYPE) i*(j+2) + 2) / n;\n\tB[i][j] = ((DATA_TYPE) i*(j+3) + 3) / n;\n      }\n}\n\n\n/* DCE code. Must scan the entire live-out data.\n   Can be used also to check the correctness of the output. */\nstatic\nvoid print_array(int n,\n\t\t DATA_TYPE POLYBENCH_2D(A,N,N,n,n))\n\n{\n  int i, j;\n\n  POLYBENCH_DUMP_START;\n  POLYBENCH_DUMP_BEGIN(\"A\");\n  for (i = 0; i < n; i++)\n    for (j = 0; j < n; j++) {\n      if ((i * n + j) % 20 == 0) fprintf(POLYBENCH_DUMP_TARGET, \"\\n\");\n      fprintf(POLYBENCH_DUMP_TARGET, DATA_PRINTF_MODIFIER, A[i][j]);\n    }\n  POLYBENCH_DUMP_END(\"A\");\n  POLYBENCH_DUMP_FINISH;\n}\n\n\n/* Main computational kernel. The whole function will be timed,\n   including the call and return. */\nstatic\nvoid kernel_jacobi_2d(int tsteps,\n\t\t\t    int n,\n\t\t\t    DATA_TYPE POLYBENCH_2D(A,N,N,n,n),\n\t\t\t    DATA_TYPE POLYBENCH_2D(B,N,N,n,n))\n{\n  int t, i, j;\n\n#pragma scop\n  for (t = 0; t < _PB_TSTEPS; t++)\n    {\n#pragma omp parallel for collapse(2)\n      for (i = 1; i < _PB_N - 1; i++)\n\tfor (j = 1; j < _PB_N - 1; j++)\n\t  B[i][j] = SCALAR_VAL(0.2) * (A[i][j] + A[i][j-1] + A[i][1+j] + A[1+i][j] + A[i-1][j]);\n#pragma omp parallel for collapse(2)\n      for (i = 1; i < _PB_N - 1; i++)\n\tfor (j = 1; j < _PB_N - 1; j++)\n\t  A[i][j] = SCALAR_VAL(0.2) * (B[i][j] + B[i][j-1] + B[i][1+j] + B[1+i][j] + B[i-1][j]);\n    }\n#pragma endscop\n\n}\n\n\nint main(int argc, char** argv)\n{\n  /* Retrieve problem size. */\n  int n = N;\n  int tsteps = TSTEPS;\n\n  /* Variable declaration/allocation. */\n  POLYBENCH_2D_ARRAY_DECL(A, DATA_TYPE, N, N, n, n);\n  POLYBENCH_2D_ARRAY_DECL(B, DATA_TYPE, N, N, n, n);\n\n\n  /* Initialize array(s). */\n  init_array (n, POLYBENCH_ARRAY(A), POLYBENCH_ARRAY(B));\n\n  /* Start timer. */\n  polybench_start_instruments;\n\n  /* Run kernel. */\n  kernel_jacobi_2d(tsteps, n, POLYBENCH_ARRAY(A), POLYBENCH_ARRAY(B));\n\n  /* Stop and print timer. */\n  polybench_stop_instruments;\n  polybench_print_instruments;\n\n  /* Prevent dead-code elimination. All live-out data must be printed\n     by the function call in argument. */\n  polybench_prevent_dce(print_array(n, POLYBENCH_ARRAY(A)));\n\n  /* Be clean. */\n  POLYBENCH_FREE_ARRAY(A);\n  POLYBENCH_FREE_ARRAY(B);\n\n  return 0;\n}\n```\n",
+     "reasoning": "We need to add #pragma omp parallel for to every loop that can safely be parallelized. Must not change other lines.\n\nWe have loops:\n\n- init_array: double nested loop, writing to A[i][j] and B[i][j] independent across i,j. Can parallelize outer loop with collapse? Both i and j independent. Use #pragma omp parallel for collapse(2) private(i,j) maybe not needed. But we must add directive before outer loop. Add \"#pragma omp parallel for collapse(2)\" before \"for (i = 0; i < n; i++)\". Also need private i j but loop variables are private by default. So just add pragma.\n\n- print_array: loops reading A, printing; printing is not thread-safe (stdout). Changing order may affect output. Should not parallelize because printing order matters. So leave unchanged.\n\n- kernel_jacobi_2d: inside #pragma scop region, loops: outer t loop, then inner loops computing B then A. The loops have dependencies across t (time steps) and also the first inner loop writes B based on A of same time step; second inner loop writes A based on B of same step. Within each t iteration, the two inner loops can be parallelized over i,j because each iteration writes distinct B[i][j] using only A from previous state, and second loop writes A using B. However there is dependence across i/j? Not across i/j. So we can parallelize each inner double loop with collapse(2). However need to ensure that the two loops are sequential: they are separate loops. So we can add pragma before each inner double loop.\n\nAlso outer t loop cannot be parallel because each step depends on previous step results (A,B updated). So leave sequential.\n\nThus we add:\n\n#pragma omp parallel for collapse(2) schedule(static) before first inner double loop.\n\nSimilarly before second.\n\nAlso maybe need to add private(i,j) but not required.\n\nAdd after \"#pragma scop\" maybe line after for (t...). Actually we need pragma before the for(i...). So we insert:\n\n#pragma omp parallel for collapse(2)\nfor (i = 1; i < _PB_N - 1; i++)\n\nSimilarly for second.\n\nNote that we must not modify existing lines; just insert pragma lines.\n\nAlso for init_array: before outer for.\n\nEdge: ensure we place pragma before the loop line, not after.\n\nNow produce final code block.\n\n"
+    },
+    "logprobs": null,
+    "finish_reason": "stop"
+   }
+  ],
+  "usage": {
+   "queue_time": 0.288199261,
+   "prompt_tokens": 1214,
+   "prompt_time": 0.061099948,
+   "completion_tokens": 1528,
+   "completion_time": 3.184542778,
+   "total_tokens": 2742,
+   "total_time": 3.245642726,
+   "completion_tokens_details": {
+    "reasoning_tokens": 502
+   }
+  },
+  "usage_breakdown": null,
+  "system_fingerprint": "fp_c800245357",
+  "x_groq": {
+   "id": "req_01m7sx6egxeqfsn6sntx7vptcz",
+   "seed": 1937249398
+  },
+  "service_tier": "on_demand"
+ }
+}

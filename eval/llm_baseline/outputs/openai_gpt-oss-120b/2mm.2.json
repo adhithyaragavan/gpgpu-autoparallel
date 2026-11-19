@@ -1,0 +1,49 @@
+{
+ "provider": "groq",
+ "model": "openai/gpt-oss-120b",
+ "kernel": "linear-algebra/kernels/2mm/2mm.c",
+ "sample": 2,
+ "requested": "2026-11-18T21:57:14.028892+00:00",
+ "outcome": "complete",
+ "temperature": "default",
+ "response": {
+  "id": "chatcmpl-1af111cf-fa56-4116-a759-1ca1ff72a23f",
+  "object": "chat.completion",
+  "created": 1795039056,
+  "model": "openai/gpt-oss-120b",
+  "choices": [
+   {
+    "index": 0,
+    "message": {
+     "role": "assistant",
+     "content": "```c\n/**\n * This version is stamped on May 10, 2016\n *\n * Contact:\n *   Louis-Noel Pouchet <pouchet.ohio-state.edu>\n *   Tomofumi Yuki <tomofumi.yuki.fr>\n *\n * Web address: http://polybench.sourceforge.net\n */\n/* 2mm.c: this file is part of PolyBench/C */\n\n#include <stdio.h>\n#include <unistd.h>\n#include <string.h>\n#include <math.h>\n\n/* Include polybench common header. */\n#include <polybench.h>\n\n/* Include benchmark-specific header. */\n#include \"2mm.h\"\n\n\n/* Array initialization. */\nstatic\nvoid init_array(int ni, int nj, int nk, int nl,\n\t\tDATA_TYPE *alpha,\n\t\tDATA_TYPE *beta,\n\t\tDATA_TYPE POLYBENCH_2D(A,NI,NK,ni,nk),\n\t\tDATA_TYPE POLYBENCH_2D(B,NK,NJ,nk,nj),\n\t\tDATA_TYPE POLYBENCH_2D(C,NJ,NL,nj,nl),\n\t\tDATA_TYPE POLYBENCH_2D(D,NI,NL,ni,nl))\n{\n  int i, j;\n\n  *alpha = 1.5;\n  *beta = 1.2;\n#pragma omp parallel for private(j)\n  for (i = 0; i < ni; i++)\n    for (j = 0; j < nk; j++)\n      A[i][j] = (DATA_TYPE) ((i*j+1) % ni) / ni;\n#pragma omp parallel for private(j)\n  for (i = 0; i < nk; i++)\n    for (j = 0; j < nj; j++)\n      B[i][j] = (DATA_TYPE) (i*(j+1) % nj) / nj;\n#pragma omp parallel for private(j)\n  for (i = 0; i < nj; i++)\n    for (j = 0; j < nl; j++)\n      C[i][j] = (DATA_TYPE) ((i*(j+3)+1) % nl) / nl;\n#pragma omp parallel for private(j)\n  for (i = 0; i < ni; i++)\n    for (j = 0; j < nl; j++)\n      D[i][j] = (DATA_TYPE) (i*(j+2) % nk) / nk;\n}\n\n\n/* DCE code. Must scan the entire live-out data.\n   Can be used also to check the correctness of the output. */\nstatic\nvoid print_array(int ni, int nl,\n\t\t DATA_TYPE POLYBENCH_2D(D,NI,NL,ni,nl))\n{\n  int i, j;\n\n  POLYBENCH_DUMP_START;\n  POLYBENCH_DUMP_BEGIN(\"D\");\n  for (i = 0; i < ni; i++)\n    for (j = 0; j < nl; j++) {\n\tif ((i * ni + j) % 20 == 0) fprintf (POLYBENCH_DUMP_TARGET, \"\\n\");\n\tfprintf (POLYBENCH_DUMP_TARGET, DATA_PRINTF_MODIFIER, D[i][j]);\n    }\n  POLYBENCH_DUMP_END(\"D\");\n  POLYBENCH_DUMP_FINISH;\n}\n\n\n/* Main computational kernel. The whole function will be timed,\n   including the call and return. */\nstatic\nvoid kernel_2mm(int ni, int nj, int nk, int nl,\n\t\tDATA_TYPE alpha,\n\t\tDATA_TYPE beta,\n\t\tDATA_TYPE POLYBENCH_2D(tmp,NI,NJ,ni,nj),\n\t\tDATA_TYPE POLYBENCH_2D(A,NI,NK,ni,nk),\n\t\tDATA_TYPE POLYBENCH_2D(B,NK,NJ,nk,nj),\n\t\tDATA_TYPE POLYBENCH_2D(C,NJ,NL,nj,nl),\n\t\tDATA_TYPE POLYBENCH_2D(D,NI,NL,ni,nl))\n{\n  int i, j, k;\n\n#pragma scop\n  /* D := alpha*A*B*C + beta*D */\n#pragma omp parallel for private(j,k)\n  for (i = 0; i < _PB_NI; i++)\n    for (j = 0; j < _PB_NJ; j++)\n      {\n\ttmp[i][j] = SCALAR_VAL(0.0);\n\tfor (k = 0; k < _PB_NK; ++k)\n\t  tmp[i][j] += alpha * A[i][k] * B[k][j];\n      }\n#pragma omp parallel for private(j,k)\n  for (i = 0; i < _PB_NI; i++)\n    for (j = 0; j < _PB_NL; j++)\n      {\n\tD[i][j] *= beta;\n\tfor (k = 0; k < _PB_NJ; ++k)\n\t  D[i][j] += tmp[i][k] * C[k][j];\n      }\n#pragma endscop\n\n}\n\n\nint main(int argc, char** argv)\n{\n  /* Retrieve problem size. */\n  int ni = NI;\n  int nj = NJ;\n  int nk = NK;\n  int nl = NL;\n\n  /* Variable declaration/allocation. */\n  DATA_TYPE alpha;\n  DATA_TYPE beta;\n  POLYBENCH_2D_ARRAY_DECL(tmp,DATA_TYPE,NI,NJ,ni,nj);\n  POLYBENCH_2D_ARRAY_DECL(A,DATA_TYPE,NI,NK,ni,nk);\n  POLYBENCH_2D_ARRAY_DECL(B,DATA_TYPE,NK,NJ,nk,nj);\n  POLYBENCH_2D_ARRAY_DECL(C,DATA_TYPE,NJ,NL,nj,nl);\n  POLYBENCH_2D_ARRAY_DECL(D,DATA_TYPE,NI,NL,ni,nl);\n\n  /* Initialize array(s). */\n  init_array (ni, nj, nk, nl, &alpha, &beta,\n\t      POLYBENCH_ARRAY(A),\n\t      POLYBENCH_ARRAY(B),\n\t      POLYBENCH_ARRAY(C),\n\t      POLYBENCH_ARRAY(D));\n\n  /* Start timer. */\n  polybench_start_instruments;\n\n  /* Run kernel. */\n  kernel_2mm (ni, nj, nk, nl,\n\t      alpha, beta,\n\t      POLYBENCH_ARRAY(tmp),\n\t      POLYBENCH_ARRAY(A),\n\t      POLYBENCH_ARRAY(B),\n\t      POLYBENCH_ARRAY(C),\n\t      POLYBENCH_ARRAY(D));\n\n  /* Stop and print timer. */\n  polybench_stop_instruments;\n  polybench_print_instruments;\n\n  /* Prevent dead-code elimination. All live-out data must be printed\n     by the function call in argument. */\n  polybench_prevent_dce(print_array(ni, nl,  POLYBENCH_ARRAY(D)));\n\n  /* Be clean. */\n  POLYBENCH_FREE_ARRAY(tmp);\n  POLYBENCH_FREE_ARRAY(A);\n  POLYBENCH_FREE_ARRAY(B);\n  POLYBENCH_FREE_ARRAY(C);\n  POLYBENCH_FREE_ARRAY(D);\n\n  return 0;\n}\n```",
+     "reasoning": "We need to insert #pragma omp parallel for directives to loops that can be safely parallelized. Must not change code. Only add lines that start with #pragma omp. Must consider data dependencies.\n\nLook at loops:\n\ninit_array: loops initializing arrays A, B, C, D. Each iteration writes distinct elements, independent. So each nested loops can be parallelized. However we cannot change the loops themselves, only add pragma before them. Need to add #pragma omp parallel for private(j) maybe? In nested loops we can parallelize outer loop only; inner loops are sequential but could use collapse(2). Simpler: add #pragma omp parallel for private(j) before each outer loop. Eg:\n\nfor (i = 0; i < ni; i++)\n    for (j = 0; j < nk; j++)\n        A[i][j] = ...\n\nWe can add pragma before outer for: #pragma omp parallel for private(j) schedule(static) maybe not needed.\n\nBut the outer loop's body contains another for loop; parallelizing outer loop will cause each thread to execute inner loop sequentially. That's fine.\n\nSimilarly for other loops.\n\nprint_array: loops reading D and printing. Printing to file is not thread-safe; order matters for output. So we should not parallelize; leave as is.\n\nkernel_2mm: loops:\n\nFirst nested loops compute tmp[i][j] = sum over k. Each i,j independent; can parallelize outer i loop or collapse i,j loops. Add pragma before outer i loop: #pragma omp parallel for private(j,k) schedule(static) maybe reduction? No reduction needed because each tmp[i][j] is computed independently; inside inner loop we accumulate into tmp[i][j] which is private to thread. But we must ensure tmp[i][j] is initialized to zero before inner loop. That's already done inside outer i loop. So add private(j,k). Also need to ensure that tmp[i][j] is not shared across threads (each thread gets distinct i). So fine.\n\nSecond nested loops compute D[i][j] using tmp and C, with D[i][j] multiplied by beta then accumulate. Each i,j independent. Add pragma before outer i loop with private(j,k).\n\nThus modifications.\n\nAlso there is #pragma scop and #pragma endscop markers; we must insert pragma within. Add after #pragma scop maybe before first for.\n\nMake sure not to break code.\n\nLet's craft final file.\n\nWill add:\n\nIn init_array:\n\nbefore each outer for:\n\n#pragma omp parallel for private(j)\n\nWe have four outer loops: for (i = 0; i < ni; i++) for (j...), etc.\n\nSimilarly for other loops.\n\nIn kernel_2mm:\n\nAdd #pragma omp parallel for private(j,k) before first outer for (i = 0; i < _PB_NI; i++)\n\nAdd #pragma omp parallel for private(j,k) before second outer for (i = 0; i < _PB_NI; i++)\n\nMake sure we have correct indentation but not required.\n\nNo other loops.\n\nEdge Cases: Variables i, j, k are declared at function scope, they become shared by default, but inside parallel for loops they are loop iteration variables, they are private automatically. However inner variable j, k may need private because they're used inside loops of outer. Actually j is loop variable of inner loops; but it's declared outside. In OpenMP, loop control variables are private to each thread even if declared outside. For inner loops, they are private as they are loop variables. However we still may need to declare private for j,k because they are used in inner loops within parallel region but not as loop control of the parallelized loop. Since they are used inside the outer loop's body, but each thread executes its own copy of outer i; inner j,k loops are executed sequentially within each thread. The loop variables j,k are scoped to those loops; they are also private. So maybe not needed. However to be safe, we can include private(j,k). But OpenMP spec: variables declared outside but used as loop variables are private to that loop. Since they are used as for (j = ... ), they become private. So not needed. But adding private is okay.\n\nWe should not cause compile errors; using private(j) for outer loops where j is also loop variable of inner loop might conflict because j is also used as loop variable of inner loop, but still okay. The private clause lists variables that become private; if they are also loop variables of inner loops, they become private anyway. So fine.\n\nLet's write final code.\n\n"
+    },
+    "logprobs": null,
+    "finish_reason": "stop"
+   }
+  ],
+  "usage": {
+   "queue_time": 0.154439956,
+   "prompt_tokens": 1686,
+   "prompt_time": 0.152900094,
+   "completion_tokens": 2462,
+   "completion_time": 6.610026487,
+   "total_tokens": 4148,
+   "total_time": 6.762926581,
+   "prompt_tokens_details": {
+    "cached_tokens": 256
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 945
+   }
+  },
+  "usage_breakdown": null,
+  "system_fingerprint": "fp_c15aa9c1b7",
+  "x_groq": {
+   "id": "req_01m7ramdk0evpbep4d9pzq9hp2",
+   "seed": 301607917
+  },
+  "service_tier": "on_demand"
+ }
+}

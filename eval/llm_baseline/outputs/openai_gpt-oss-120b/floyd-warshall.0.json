@@ -1,0 +1,47 @@
+{
+ "provider": "groq",
+ "model": "openai/gpt-oss-120b",
+ "kernel": "medley/floyd-warshall/floyd-warshall.c",
+ "sample": 0,
+ "requested": "2026-11-19T09:57:13.632367+00:00",
+ "outcome": "complete",
+ "temperature": "default",
+ "max_tokens": 32768,
+ "response": {
+  "id": "chatcmpl-22b4ce09-08ad-4c0a-a1d3-facb2554fb82",
+  "object": "chat.completion",
+  "created": 1795082252,
+  "model": "openai/gpt-oss-120b",
+  "choices": [
+   {
+    "index": 0,
+    "message": {
+     "role": "assistant",
+     "content": "```c\n/**\n * This version is stamped on May 10, 2016\n *\n * Contact:\n *   Louis-Noel Pouchet <pouchet.ohio-state.edu>\n *   Tomofumi Yuki <tomofumi.yuki.fr>\n *\n * Web address: http://polybench.sourceforge.net\n */\n/* floyd-warshall.c: this file is part of PolyBench/C */\n\n#include <stdio.h>\n#include <unistd.h>\n#include <string.h>\n#include <math.h>\n\n/* Include polybench common header. */\n#include <polybench.h>\n\n/* Include benchmark-specific header. */\n#include \"floyd-warshall.h\"\n\n\n/* Array initialization. */\nstatic\nvoid init_array (int n,\n\t\t DATA_TYPE POLYBENCH_2D(path,N,N,n,n))\n{\n  int i, j;\n\n#pragma omp parallel for\n  for (i = 0; i < n; i++)\n    for (j = 0; j < n; j++) {\n      path[i][j] = i*j%7+1;\n      if ((i+j)%13 == 0 || (i+j)%7==0 || (i+j)%11 == 0)\n         path[i][j] = 999;\n    }\n}\n\n\n/* DCE code. Must scan the entire live-out data.\n   Can be used also to check the correctness of the output. */\nstatic\nvoid print_array(int n,\n\t\t DATA_TYPE POLYBENCH_2D(path,N,N,n,n))\n\n{\n  int i, j;\n\n  POLYBENCH_DUMP_START;\n  POLYBENCH_DUMP_BEGIN(\"path\");\n  for (i = 0; i < n; i++)\n    for (j = 0; j < n; j++) {\n      if ((i * n + j) % 20 == 0) fprintf (POLYBENCH_DUMP_TARGET, \"\\n\");\n      fprintf (POLYBENCH_DUMP_TARGET, DATA_PRINTF_MODIFIER, path[i][j]);\n    }\n  POLYBENCH_DUMP_END(\"path\");\n  POLYBENCH_DUMP_FINISH;\n}\n\n\n/* Main computational kernel. The whole function will be timed,\n   including the call and return. */\nstatic\nvoid kernel_floyd_warshall(int n,\n\t\t\t   DATA_TYPE POLYBENCH_2D(path,N,N,n,n))\n{\n  int i, j, k;\n\n#pragma scop\n  for (k = 0; k < _PB_N; k++)\n    {\n#pragma omp parallel for\n      for(i = 0; i < _PB_N; i++)\n\tfor (j = 0; j < _PB_N; j++)\n\t  path[i][j] = path[i][j] < path[i][k] + path[k][j] ?\n\t    path[i][j] : path[i][k] + path[k][j];\n    }\n#pragma endscop\n\n}\n\n\nint main(int argc, char** argv)\n{\n  /* Retrieve problem size. */\n  int n = N;\n\n  /* Variable declaration/allocation. */\n  POLYBENCH_2D_ARRAY_DECL(path, DATA_TYPE, N, N, n, n);\n\n\n  /* Initialize array(s). */\n  init_array (n, POLYBENCH_ARRAY(path));\n\n  /* Start timer. */\n  polybench_start_instruments;\n\n  /* Run kernel. */\n  kernel_floyd_warshall (n, POLYBENCH_ARRAY(path));\n\n  /* Stop and print timer. */\n  polybench_stop_instruments;\n  polybench_print_instruments;\n\n  /* Prevent dead-code elimination. All live-out data must be printed\n     by the function call in argument. */\n  polybench_prevent_dce(print_array(n, POLYBENCH_ARRAY(path)));\n\n  /* Be clean. */\n  POLYBENCH_FREE_ARRAY(path);\n\n  return 0;\n}\n```",
+     "reasoning": "We need to insert OpenMP pragmas for loops that can safely be parallelized. Let's analyze loops.\n\nFirst function init_array: loops i and j nested, they write path[i][j] independent per element. No dependencies. Could parallelize outer loop (i) or both with collapse. Add pragma before outer for: #pragma omp parallel for private(j) schedule(static). Since j is loop variable, it's private by default. So we can add: #pragma omp parallel for\n\nSecond function print_array: loops i and j for printing. This is I/O, order may matter due to newline printing condition. Parallelizing may intermix output, potentially change program output. Should not parallelize because it changes results (output order). So leave.\n\nKernel_floyd_warshall: triple nested loops. Floyd-Warshall algorithm has data dependencies: For each k, updates path[i][j] based on previous iteration of same k but reading path[i][k] and path[k][j] which are from the same k iteration, but they are not modified within inner loops (i, j) for given k. The updates to path[i][j] are independent across i and j for a fixed k, because they read from path[i][k] and path[k][j] which are not being updated in this k iteration (they were computed in previous k). So we can parallelize the i and j loops for each k. So we can add pragma before inner i loop: #pragma omp parallel for private(j) schedule(static) maybe collapse? Could also collapse i and j loops: #pragma omp parallel for collapse(2) private(i,j) but we need to be careful with private. Simpler: add pragma before i loop, with j private. So:\n\nfor (k = 0; k < _PB_N; k++) {\n#pragma omp parallel for private(j) schedule(static)\nfor(i=0; i< _PB_N; i++)\n   for(j=0; j< _PB_N; j++)\n      ...\n\nThat is safe.\n\nAlso, the outermost loop over k cannot be parallelized due to dependency across k.\n\nAny other loops? There is loop in main none.\n\nThus we need to insert pragmas lines with appropriate placement.\n\nWe must not modify existing code lines, only add new lines starting with #pragma omp.\n\nAdd after the line `for (i = 0; i < n; i++)` inside init_array? Actually we need to add before that line. So we insert a pragma line before the outermost for.\n\nSimilarly for kernel: before the i loop inside k loop.\n\nLet's produce modified file.\n\nNeed to ensure correct indentation maybe same as code. We'll just add lines.\n\nCheck that we didn't break any braces.\n\nIn init_array:\n\n```\n  for (i = 0; i < n; i++)\n    for (j = 0; j < n; j++) {\n```\n\nWe add pragma before the outer for:\n\n```\n#pragma omp parallel for private(j) schedule(static)\n  for (i = 0; i < n; i++)\n```\n\nBut private(j) may not be necessary; loop variable j is private by default in parallel for? Actually j is inner loop variable, not part of outer for; we need to ensure each thread's j is private; but since each thread runs its own iteration of i, the inner loop j is local to that thread's execution and is automatically private. So we can just `#pragma omp parallel for` without clauses. Simpler.\n\nThus:\n\n```\n#pragma omp parallel for\n  for (i = 0; i < n; i++)\n```\n\nNow kernel:\n\n```\n  for (k = 0; k < _PB_N; k++)\n    {\n      for(i = 0; i < _PB_N; i++)\n        for (j = 0; j < _PB_N; j++)\n          path[i][j] = ...\n```\n\nAdd pragma before inner i for.\n\n```\n      for(i = 0; i < _PB_N; i++)\n```\n\nAdd pragma line:\n\n```\n#pragma omp parallel for\n      for(i = 0; i < _PB_N; i++)\n```\n\nBut need to ensure braces: the pragma applies to the next for loop. So we place before it inside the k loop.\n\nThus final file.\n\nReturn within ```c code block.\n\n"
+    },
+    "logprobs": null,
+    "finish_reason": "stop"
+   }
+  ],
+  "usage": {
+   "queue_time": 0.162262097,
+   "prompt_tokens": 1012,
+   "prompt_time": 0.048476613,
+   "completion_tokens": 1712,
+   "completion_time": 3.5805406,
+   "total_tokens": 2724,
+   "total_time": 3.629017213,
+   "completion_tokens_details": {
+    "reasoning_tokens": 903
+   }
+  },
+  "usage_breakdown": null,
+  "system_fingerprint": "fp_27194a498a",
+  "x_groq": {
+   "id": "req_01m7sktrsxepdr4xgvfpwmab06",
+   "seed": 423181840
+  },
+  "service_tier": "on_demand"
+ }
+}

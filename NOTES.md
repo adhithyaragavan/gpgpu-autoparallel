@@ -3487,6 +3487,7 @@ it classifies as parallel. Reported twice: "ompar" as published, "ompar-long" wi
 | p05, guards stripped | 54 | 0 (0%) | 0 | 0 | 0 | 0 | 0 |
 | ompar | 61 | 29 (48%) | 0 | 0 | 1 | 0 | 4 |
 | ompar-long | 138 | 43 (36%) | 3 | 18 | 1 | 1 | 11 |
+| gpt-oss-120b (3 samples) | 53.7 | 8.0 (15%) | 6.0 | 0 | 1.0 | 0.7 | 9.3 |
 
 (107 P05 groups in all files; 0 wrong, also with all 58 guarded pragmas' guards removed.)
 Archer moved 12 OMPar groups (1 published, 11 long) from correct or fp-sensitive to wrong or
@@ -3506,8 +3507,25 @@ nested-wrong: races that the dumped output did not show.
   triangular inner range (`j = i ..`) the overlap guard cannot bound. The counter reuse is a real,
   fixable gap: a counter written only by its own loop's header is that loop's private IV.
 
-**gpt-oss-120b:** PENDING (Groq free tier: 200k tokens/day). The first 3072-token cap was Groq's
-default; 7 replies were cut off and re-requested with `--max-tokens 32768`.
+**gpt-oss-120b** (Groq, 90 replies over 2 days of free-tier quota; 7 cut off by Groq's default
+3072-token cap were re-requested with `--max-tokens 32768`; 3 modified other code, unscored):
+- Output comparison alone found about 2% wrong; Archer finds 15%. Of the 24 wrong groups, 20 are
+  one mistake: `parallel for` on an outer loop whose inner counter (`j`, `k`, `s`) is declared at
+  function scope, so it stays shared and the threads race on it. The output usually survives,
+  which is why only Archer sees it. The rest: lu:98 parallelizes a real dependence (output
+  differs); floyd-warshall:72 (3 samples) parallelizes `i` for a fixed `k`, where iteration k
+  rewrites row k that every other iteration reads. The value written is the same, but it is a
+  data race by the C/OpenMP rules, so it counts as wrong.
+- **Wrong on loops P05 parallelizes** (18 groups: 2mm, covariance, deriche x4 loops, doitgen,
+  gemver x3, ludcmp): all are that missing `private`, which P05 emits. No P05 false SAFE.
+- fp-sensitive: gramschmidt:92 `reduction(+:nrm)`, all 3 samples (as OMPar). no-compile: 2
+  heat-3d replies put `collapse(3)` on a nest that is not perfect.
+- **P05's misses** (10 loops it gets right that P05 rejects): the inner-counter reuse again
+  (gemm, syrk, syr2k, adi:98/113, atax:76 outer loops), triangular ranges (covariance:85,
+  correlation:110), durbin's FP reduction, and a new kind: **array reductions**
+  (`reduction(+:s[:M])` on bicg:85, atax:76), which P05 has no support for.
+- So a strong current LLM covers more loops than P05 and is far better than OMPar, but about one
+  pragma in seven it writes is a race. P05's claim is the guarantee, not coverage.
 
 **Limits:** Only loops a tool chose are judged, so tools are compared on different loop sets
 ("wrong on P05-SAFE loops" and "correct, P05 not SAFE" are the overlap). Correct means "no

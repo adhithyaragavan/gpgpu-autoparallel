@@ -1,0 +1,47 @@
+{
+ "provider": "groq",
+ "model": "openai/gpt-oss-120b",
+ "kernel": "stencils/jacobi-1d/jacobi-1d.c",
+ "sample": 2,
+ "requested": "2026-11-19T12:10:37.814999+00:00",
+ "outcome": "complete",
+ "temperature": "default",
+ "max_tokens": 32768,
+ "response": {
+  "id": "chatcmpl-a9ea21c6-2a75-4653-b459-9bd4197fa419",
+  "object": "chat.completion",
+  "created": 1795090241,
+  "model": "openai/gpt-oss-120b",
+  "choices": [
+   {
+    "index": 0,
+    "message": {
+     "role": "assistant",
+     "content": "```c\n/**\n * This version is stamped on May 10, 2016\n *\n * Contact:\n *   Louis-Noel Pouchet <pouchet.ohio-state.edu>\n *   Tomofumi Yuki <tomofumi.yuki.fr>\n *\n * Web address: http://polybench.sourceforge.net\n */\n/* jacobi-1d.c: this file is part of PolyBench/C */\n\n#include <stdio.h>\n#include <unistd.h>\n#include <string.h>\n#include <math.h>\n\n/* Include polybench common header. */\n#include <polybench.h>\n\n/* Include benchmark-specific header. */\n#include \"jacobi-1d.h\"\n\n\n/* Array initialization. */\nstatic\nvoid init_array (int n,\n\t\t DATA_TYPE POLYBENCH_1D(A,N,n),\n\t\t DATA_TYPE POLYBENCH_1D(B,N,n))\n{\n  int i;\n\n#pragma omp parallel for\n  for (i = 0; i < n; i++)\n      {\n\tA[i] = ((DATA_TYPE) i+ 2) / n;\n\tB[i] = ((DATA_TYPE) i+ 3) / n;\n      }\n}\n\n\n/* DCE code. Must scan the entire live-out data.\n   Can be used also to check the correctness of the output. */\nstatic\nvoid print_array(int n,\n\t\t DATA_TYPE POLYBENCH_1D(A,N,n))\n\n{\n  int i;\n\n  POLYBENCH_DUMP_START;\n  POLYBENCH_DUMP_BEGIN(\"A\");\n  for (i = 0; i < n; i++)\n    {\n      if (i % 20 == 0) fprintf(POLYBENCH_DUMP_TARGET, \"\\n\");\n      fprintf(POLYBENCH_DUMP_TARGET, DATA_PRINTF_MODIFIER, A[i]);\n    }\n  POLYBENCH_DUMP_END(\"A\");\n  POLYBENCH_DUMP_FINISH;\n}\n\n\n/* Main computational kernel. The whole function will be timed,\n   including the call and return. */\nstatic\nvoid kernel_jacobi_1d(int tsteps,\n\t\t\t    int n,\n\t\t\t    DATA_TYPE POLYBENCH_1D(A,N,n),\n\t\t\t    DATA_TYPE POLYBENCH_1D(B,N,n))\n{\n  int t, i;\n\n#pragma scop\n  for (t = 0; t < _PB_TSTEPS; t++)\n    {\n#pragma omp parallel for\n      for (i = 1; i < _PB_N - 1; i++)\n\tB[i] = 0.33333 * (A[i-1] + A[i] + A[i + 1]);\n#pragma omp parallel for\n      for (i = 1; i < _PB_N - 1; i++)\n\tA[i] = 0.33333 * (B[i-1] + B[i] + B[i + 1]);\n    }\n#pragma endscop\n\n}\n\n\nint main(int argc, char** argv)\n{\n  /* Retrieve problem size. */\n  int n = N;\n  int tsteps = TSTEPS;\n\n  /* Variable declaration/allocation. */\n  POLYBENCH_1D_ARRAY_DECL(A, DATA_TYPE, N, n);\n  POLYBENCH_1D_ARRAY_DECL(B, DATA_TYPE, N, n);\n\n\n  /* Initialize array(s). */\n  init_array (n, POLYBENCH_ARRAY(A), POLYBENCH_ARRAY(B));\n\n  /* Start timer. */\n  polybench_start_instruments;\n\n  /* Run kernel. */\n  kernel_jacobi_1d(tsteps, n, POLYBENCH_ARRAY(A), POLYBENCH_ARRAY(B));\n\n  /* Stop and print timer. */\n  polybench_stop_instruments;\n  polybench_print_instruments;\n\n  /* Prevent dead-code elimination. All live-out data must be printed\n     by the function call in argument. */\n  polybench_prevent_dce(print_array(n, POLYBENCH_ARRAY(A)));\n\n  /* Be clean. */\n  POLYBENCH_FREE_ARRAY(A);\n  POLYBENCH_FREE_ARRAY(B);\n\n  return 0;\n}\n```",
+     "reasoning": "We need to add OpenMP pragmas to loops that can be safely parallelized. We must not modify other code. Identify loops:\n\n1. In init_array: for (i = 0; i < n; i++) ... writes A[i] and B[i] independent. Can parallelize with `#pragma omp parallel for`. No dependencies.\n\n2. In print_array: loop over i printing; it's I/O side effects, but order may affect output (but they print in order; parallel would change order). Should not parallelize.\n\n3. In kernel_jacobi_1d: there are two loops inside outer t loop. The outer loop t steps: each iteration depends on previous because A and B are updated each timestep, but within each t iteration, the two inner loops operate sequentially: first compute B based on A, then compute A based on B. The inner loops themselves are independent per i (except boundaries). They can be parallelized. But we must ensure that they are not interfering across iterations of i. The first loop writes B[i] using A[i-1], A[i], A[i+1] which are from previous iteration of t (unchanged during this loop). No race. So we can add `#pragma omp parallel for` before each inner loop. However note that outer loop t is sequential (cannot parallelize across timesteps). So just add pragmas before the two inner loops.\n\nAlso there is outermost for (t=0; t < _PB_TSTEPS; t++) but can't parallelize.\n\nPotential need for `private(i)` is default for loop variable. OpenMP parallel for automatically makes loop variable private. So simple.\n\nThus modifications: Insert pragma line before the init_array loop, before the two inner loops in kernel.\n\nAlso maybe before loops in main? No loops there.\n\nMake sure we only add lines starting with `#pragma omp`. Insert right before loops.\n\nLet's produce final code.\n\n"
+    },
+    "logprobs": null,
+    "finish_reason": "stop"
+   }
+  ],
+  "usage": {
+   "queue_time": 0.318590585,
+   "prompt_tokens": 1054,
+   "prompt_time": 0.054129793,
+   "completion_tokens": 1254,
+   "completion_time": 2.62095232,
+   "total_tokens": 2308,
+   "total_time": 2.675082113,
+   "completion_tokens_details": {
+    "reasoning_tokens": 398
+   }
+  },
+  "usage_breakdown": null,
+  "system_fingerprint": "fp_dee443f41b",
+  "x_groq": {
+   "id": "req_01m7svejhpe6pvntym12gw2cn0",
+   "seed": 620110619
+  },
+  "service_tier": "on_demand"
+ }
+}

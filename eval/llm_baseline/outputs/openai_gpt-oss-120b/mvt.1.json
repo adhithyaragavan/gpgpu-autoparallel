@@ -1,0 +1,49 @@
+{
+ "provider": "groq",
+ "model": "openai/gpt-oss-120b",
+ "kernel": "linear-algebra/kernels/mvt/mvt.c",
+ "sample": 1,
+ "requested": "2026-11-18T22:03:23.680042+00:00",
+ "outcome": "complete",
+ "temperature": "default",
+ "response": {
+  "id": "chatcmpl-d7d2ef19-2778-4e12-8fd9-03a2e5fe2392",
+  "object": "chat.completion",
+  "created": 1795039423,
+  "model": "openai/gpt-oss-120b",
+  "choices": [
+   {
+    "index": 0,
+    "message": {
+     "role": "assistant",
+     "content": "```c\n/**\n * This version is stamped on May 10, 2016\n *\n * Contact:\n *   Louis-Noel Pouchet <pouchet.ohio-state.edu>\n *   Tomofumi Yuki <tomofumi.yuki.fr>\n *\n * Web address: http://polybench.sourceforge.net\n */\n/* mvt.c: this file is part of PolyBench/C */\n\n#include <stdio.h>\n#include <unistd.h>\n#include <string.h>\n#include <math.h>\n\n/* Include polybench common header. */\n#include <polybench.h>\n\n/* Include benchmark-specific header. */\n#include \"mvt.h\"\n\n\n/* Array initialization. */\nstatic\nvoid init_array(int n,\n\t\tDATA_TYPE POLYBENCH_1D(x1,N,n),\n\t\tDATA_TYPE POLYBENCH_1D(x2,N,n),\n\t\tDATA_TYPE POLYBENCH_1D(y_1,N,n),\n\t\tDATA_TYPE POLYBENCH_1D(y_2,N,n),\n\t\tDATA_TYPE POLYBENCH_2D(A,N,N,n,n))\n{\n  int i, j;\n\n#pragma omp parallel for private(j)\n  for (i = 0; i < n; i++)\n    {\n      x1[i] = (DATA_TYPE) (i % n) / n;\n      x2[i] = (DATA_TYPE) ((i + 1) % n) / n;\n      y_1[i] = (DATA_TYPE) ((i + 3) % n) / n;\n      y_2[i] = (DATA_TYPE) ((i + 4) % n) / n;\n      for (j = 0; j < n; j++)\n\tA[i][j] = (DATA_TYPE) (i*j % n) / n;\n    }\n}\n\n\n/* DCE code. Must scan the entire live-out data.\n   Can be used also to check the correctness of the output. */\nstatic\nvoid print_array(int n,\n\t\t DATA_TYPE POLYBENCH_1D(x1,N,n),\n\t\t DATA_TYPE POLYBENCH_1D(x2,N,n))\n\n{\n  int i;\n\n  POLYBENCH_DUMP_START;\n  POLYBENCH_DUMP_BEGIN(\"x1\");\n  for (i = 0; i < n; i++) {\n    if (i % 20 == 0) fprintf (POLYBENCH_DUMP_TARGET, \"\\n\");\n    fprintf (POLYBENCH_DUMP_TARGET, DATA_PRINTF_MODIFIER, x1[i]);\n  }\n  POLYBENCH_DUMP_END(\"x1\");\n\n  POLYBENCH_DUMP_BEGIN(\"x2\");\n  for (i = 0; i < n; i++) {\n    if (i % 20 == 0) fprintf (POLYBENCH_DUMP_TARGET, \"\\n\");\n    fprintf (POLYBENCH_DUMP_TARGET, DATA_PRINTF_MODIFIER, x2[i]);\n  }\n  POLYBENCH_DUMP_END(\"x2\");\n  POLYBENCH_DUMP_FINISH;\n}\n\n\n/* Main computational kernel. The whole function will be timed,\n   including the call and return. */\nstatic\nvoid kernel_mvt(int n,\n\t\tDATA_TYPE POLYBENCH_1D(x1,N,n),\n\t\tDATA_TYPE POLYBENCH_1D(x2,N,n),\n\t\tDATA_TYPE POLYBENCH_1D(y_1,N,n),\n\t\tDATA_TYPE POLYBENCH_1D(y_2,N,n),\n\t\tDATA_TYPE POLYBENCH_2D(A,N,N,n,n))\n{\n  int i, j;\n\n#pragma scop\n#pragma omp parallel for private(j)\n  for (i = 0; i < _PB_N; i++)\n    for (j = 0; j < _PB_N; j++)\n      x1[i] = x1[i] + A[i][j] * y_1[j];\n#pragma omp parallel for private(j)\n  for (i = 0; i < _PB_N; i++)\n    for (j = 0; j < _PB_N; j++)\n      x2[i] = x2[i] + A[j][i] * y_2[j];\n#pragma endscop\n\n}\n\n\nint main(int argc, char** argv)\n{\n  /* Retrieve problem size. */\n  int n = N;\n\n  /* Variable declaration/allocation. */\n  POLYBENCH_2D_ARRAY_DECL(A, DATA_TYPE, N, N, n, n);\n  POLYBENCH_1D_ARRAY_DECL(x1, DATA_TYPE, N, n);\n  POLYBENCH_1D_ARRAY_DECL(x2, DATA_TYPE, N, n);\n  POLYBENCH_1D_ARRAY_DECL(y_1, DATA_TYPE, N, n);\n  POLYBENCH_1D_ARRAY_DECL(y_2, DATA_TYPE, N, n);\n\n\n  /* Initialize array(s). */\n  init_array (n,\n\t      POLYBENCH_ARRAY(x1),\n\t      POLYBENCH_ARRAY(x2),\n\t      POLYBENCH_ARRAY(y_1),\n\t      POLYBENCH_ARRAY(y_2),\n\t      POLYBENCH_ARRAY(A));\n\n  /* Start timer. */\n  polybench_start_instruments;\n\n  /* Run kernel. */\n  kernel_mvt (n,\n\t      POLYBENCH_ARRAY(x1),\n\t      POLYBENCH_ARRAY(x2),\n\t      POLYBENCH_ARRAY(y_1),\n\t      POLYBENCH_ARRAY(y_2),\n\t      POLYBENCH_ARRAY(A));\n\n  /* Stop and print timer. */\n  polybench_stop_instruments;\n  polybench_print_instruments;\n\n  /* Prevent dead-code elimination. All live-out data must be printed\n     by the function call in argument. */\n  polybench_prevent_dce(print_array(n, POLYBENCH_ARRAY(x1), POLYBENCH_ARRAY(x2)));\n\n  /* Be clean. */\n  POLYBENCH_FREE_ARRAY(A);\n  POLYBENCH_FREE_ARRAY(x1);\n  POLYBENCH_FREE_ARRAY(x2);\n  POLYBENCH_FREE_ARRAY(y_1);\n  POLYBENCH_FREE_ARRAY(y_2);\n\n  return 0;\n}\n```\n",
+     "reasoning": "We need to add #pragma omp parallel for directives to loops that can be safely parallelized. The file contains loops:\n\n- init_array: first for i (i from 0 to n-1) and inside inner for j (j from 0 to n-1). The outer loop writes to x1[i], x2[i], y_1[i], y_2[i] (each element unique per i). The inner loop writes to A[i][j] which is also unique per i (different rows). So both loops can be parallelized. However the outer loop encloses inner loop; we could parallelize outer loop with collapse(2) maybe but safe is to add pragma before outer for for parallelization of outer loop, and also inner loop maybe not needed because each iteration of outer loop writes to its row. If we parallelize outer loop, inner loop can remain sequential. That's fine. We can also parallelize inner loop separately but that would create nested parallelism maybe not needed. We'll add #pragma omp parallel for private(j) for outer loop in init_array.\n\n- print_array: loops over i for printing x1 and x2. These loops are for side effects (printing). Parallelizing would change order of output, possibly change results (though maybe not considered). Should not parallelize because order matters. So leave them.\n\n- kernel_mvt: two nested loops. The computation: first double loop: x1[i] = x1[i] + A[i][j] * y_1[j]; This is a reduction across j for each i: x1[i] accumulates sum over j. The initial x1[i] presumably has some value from init_array. The loop updates x1[i] by adding contributions across j. The updates are independent across i (different x1[i]). So we can parallelize outer i with reduction across j? Actually each iteration of i does a sum over j, but within each i, we need to accumulate sum. The code does x1[i] = x1[i] + A[i][j] * y_1[j]; So x1[i] is updated multiple times across j. If we parallelize outer i loop only (no reduction needed) because each thread works on distinct i, but inside each i's inner loop we must ensure that the updates to x1[i] are sequential within that i, which is fine because each thread handles one i. So we can #pragma omp parallel for private(j) schedule maybe. No reduction clause needed because each i's x1 is only updated by its thread.\n\nSecond double loop: x2[i] = x2[i] + A[j][i] * y_2[j]; Here for each i we sum over j; each i independent. So same approach.\n\nThus we add #pragma omp parallel for private(j) before each outer for loops in kernel_mvt. Also for init_array outer loop.\n\nPotential need for collapse(2) maybe for performance but not required.\n\nMake sure we only insert lines starting with #pragma omp. No other modifications.\n\nWhere to place in init_array? The outer loop line is `for (i = 0; i < n; i++)`. Insert before it: `#pragma omp parallel for private(j)`. But also need to declare that i is private automatically by OpenMP for loop variable. So okay.\n\nSimilarly in kernel_mvt: there are two separate outer loops each with inner loops. Insert before each outer for.\n\nEdge: need to ensure that the `#pragma scop` and `#pragma endscop` remain. The pragmas should be placed inside the scop region. So after `#pragma scop` line we have `for (i = 0; i < _PB_N; i++)`. Insert pragma before that for loop.\n\nThus modifications:\n\n- In init_array after line `int i, j;` before the for loop.\n\n- In kernel_mvt after `#pragma scop` line, before first outer for, add pragma.\n\n- After the first nested loops and before second outer for, add pragma.\n\nPotential need to add `reduction`? Not needed.\n\nAlso we need to ensure that the variables A, y_1 etc are shared (default). That's fine.\n\nNow produce final file with added pragmas.\n\nLet's construct final file.\n\n"
+    },
+    "logprobs": null,
+    "finish_reason": "stop"
+   }
+  ],
+  "usage": {
+   "queue_time": 0.050868674,
+   "prompt_tokens": 1492,
+   "prompt_time": 0.012182215,
+   "completion_tokens": 2184,
+   "completion_time": 4.794229594,
+   "total_tokens": 3676,
+   "total_time": 4.806411809,
+   "prompt_tokens_details": {
+    "cached_tokens": 1280
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 883
+   }
+  },
+  "usage_breakdown": null,
+  "system_fingerprint": "fp_7a4ab09ae4",
+  "x_groq": {
+   "id": "req_01m7razpktehb8c0kwm9fv8j26",
+   "seed": 1670839936
+  },
+  "service_tier": "on_demand"
+ }
+}

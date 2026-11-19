@@ -1,0 +1,47 @@
+{
+ "provider": "groq",
+ "model": "openai/gpt-oss-120b",
+ "kernel": "stencils/jacobi-2d/jacobi-2d.c",
+ "sample": 0,
+ "requested": "2026-11-19T12:25:52.803413+00:00",
+ "outcome": "complete",
+ "temperature": "default",
+ "max_tokens": 32768,
+ "response": {
+  "id": "chatcmpl-64b0ded1-d996-42da-8f86-7234cd192072",
+  "object": "chat.completion",
+  "created": 1795091156,
+  "model": "openai/gpt-oss-120b",
+  "choices": [
+   {
+    "index": 0,
+    "message": {
+     "role": "assistant",
+     "content": "```c\n/**\n * This version is stamped on May 10, 2016\n *\n * Contact:\n *   Louis-Noel Pouchet <pouchet.ohio-state.edu>\n *   Tomofumi Yuki <tomofumi.yuki.fr>\n *\n * Web address: http://polybench.sourceforge.net\n */\n/* jacobi-2d.c: this file is part of PolyBench/C */\n\n#include <stdio.h>\n#include <unistd.h>\n#include <string.h>\n#include <math.h>\n\n/* Include polybench common header. */\n#include <polybench.h>\n\n/* Include benchmark-specific header. */\n#include \"jacobi-2d.h\"\n\n\n/* Array initialization. */\nstatic\nvoid init_array (int n,\n                 DATA_TYPE POLYBENCH_2D(A,N,N,n,n),\n                 DATA_TYPE POLYBENCH_2D(B,N,N,n,n))\n{\n  int i, j;\n\n#pragma omp parallel for collapse(2)\n  for (i = 0; i < n; i++)\n    for (j = 0; j < n; j++)\n      {\n        A[i][j] = ((DATA_TYPE) i*(j+2) + 2) / n;\n        B[i][j] = ((DATA_TYPE) i*(j+3) + 3) / n;\n      }\n}\n\n\n/* DCE code. Must scan the entire live-out data.\n   Can be used also to check the correctness of the output. */\nstatic\nvoid print_array(int n,\n                 DATA_TYPE POLYBENCH_2D(A,N,N,n,n))\n\n{\n  int i, j;\n\n  POLYBENCH_DUMP_START;\n  POLYBENCH_DUMP_BEGIN(\"A\");\n  for (i = 0; i < n; i++)\n    for (j = 0; j < n; j++) {\n      if ((i * n + j) % 20 == 0) fprintf(POLYBENCH_DUMP_TARGET, \"\\n\");\n      fprintf(POLYBENCH_DUMP_TARGET, DATA_PRINTF_MODIFIER, A[i][j]);\n    }\n  POLYBENCH_DUMP_END(\"A\");\n  POLYBENCH_DUMP_FINISH;\n}\n\n\n/* Main computational kernel. The whole function will be timed,\n   including the call and return. */\nstatic\nvoid kernel_jacobi_2d(int tsteps,\n                     int n,\n                     DATA_TYPE POLYBENCH_2D(A,N,N,n,n),\n                     DATA_TYPE POLYBENCH_2D(B,N,N,n,n))\n{\n  int t, i, j;\n\n#pragma scop\n  for (t = 0; t < _PB_TSTEPS; t++)\n    {\n#pragma omp parallel for collapse(2)\n      for (i = 1; i < _PB_N - 1; i++)\n        for (j = 1; j < _PB_N - 1; j++)\n          B[i][j] = SCALAR_VAL(0.2) * (A[i][j] + A[i][j-1] + A[i][1+j] + A[1+i][j] + A[i-1][j]);\n#pragma omp parallel for collapse(2)\n      for (i = 1; i < _PB_N - 1; i++)\n        for (j = 1; j < _PB_N - 1; j++)\n          A[i][j] = SCALAR_VAL(0.2) * (B[i][j] + B[i][j-1] + B[i][1+j] + B[1+i][j] + B[i-1][j]);\n    }\n#pragma endscop\n\n}\n\n\nint main(int argc, char** argv)\n{\n  /* Retrieve problem size. */\n  int n = N;\n  int tsteps = TSTEPS;\n\n  /* Variable declaration/allocation. */\n  POLYBENCH_2D_ARRAY_DECL(A, DATA_TYPE, N, N, n, n);\n  POLYBENCH_2D_ARRAY_DECL(B, DATA_TYPE, N, N, n, n);\n\n\n  /* Initialize array(s). */\n  init_array (n, POLYBENCH_ARRAY(A), POLYBENCH_ARRAY(B));\n\n  /* Start timer. */\n  polybench_start_instruments;\n\n  /* Run kernel. */\n  kernel_jacobi_2d(tsteps, n, POLYBENCH_ARRAY(A), POLYBENCH_ARRAY(B));\n\n  /* Stop and print timer. */\n  polybench_stop_instruments;\n  polybench_print_instruments;\n\n  /* Prevent dead-code elimination. All live-out data must be printed\n     by the function call in argument. */\n  polybench_prevent_dce(print_array(n, POLYBENCH_ARRAY(A)));\n\n  /* Be clean. */\n  POLYBENCH_FREE_ARRAY(A);\n  POLYBENCH_FREE_ARRAY(B);\n\n  return 0;\n}\n```\n",
+     "reasoning": "We need to add #pragma omp parallel for directives to loops that can be safely parallelized. The file includes init_array loop (nested), print_array loop (nested), kernel loops (two nested loops each within time loop). Need to consider dependencies.\n\ninit_array: writes to A[i][j] and B[i][j] independent per i,j. So outer loops can be parallelized. Could use collapse(2) for both i and j loops.\n\nBut they are nested loops not marked with pragma yet. We'll add #pragma omp parallel for collapse(2) before first for (i=0...). Need private i,j? collapse handles them.\n\nprint_array: writes to output only; reading A[i][j] no modification. So can parallelize loops as well. But there is an if statement that prints newline when (i*n+j)%20==0; order of output could differ but that may change program's results (the output order). Since they print to a file (dump target) maybe order matters. Should we parallelize? It could interleave lines, affecting output order, but maybe not important? However requirement: \"Leave a loop without a pragma if parallelizing it could change the program's results.\" Changing order of output is a change. So avoid parallelizing print_array loops.\n\nKernel: The inner loops update B based on A, then A based on B. Since they are separate phases per time step, we can parallelize each nested loop because each iteration writes to distinct B[i][j] (depends only on A values). No race. Similarly second loop updates A based on B. So we can add #pragma omp parallel for collapse(2) for each inner nested loops. Also outer time step loop t cannot be parallelized due to dependence across steps.\n\nNeed to ensure proper scoping of i,j private. collapse automatically makes them private.\n\nAlso we need to add after #pragma scop? The pragma should be inside. Add after line '#pragma scop' maybe before for (t...). But we only parallelize inner loops, not t loop.\n\nThus modifications:\n\nIn init_array function, before first for (i = 0; i < n; i++) add:\n\n#pragma omp parallel for collapse(2) private(i,j)\n\nBut collapse already makes i,j private, but we may still add private clause optional. We'll just add collapse(2). Not modify existing lines.\n\nSimilarly kernel: before first inner for (i=1; i<... ) add pragma.\n\nBut there are two nested loops: for (i...), then for (j...). To parallelize both loops as a collapsed 2-level loop, we need to replace them with a single pragma before outer i loop that collapses both. So we add:\n\n#pragma omp parallel for collapse(2) private(i,j)\n\nbefore the outer i loop of each phase.\n\nThus modifications:\n\n- In init_array: line after 'for (i = 0; i < n; i++)' is currently a nested for. We'll insert pragma before that outer for.\n\n- In kernel_jacobi_2d: after 'for (t = 0; t < _PB_TSTEPS; t++)' there is a block with two nested loops. Insert pragma before each outer i loop.\n\nPotential need of 'default(none)'? Not required.\n\nMake sure not to break code.\n\nNow produce full file with inserted pragmas. Ensure each inserted line starts with '#pragma omp'.\n\nLet's craft final code."
+    },
+    "logprobs": null,
+    "finish_reason": "stop"
+   }
+  ],
+  "usage": {
+   "queue_time": 0.157437697,
+   "prompt_tokens": 1214,
+   "prompt_time": 0.063522381,
+   "completion_tokens": 1736,
+   "completion_time": 3.630070575,
+   "total_tokens": 2950,
+   "total_time": 3.693592956,
+   "completion_tokens_details": {
+    "reasoning_tokens": 706
+   }
+  },
+  "usage_breakdown": null,
+  "system_fingerprint": "fp_4a7bb72c24",
+  "x_groq": {
+   "id": "req_01m7swag4re4e9vwpydtxhw0xj",
+   "seed": 1432996824
+  },
+  "service_tier": "on_demand"
+ }
+}

@@ -1,0 +1,47 @@
+{
+ "provider": "groq",
+ "model": "openai/gpt-oss-120b",
+ "kernel": "stencils/seidel-2d/seidel-2d.c",
+ "sample": 2,
+ "requested": "2026-11-19T13:42:12.640189+00:00",
+ "outcome": "complete",
+ "temperature": "default",
+ "max_tokens": 32768,
+ "response": {
+  "id": "chatcmpl-3ea70159-a821-44ea-ac19-dd035ffd1b34",
+  "object": "chat.completion",
+  "created": 1795095736,
+  "model": "openai/gpt-oss-120b",
+  "choices": [
+   {
+    "index": 0,
+    "message": {
+     "role": "assistant",
+     "content": "```c\n/**\n * This version is stamped on May 10, 2016\n *\n * Contact:\n *   Louis-Noel Pouchet <pouchet.ohio-state.edu>\n *   Tomofumi Yuki <tomofumi.yuki.fr>\n *\n * Web address: http://polybench.sourceforge.net\n */\n/* seidel-2d.c: this file is part of PolyBench/C */\n\n#include <stdio.h>\n#include <unistd.h>\n#include <string.h>\n#include <math.h>\n\n/* Include polybench common header. */\n#include <polybench.h>\n\n/* Include benchmark-specific header. */\n#include \"seidel-2d.h\"\n\n\n/* Array initialization. */\nstatic\nvoid init_array (int n,\n\t\t DATA_TYPE POLYBENCH_2D(A,N,N,n,n))\n{\n  int i, j;\n\n#pragma omp parallel for\n  for (i = 0; i < n; i++)\n    for (j = 0; j < n; j++)\n      A[i][j] = ((DATA_TYPE) i*(j+2) + 2) / n;\n}\n\n\n/* DCE code. Must scan the entire live-out data.\n   Can be used also to check the correctness of the output. */\nstatic\nvoid print_array(int n,\n\t\t DATA_TYPE POLYBENCH_2D(A,N,N,n,n))\n\n{\n  int i, j;\n\n  POLYBENCH_DUMP_START;\n  POLYBENCH_DUMP_BEGIN(\"A\");\n  for (i = 0; i < n; i++)\n    for (j = 0; j < n; j++) {\n      if ((i * n + j) % 20 == 0) fprintf(POLYBENCH_DUMP_TARGET, \"\\n\");\n      fprintf(POLYBENCH_DUMP_TARGET, DATA_PRINTF_MODIFIER, A[i][j]);\n    }\n  POLYBENCH_DUMP_END(\"A\");\n  POLYBENCH_DUMP_FINISH;\n}\n\n\n/* Main computational kernel. The whole function will be timed,\n   including the call and return. */\nstatic\nvoid kernel_seidel_2d(int tsteps,\n\t\t      int n,\n\t\t      DATA_TYPE POLYBENCH_2D(A,N,N,n,n))\n{\n  int t, i, j;\n\n#pragma scop\n  for (t = 0; t <= _PB_TSTEPS - 1; t++)\n    for (i = 1; i<= _PB_N - 2; i++)\n      for (j = 1; j <= _PB_N - 2; j++)\n\tA[i][j] = (A[i-1][j-1] + A[i-1][j] + A[i-1][j+1]\n\t\t   + A[i][j-1] + A[i][j] + A[i][j+1]\n\t\t   + A[i+1][j-1] + A[i+1][j] + A[i+1][j+1])/SCALAR_VAL(9.0);\n#pragma endscop\n\n}\n\n\nint main(int argc, char** argv)\n{\n  /* Retrieve problem size. */\n  int n = N;\n  int tsteps = TSTEPS;\n\n  /* Variable declaration/allocation. */\n  POLYBENCH_2D_ARRAY_DECL(A, DATA_TYPE, N, N, n, n);\n\n\n  /* Initialize array(s). */\n  init_array (n, POLYBENCH_ARRAY(A));\n\n  /* Start timer. */\n  polybench_start_instruments;\n\n  /* Run kernel. */\n  kernel_seidel_2d (tsteps, n, POLYBENCH_ARRAY(A));\n\n  /* Stop and print timer. */\n  polybench_stop_instruments;\n  polybench_print_instruments;\n\n  /* Prevent dead-code elimination. All live-out data must be printed\n     by the function call in argument. */\n  polybench_prevent_dce(print_array(n, POLYBENCH_ARRAY(A)));\n\n  /* Be clean. */\n  POLYBENCH_FREE_ARRAY(A);\n\n  return 0;\n}\n```",
+     "reasoning": "We need to add OpenMP pragmas to loops that can be safely parallelized. Need to ensure correctness. The kernel has three nested loops: t outer, i, j inner. The update of A[i][j] uses neighboring elements from previous iteration? Actually within same t step, the updates are in-place, reading from A (including neighbor values) that may have been updated earlier in same t iteration, causing data dependencies. So cannot parallelize the i,j loops within each t iteration as naive. However typical Seidel 2D algorithm has wavefront dependencies; but the given naive version uses in-place updates; parallelizing over i,j would change results. So we must not add pragma there.\n\nOther loops: init_array: two nested loops writing A[i][j] independent; can parallelize outer i loop, with j private automatically. So add pragma before outer for i. Since j is loop variable, it's private by default. So:\n\n#pragma omp parallel for\n\nAdd before \"for (i = 0; i < n; i++)\". Might need collapse(2) to parallelize both i and j? But we can just parallelize outer loop. That's safe.\n\nPrint_array: loops over i, j reading A. No writes, can parallelize outer i. Use pragma before \"for (i = 0; i < n; i++)\". But note there is an inner conditional printing newlines; still safe for parallel as each iteration prints to same file may intermix lines but order not required? For correctness of output maybe ordering matters; but DCE only, not correctness-critical. Might be okay. However to be safe, we may not parallelize print_array because ordering may affect output but not program correctness maybe not important. But the rule says \"Leave a loop without a pragma if parallelizing it could change the program's results.\" Changing output order changes results (the printed output). So better not parallelize print_array.\n\nAlso loops in main: none.\n\nThus only init_array gets pragma.\n\nAny other loops: In kernel, there is loop over t steps; could parallelize outer t? Not safe due to dependencies across t iterations; each step uses previous step's values, so not parallel.\n\nThus just one pragma.\n\nAdd line with \"#pragma omp parallel for\" before the for (i = 0; i < n; i++). Ensure no extra spaces before #? Starting line must be exactly \"#pragma omp\". Provide file with modifications.\n\nLet's produce final code block."
+    },
+    "logprobs": null,
+    "finish_reason": "stop"
+   }
+  ],
+  "usage": {
+   "queue_time": 0.370063972,
+   "prompt_tokens": 1060,
+   "prompt_time": 0.065948785,
+   "completion_tokens": 1360,
+   "completion_time": 2.886273078,
+   "total_tokens": 2420,
+   "total_time": 2.952221863,
+   "completion_tokens_details": {
+    "reasoning_tokens": 508
+   }
+  },
+  "usage_breakdown": null,
+  "system_fingerprint": "fp_bb691ea66b",
+  "x_groq": {
+   "id": "req_01m7t0p8hqeh2ahgfterds74ca",
+   "seed": 230301358
+  },
+  "service_tier": "on_demand"
+ }
+}

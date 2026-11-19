@@ -1,0 +1,49 @@
+{
+ "provider": "groq",
+ "model": "openai/gpt-oss-120b",
+ "kernel": "linear-algebra/kernels/bicg/bicg.c",
+ "sample": 0,
+ "requested": "2026-11-18T22:00:21.652725+00:00",
+ "outcome": "complete",
+ "temperature": "default",
+ "response": {
+  "id": "chatcmpl-b135794b-5f32-4342-bf2a-03c98ae20086",
+  "object": "chat.completion",
+  "created": 1795039242,
+  "model": "openai/gpt-oss-120b",
+  "choices": [
+   {
+    "index": 0,
+    "message": {
+     "role": "assistant",
+     "content": "```c\n/**\n * This version is stamped on May 10, 2016\n *\n * Contact:\n *   Louis-Noel Pouchet <pouchet.ohio-state.edu>\n *   Tomofumi Yuki <tomofumi.yuki.fr>\n *\n * Web address: http://polybench.sourceforge.net\n */\n/* bicg.c: this file is part of PolyBench/C */\n\n#include <stdio.h>\n#include <unistd.h>\n#include <string.h>\n#include <math.h>\n\n/* Include polybench common header. */\n#include <polybench.h>\n\n/* Include benchmark-specific header. */\n#include \"bicg.h\"\n\n\n/* Array initialization. */\nstatic\nvoid init_array (int m, int n,\n\t\t DATA_TYPE POLYBENCH_2D(A,N,M,n,m),\n\t\t DATA_TYPE POLYBENCH_1D(r,N,n),\n\t\t DATA_TYPE POLYBENCH_1D(p,M,m))\n{\n  int i, j;\n\n#pragma omp parallel for\n  for (i = 0; i < m; i++)\n    p[i] = (DATA_TYPE)(i % m) / m;\n#pragma omp parallel for private(j)\n  for (i = 0; i < n; i++) {\n    r[i] = (DATA_TYPE)(i % n) / n;\n    for (j = 0; j < m; j++)\n      A[i][j] = (DATA_TYPE) (i*(j+1) % n)/n;\n  }\n}\n\n\n/* DCE code. Must scan the entire live-out data.\n   Can be used also to check the correctness of the output. */\nstatic\nvoid print_array(int m, int n,\n\t\t DATA_TYPE POLYBENCH_1D(s,M,m),\n\t\t DATA_TYPE POLYBENCH_1D(q,N,n))\n\n{\n  int i;\n\n  POLYBENCH_DUMP_START;\n  POLYBENCH_DUMP_BEGIN(\"s\");\n  for (i = 0; i < m; i++) {\n    if (i % 20 == 0) fprintf (POLYBENCH_DUMP_TARGET, \"\\n\");\n    fprintf (POLYBENCH_DUMP_TARGET, DATA_PRINTF_MODIFIER, s[i]);\n  }\n  POLYBENCH_DUMP_END(\"s\");\n  POLYBENCH_DUMP_BEGIN(\"q\");\n  for (i = 0; i < n; i++) {\n    if (i % 20 == 0) fprintf (POLYBENCH_DUMP_TARGET, \"\\n\");\n    fprintf (POLYBENCH_DUMP_TARGET, DATA_PRINTF_MODIFIER, q[i]);\n  }\n  POLYBENCH_DUMP_END(\"q\");\n  POLYBENCH_DUMP_FINISH;\n}\n\n\n/* Main computational kernel. The whole function will be timed,\n   including the call and return. */\nstatic\nvoid kernel_bicg(int m, int n,\n\t\t DATA_TYPE POLYBENCH_2D(A,N,M,n,m),\n\t\t DATA_TYPE POLYBENCH_1D(s,M,m),\n\t\t DATA_TYPE POLYBENCH_1D(q,N,n),\n\t\t DATA_TYPE POLYBENCH_1D(p,M,m),\n\t\t DATA_TYPE POLYBENCH_1D(r,N,n))\n{\n  int i, j;\n\n#pragma scop\n#pragma omp parallel for\n  for (i = 0; i < _PB_M; i++)\n    s[i] = 0;\n#pragma omp parallel for private(j) reduction(+:s[:_PB_M])\n  for (i = 0; i < _PB_N; i++)\n    {\n      q[i] = SCALAR_VAL(0.0);\n      for (j = 0; j < _PB_M; j++)\n\t{\n\t  s[j] = s[j] + r[i] * A[i][j];\n\t  q[i] = q[i] + A[i][j] * p[j];\n\t}\n    }\n#pragma endscop\n\n}\n\n\nint main(int argc, char** argv)\n{\n  /* Retrieve problem size. */\n  int n = N;\n  int m = M;\n\n  /* Variable declaration/allocation. */\n  POLYBENCH_2D_ARRAY_DECL(A, DATA_TYPE, N, M, n, m);\n  POLYBENCH_1D_ARRAY_DECL(s, DATA_TYPE, M, m);\n  POLYBENCH_1D_ARRAY_DECL(q, DATA_TYPE, N, n);\n  POLYBENCH_1D_ARRAY_DECL(p, DATA_TYPE, M, m);\n  POLYBENCH_1D_ARRAY_DECL(r, DATA_TYPE, N, n);\n\n  /* Initialize array(s). */\n  init_array (m, n,\n\t      POLYBENCH_ARRAY(A),\n\t      POLYBENCH_ARRAY(r),\n\t      POLYBENCH_ARRAY(p));\n\n  /* Start timer. */\n  polybench_start_instruments;\n\n  /* Run kernel. */\n  kernel_bicg (m, n,\n\t       POLYBENCH_ARRAY(A),\n\t       POLYBENCH_ARRAY(s),\n\t       POLYBENCH_ARRAY(q),\n\t       POLYBENCH_ARRAY(p),\n\t       POLYBENCH_ARRAY(r));\n\n  /* Stop and print timer. */\n  polybench_stop_instruments;\n  polybench_print_instruments;\n\n  /* Prevent dead-code elimination. All live-out data must be printed\n     by the function call in argument. */\n  polybench_prevent_dce(print_array(m, n, POLYBENCH_ARRAY(s), POLYBENCH_ARRAY(q)));\n\n  /* Be clean. */\n  POLYBENCH_FREE_ARRAY(A);\n  POLYBENCH_FREE_ARRAY(s);\n  POLYBENCH_FREE_ARRAY(q);\n  POLYBENCH_FREE_ARRAY(p);\n  POLYBENCH_FREE_ARRAY(r);\n\n  return 0;\n}\n```",
+     "reasoning": "We need to add #pragma omp parallel for directives to loops that can be safely parallelized without changing results.\n\nWe must not modify code aside from adding pragma lines. Need to consider data dependencies.\n\nIn kernel_bicg:\n\nFirst loop: for i=0; i<_PB_M; i++) s[i] = 0; This loop writes each s[i] independent, can parallelize. Use #pragma omp parallel for\n\nSecond outer loop: for i =0; i<_PB_N; i++) { q[i]=0; for j ... { s[j] = s[j] + r[i] * A[i][j]; q[i] = q[i] + A[i][j] * p[j]; } }\n\nWe have dependencies: s[j] is being updated across different i iterations: each iteration i updates s[j] with addition of r[i]*A[i][j]; this is a reduction across i for each j. So cannot simply parallelize outer loop without handling reduction on s[j] array. Could use reduction on array? OpenMP supports reduction on array with user-defined? Not standard. Could use 'reduction(+:s[:_PB_M])' if using OpenMP 4.5's array reductions. That could be okay. The q[i] is local per i, can be parallelized with private q[i] (but q[i] is assigned per iteration). Since each i writes its own q[i], no conflict. So we could parallelize outer loop with reduction on s array. Use pragma: #pragma omp parallel for private(j) reduction(+:s[:_PB_M]) schedule(static)\n\nBut need to ensure that the compiler supports array reductions; many polybench codes use that. We'll add.\n\nThe inner loop j also independent per i (since each j writes s[j] and q[i] uses p[j] and A[i][j], but q[i] is accumulated across j; we could parallelize inner loop with reduction on s[j] and q[i] but q[i] reduction within same iteration; but outer parallel works.\n\nThus add pragma before outer for.\n\nIn init_array: loops:\n\nfor (i = 0; i < m; i++) p[i] = ... ; independent: can parallelize.\n\nfor (i = 0; i < n; i++) { r[i] = ...; for (j=0; j < m; j++) A[i][j] = ...; }\n\nHere r[i] independent, and A[i][j] writes per i,j independent. So can parallelize outer i loop with private j.\n\nAdd pragma before outer i loop.\n\nIn print_array: loops printing, have side effects (printing). Not safe to parallelize due to ordering, but could be but results change order; better leave without.\n\nIn main: no loops.\n\nThus we need to insert pragmas:\n\n- After variable declarations maybe but before loops.\n\nSpecifically, we must insert lines that start with #pragma omp.\n\nWe must preserve line numbers? Not required.\n\nWe'll insert:\n\nIn init_array:\n\nfor (i = 0; i < m; i++)\n    p[i] = ...\n\nWe add:\n\n#pragma omp parallel for\n\nSimilarly before outer i loop of second part:\n\nfor (i = 0; i < n; i++) {\n    r[i] = ...\n    for (j = 0; j < m; j++)\n        A[i][j] = ...\n\nAdd pragma before this outer loop: #pragma omp parallel for private(j)\n\nIn kernel_bicg:\n\nAdd before first loop: #pragma omp parallel for\n\nAdd before second outer loop: #pragma omp parallel for private(j) reduction(+:s[:_PB_M])\n\nBut careful: s is an array variable. Need to refer to its size. Use _PB_M macro.\n\nOpenMP array reduction syntax: reduction(+:s[:_PB_M]) is correct.\n\nAdd also schedule maybe not needed.\n\nThus final code.\n\nWe must keep existing comments and code.\n\nInsert pragmas exactly before loops.\n\nLet's craft final code with modifications.\n\n"
+    },
+    "logprobs": null,
+    "finish_reason": "stop"
+   }
+  ],
+  "usage": {
+   "queue_time": 0.048949893,
+   "prompt_tokens": 1384,
+   "prompt_time": 0.047170467,
+   "completion_tokens": 2037,
+   "completion_time": 4.994069188,
+   "total_tokens": 3421,
+   "total_time": 5.041239655,
+   "prompt_tokens_details": {
+    "cached_tokens": 256
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 833
+   }
+  },
+  "usage_breakdown": null,
+  "system_fingerprint": "fp_d577f40f11",
+  "x_groq": {
+   "id": "req_01m7rat4taeyyaam6eac47njdd",
+   "seed": 802080214
+  },
+  "service_tier": "on_demand"
+ }
+}

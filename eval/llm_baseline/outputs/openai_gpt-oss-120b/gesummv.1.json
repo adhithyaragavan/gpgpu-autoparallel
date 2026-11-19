@@ -1,0 +1,49 @@
+{
+ "provider": "groq",
+ "model": "openai/gpt-oss-120b",
+ "kernel": "linear-algebra/blas/gesummv/gesummv.c",
+ "sample": 1,
+ "requested": "2026-11-18T21:50:26.413555+00:00",
+ "outcome": "complete",
+ "temperature": "default",
+ "response": {
+  "id": "chatcmpl-2d3cb9be-ba7d-4297-86a0-c2e5fa9ca5da",
+  "object": "chat.completion",
+  "created": 1795038645,
+  "model": "openai/gpt-oss-120b",
+  "choices": [
+   {
+    "index": 0,
+    "message": {
+     "role": "assistant",
+     "content": "```c\n/**\n * This version is stamped on May 10, 2016\n *\n * Contact:\n *   Louis-Noel Pouchet <pouchet.ohio-state.edu>\n *   Tomofumi Yuki <tomofumi.yuki.fr>\n *\n * Web address: http://polybench.sourceforge.net\n */\n/* gesummv.c: this file is part of PolyBench/C */\n\n#include <stdio.h>\n#include <unistd.h>\n#include <string.h>\n#include <math.h>\n\n/* Include polybench common header. */\n#include <polybench.h>\n\n/* Include benchmark-specific header. */\n#include \"gesummv.h\"\n\n\n/* Array initialization. */\nstatic\nvoid init_array(int n,\n\t\tDATA_TYPE *alpha,\n\t\tDATA_TYPE *beta,\n\t\tDATA_TYPE POLYBENCH_2D(A,N,N,n,n),\n\t\tDATA_TYPE POLYBENCH_2D(B,N,N,n,n),\n\t\tDATA_TYPE POLYBENCH_1D(x,N,n))\n{\n  int i, j;\n\n  *alpha = 1.5;\n  *beta = 1.2;\n#pragma omp parallel for private(j)\n  for (i = 0; i < n; i++)\n    {\n      x[i] = (DATA_TYPE)( i % n) / n;\n      for (j = 0; j < n; j++) {\n\tA[i][j] = (DATA_TYPE) ((i*j+1) % n) / n;\n\tB[i][j] = (DATA_TYPE) ((i*j+2) % n) / n;\n      }\n    }\n}\n\n\n/* DCE code. Must scan the entire live-out data.\n   Can be used also to check the correctness of the output. */\nstatic\nvoid print_array(int n,\n\t\t DATA_TYPE POLYBENCH_1D(y,N,n))\n\n{\n  int i;\n\n  POLYBENCH_DUMP_START;\n  POLYBENCH_DUMP_BEGIN(\"y\");\n  for (i = 0; i < n; i++) {\n    if (i % 20 == 0) fprintf (POLYBENCH_DUMP_TARGET, \"\\n\");\n    fprintf (POLYBENCH_DUMP_TARGET, DATA_PRINTF_MODIFIER, y[i]);\n  }\n  POLYBENCH_DUMP_END(\"y\");\n  POLYBENCH_DUMP_FINISH;\n}\n\n\n/* Main computational kernel. The whole function will be timed,\n   including the call and return. */\nstatic\nvoid kernel_gesummv(int n,\n\t\t    DATA_TYPE alpha,\n\t\t    DATA_TYPE beta,\n\t\t    DATA_TYPE POLYBENCH_2D(A,N,N,n,n),\n\t\t    DATA_TYPE POLYBENCH_2D(B,N,N,n,n),\n\t\t    DATA_TYPE POLYBENCH_1D(tmp,N,n),\n\t\t    DATA_TYPE POLYBENCH_1D(x,N,n),\n\t\t    DATA_TYPE POLYBENCH_1D(y,N,n))\n{\n  int i, j;\n\n#pragma scop\n#pragma omp parallel for private(j)\n  for (i = 0; i < _PB_N; i++)\n    {\n      tmp[i] = SCALAR_VAL(0.0);\n      y[i] = SCALAR_VAL(0.0);\n      for (j = 0; j < _PB_N; j++)\n\t{\n\t  tmp[i] = A[i][j] * x[j] + tmp[i];\n\t  y[i] = B[i][j] * x[j] + y[i];\n\t}\n      y[i] = alpha * tmp[i] + beta * y[i];\n    }\n#pragma endscop\n\n}\n\n\nint main(int argc, char** argv)\n{\n  /* Retrieve problem size. */\n  int n = N;\n\n  /* Variable declaration/allocation. */\n  DATA_TYPE alpha;\n  DATA_TYPE beta;\n  POLYBENCH_2D_ARRAY_DECL(A, DATA_TYPE, N, N, n, n);\n  POLYBENCH_2D_ARRAY_DECL(B, DATA_TYPE, N, N, n, n);\n  POLYBENCH_1D_ARRAY_DECL(tmp, DATA_TYPE, N, n);\n  POLYBENCH_1D_ARRAY_DECL(x, DATA_TYPE, N, n);\n  POLYBENCH_1D_ARRAY_DECL(y, DATA_TYPE, N, n);\n\n\n  /* Initialize array(s). */\n  init_array (n, &alpha, &beta,\n\t      POLYBENCH_ARRAY(A),\n\t      POLYBENCH_ARRAY(B),\n\t      POLYBENCH_ARRAY(x));\n\n  /* Start timer. */\n  polybench_start_instruments;\n\n  /* Run kernel. */\n  kernel_gesummv (n, alpha, beta,\n\t\t  POLYBENCH_ARRAY(A),\n\t\t  POLYBENCH_ARRAY(B),\n\t\t  POLYBENCH_ARRAY(tmp),\n\t\t  POLYBENCH_ARRAY(x),\n\t\t  POLYBENCH_ARRAY(y));\n\n  /* Stop and print timer. */\n  polybench_stop_instruments;\n  polybench_print_instruments;\n\n  /* Prevent dead-code elimination. All live-out data must be printed\n     by the function call in argument. */\n  polybench_prevent_dce(print_array(n, POLYBENCH_ARRAY(y)));\n\n  /* Be clean. */\n  POLYBENCH_FREE_ARRAY(A);\n  POLYBENCH_FREE_ARRAY(B);\n  POLYBENCH_FREE_ARRAY(tmp);\n  POLYBENCH_FREE_ARRAY(x);\n  POLYBENCH_FREE_ARRAY(y);\n\n  return 0;\n}\n```",
+     "reasoning": "We need to add OpenMP pragmas to loops that can be safely parallelized. Let's analyze loops:\n\n1. init_array: outer loop over i, inner over j. It writes to A[i][j], B[i][j], x[i]; each iteration of i writes distinct rows and distinct x[i]; safe. Add pragma before outer loop: #pragma omp parallel for private(j) maybe. Also inner loop can be parallelized? but it's inside outer; we can collapse? Simpler: parallel for outer loop, inner loop serial. So add #pragma omp parallel for private(j) before for (i = 0; i < n; i++). Also ensure i private automatically.\n\n2. print_array: loop over i printing y[i]; order matters? prints sequentially but order of iteration may affect output formatting (newlines at every 20). If we parallelize, order non-deterministic; would change output. So not parallel.\n\n3. kernel_gesummv: loops i outer, j inner. The outer loop each iteration writes to tmp[i] and y[i]; they are independent per i. Inside inner loop reads A[i][j], B[i][j], x[j]; writes to tmp[i], y[i] accumulating sums. No race across i. So outer loop can be parallelized. Need private(j) and reduction? Not reduction across i; each iteration has its own tmp[i], y[i]; but they are written to inside loop; they are not shared across iterations. Since tmp[i] and y[i] are distinct per i, no need for reduction. However we must ensure that they are first initialized to zero before inner loop; that's inside loop. So fine.\n\nPotential issue: tmp and y are arrays; each thread writes different elements; no race.\n\nThus add #pragma omp parallel for private(j) before for (i = 0; i < _PB_N; i++).\n\nNote: need include omp header? Already using OpenMP, but not required to add includes.\n\nAlso we may add collapse for nested loops? Not needed.\n\nAdd pragmas only lines starting with #pragma omp. Ensure they are placed before loops. No other modifications.\n\nLet's produce final code with inserted pragmas.\n\nCheck also any other loops: none.\n\nAdd #include <omp.h>? Not required per rules: only insert pragmas lines. Not to add includes.\n\nOk.\n\nNow produce final file in c block."
+    },
+    "logprobs": null,
+    "finish_reason": "stop"
+   }
+  ],
+  "usage": {
+   "queue_time": 0.049509699,
+   "prompt_tokens": 1336,
+   "prompt_time": 0.055151152,
+   "completion_tokens": 1634,
+   "completion_time": 3.583690739,
+   "total_tokens": 2970,
+   "total_time": 3.638841891,
+   "prompt_tokens_details": {
+    "cached_tokens": 256
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 497
+   }
+  },
+  "usage_breakdown": null,
+  "system_fingerprint": "fp_245acb052a",
+  "x_groq": {
+   "id": "req_01m7ra7zhjes4r2e7bh9f5bcsw",
+   "seed": 1769732481
+  },
+  "service_tier": "on_demand"
+ }
+}

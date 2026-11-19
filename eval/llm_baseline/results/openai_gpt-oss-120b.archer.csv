@@ -1,0 +1,408 @@
+tool,kernel,sample,group,nested,loop_line,function,in_kernel,pragma,compiles,output,archer,verdict,p05_safety,p05_target,p05_categories,detail
+openai_gpt-oss-120b,correlation,0,0,,79,kernel_correlation,True,#pragma omp parallel for private(i) schedule(static),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,correlation,0,1,,88,kernel_correlation,True,#pragma omp parallel for private(i) schedule(static),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,correlation,0,2,,102,kernel_correlation,True,#pragma omp parallel for private(j) schedule(static),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,correlation,0,3,,110,kernel_correlation,True,"#pragma omp parallel for private(j,k) schedule(static)",True,ok,clean,correct,UNKNOWN,SEQUENTIAL,pointer-overlap unproven-dependence,
+openai_gpt-oss-120b,correlation,0,file,,,,,4 pragmas,True,ok,clean,correct,,,,
+openai_gpt-oss-120b,correlation,1,0,,35,init_array,False,#pragma omp parallel for private(j),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,correlation,1,1,,79,kernel_correlation,True,#pragma omp parallel for private(i),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,correlation,1,2,,88,kernel_correlation,True,#pragma omp parallel for private(i),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,correlation,1,3,,102,kernel_correlation,True,#pragma omp parallel for private(j),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,correlation,1,4,,110,kernel_correlation,True,"#pragma omp parallel for private(j,k)",True,ok,clean,correct,UNKNOWN,SEQUENTIAL,pointer-overlap unproven-dependence,
+openai_gpt-oss-120b,correlation,1,file,,,,,5 pragmas,True,ok,clean,correct,,,,
+openai_gpt-oss-120b,correlation,2,0,,35,init_array,False,#pragma omp parallel for,True,ok,race,wrong,SAFE,CPU_PARALLEL,,race at correlation.c:37
+openai_gpt-oss-120b,correlation,2,1,,53,print_array,False,#pragma omp parallel for private(j),True,mismatch,clean,wrong,UNKNOWN,SEQUENTIAL,opaque-callee,2 threads
+openai_gpt-oss-120b,correlation,2,2,,79,kernel_correlation,True,#pragma omp parallel for private(i),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,correlation,2,3,,88,kernel_correlation,True,#pragma omp parallel for private(i),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,correlation,2,4,,102,kernel_correlation,True,#pragma omp parallel for private(j),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,correlation,2,5,,110,kernel_correlation,True,"#pragma omp parallel for private(j,k)",True,ok,clean,correct,UNKNOWN,SEQUENTIAL,pointer-overlap unproven-dependence,
+openai_gpt-oss-120b,correlation,2,file,,,,,6 pragmas,True,mismatch,race,wrong,,,,2 threads
+openai_gpt-oss-120b,covariance,0,0,,34,init_array,False,#pragma omp parallel for collapse(2),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,covariance,0,1,,73,kernel_covariance,True,#pragma omp parallel for,True,ok,race,wrong,SAFE,CPU_PARALLEL,,race at covariance.c:77
+openai_gpt-oss-120b,covariance,0,2,,81,kernel_covariance,True,#pragma omp parallel for collapse(2),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,covariance,0,3,,85,kernel_covariance,True,"#pragma omp parallel for private(j,k)",True,ok,clean,correct,UNKNOWN,SEQUENTIAL,pointer-overlap unproven-dependence,
+openai_gpt-oss-120b,covariance,0,file,,,,,4 pragmas,True,ok,race,wrong,,,,race at covariance.c:78
+openai_gpt-oss-120b,covariance,1,0,,34,init_array,False,#pragma omp parallel for private(j),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,covariance,1,1,,73,kernel_covariance,True,#pragma omp parallel for private(i),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,covariance,1,2,,81,kernel_covariance,True,#pragma omp parallel for private(j),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,covariance,1,3,,85,kernel_covariance,True,"#pragma omp parallel for private(j,k)",True,ok,clean,correct,UNKNOWN,SEQUENTIAL,pointer-overlap unproven-dependence,
+openai_gpt-oss-120b,covariance,1,file,,,,,4 pragmas,True,ok,clean,correct,,,,
+openai_gpt-oss-120b,covariance,2,0,,34,init_array,False,#pragma omp parallel for private(j) schedule(static),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,covariance,2,1,,73,kernel_covariance,True,#pragma omp parallel for private(i) schedule(static),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,covariance,2,2,,81,kernel_covariance,True,"#pragma omp parallel for collapse(2) private(i,j) schedule(static)",True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,covariance,2,3,,85,kernel_covariance,True,"#pragma omp parallel for private(j,k) schedule(static)",True,ok,clean,correct,UNKNOWN,SEQUENTIAL,pointer-overlap unproven-dependence,
+openai_gpt-oss-120b,covariance,2,file,,,,,4 pragmas,True,ok,clean,correct,,,,
+openai_gpt-oss-120b,gemm,0,0,,37,init_array,False,#pragma omp parallel for private(j) schedule(static),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,gemm,0,1,,40,init_array,False,#pragma omp parallel for private(j) schedule(static),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,gemm,0,2,,43,init_array,False,#pragma omp parallel for private(j) schedule(static),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,gemm,0,3,,89,kernel_gemm,True,"#pragma omp parallel for private(j,k) schedule(static)",True,ok,clean,correct,UNKNOWN,SEQUENTIAL,loop-shape pointer-overlap,
+openai_gpt-oss-120b,gemm,0,file,,,,,4 pragmas,True,ok,clean,correct,,,,
+openai_gpt-oss-120b,gemm,1,0,,37,init_array,False,#pragma omp parallel for private(j) schedule(static),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,gemm,1,1,,40,init_array,False,#pragma omp parallel for private(j) schedule(static),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,gemm,1,2,,43,init_array,False,#pragma omp parallel for private(j) schedule(static),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,gemm,1,3,,89,kernel_gemm,True,"#pragma omp parallel for private(j,k) schedule(static)",True,ok,clean,correct,UNKNOWN,SEQUENTIAL,loop-shape pointer-overlap,
+openai_gpt-oss-120b,gemm,1,file,,,,,4 pragmas,True,ok,clean,correct,,,,
+openai_gpt-oss-120b,gemm,2,0,,37,init_array,False,#pragma omp parallel for,True,ok,race,wrong,SAFE,CPU_PARALLEL,,race at gemm.c:39
+openai_gpt-oss-120b,gemm,2,1,,40,init_array,False,#pragma omp parallel for,True,ok,race,wrong,SAFE,CPU_PARALLEL,,race at gemm.c:42
+openai_gpt-oss-120b,gemm,2,2,,43,init_array,False,#pragma omp parallel for,True,ok,race,wrong,SAFE,CPU_PARALLEL,,race at gemm.c:45
+openai_gpt-oss-120b,gemm,2,3,,89,kernel_gemm,True,"#pragma omp parallel for private(j,k)",True,ok,clean,correct,UNKNOWN,SEQUENTIAL,loop-shape pointer-overlap,
+openai_gpt-oss-120b,gemm,2,file,,,,,4 pragmas,True,ok,race,wrong,,,,race at gemm.c:39
+openai_gpt-oss-120b,gemver,0,file,,,,,,,,,modified,,,,changes lines other than OpenMP pragmas
+openai_gpt-oss-120b,gemver,1,0,,46,init_array,False,#pragma omp parallel for private(j),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,gemver,1,1,,101,kernel_gemver,True,#pragma omp parallel for private(j),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,gemver,1,2,,105,kernel_gemver,True,#pragma omp parallel for private(j),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,gemver,1,3,,109,kernel_gemver,True,#pragma omp parallel for,True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,gemver,1,4,,112,kernel_gemver,True,#pragma omp parallel for private(j),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,gemver,1,file,,,,,5 pragmas,True,ok,clean,correct,,,,
+openai_gpt-oss-120b,gemver,2,0,,46,init_array,False,#pragma omp parallel for,True,ok,race,wrong,SAFE,CPU_PARALLEL,,race at gemver.c:57
+openai_gpt-oss-120b,gemver,2,1,,101,kernel_gemver,True,#pragma omp parallel for,True,ok,race,wrong,SAFE,CPU_PARALLEL,,race at gemver.c:103
+openai_gpt-oss-120b,gemver,2,2,,105,kernel_gemver,True,#pragma omp parallel for,True,ok,race,wrong,SAFE,CPU_PARALLEL,,race at gemver.c:107
+openai_gpt-oss-120b,gemver,2,3,,109,kernel_gemver,True,#pragma omp parallel for,True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,gemver,2,4,,112,kernel_gemver,True,#pragma omp parallel for,True,mismatch,race,wrong,SAFE,CPU_PARALLEL,,2 threads
+openai_gpt-oss-120b,gemver,2,file,,,,,5 pragmas,True,mismatch,race,wrong,,,,2 threads
+openai_gpt-oss-120b,gesummv,0,0,,37,init_array,False,#pragma omp parallel for private(j),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,gesummv,0,1,,83,kernel_gesummv,True,#pragma omp parallel for private(j),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,gesummv,0,file,,,,,2 pragmas,True,ok,clean,correct,,,,
+openai_gpt-oss-120b,gesummv,1,0,,37,init_array,False,#pragma omp parallel for private(j),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,gesummv,1,1,,83,kernel_gesummv,True,#pragma omp parallel for private(j),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,gesummv,1,file,,,,,2 pragmas,True,ok,clean,correct,,,,
+openai_gpt-oss-120b,gesummv,2,0,,37,init_array,False,#pragma omp parallel for private(j),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,gesummv,2,1,,83,kernel_gesummv,True,#pragma omp parallel for private(j),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,gesummv,2,file,,,,,2 pragmas,True,ok,clean,correct,,,,
+openai_gpt-oss-120b,symm,0,0,,37,init_array,False,#pragma omp parallel for,True,ok,race,wrong,SAFE,CPU_PARALLEL,,race at symm.c:39
+openai_gpt-oss-120b,symm,0,1,,42,init_array,False,#pragma omp parallel for,True,ok,race,wrong,UNKNOWN,SEQUENTIAL,loop-shape,race at symm.c:44
+openai_gpt-oss-120b,symm,0,file,,,,,2 pragmas,True,ok,race,wrong,,,,race at symm.c:39
+openai_gpt-oss-120b,symm,1,0,,37,init_array,False,#pragma omp parallel for schedule(static),True,ok,race,wrong,SAFE,CPU_PARALLEL,,race at symm.c:39
+openai_gpt-oss-120b,symm,1,1,,42,init_array,False,#pragma omp parallel for schedule(static),True,ok,race,wrong,UNKNOWN,SEQUENTIAL,loop-shape,race at symm.c:44
+openai_gpt-oss-120b,symm,1,file,,,,,2 pragmas,True,ok,race,wrong,,,,race at symm.c:39
+openai_gpt-oss-120b,symm,2,0,,37,init_array,False,#pragma omp parallel for private(j) schedule(static),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,symm,2,1,,42,init_array,False,#pragma omp parallel for private(j) schedule(static),True,ok,clean,correct,UNKNOWN,SEQUENTIAL,loop-shape,
+openai_gpt-oss-120b,symm,2,2,,94,kernel_symm,True,"#pragma omp parallel for private(k,temp2) schedule(static)",True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,symm,2,file,,,,,3 pragmas,True,ok,clean,correct,,,,
+openai_gpt-oss-120b,syr2k,0,0,,37,init_array,False,#pragma omp parallel for private(j) schedule(static),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,syr2k,0,1,,42,init_array,False,#pragma omp parallel for private(j) schedule(static),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,syr2k,0,2,,88,kernel_syr2k,True,"#pragma omp parallel for private(j,k) schedule(static)",True,ok,clean,correct,UNKNOWN,SEQUENTIAL,loop-shape pointer-overlap,
+openai_gpt-oss-120b,syr2k,0,file,,,,,3 pragmas,True,ok,clean,correct,,,,
+openai_gpt-oss-120b,syr2k,1,0,,37,init_array,False,#pragma omp parallel for private(j),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,syr2k,1,1,,42,init_array,False,#pragma omp parallel for private(j),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,syr2k,1,2,,88,kernel_syr2k,True,"#pragma omp parallel for private(j,k)",True,ok,clean,correct,UNKNOWN,SEQUENTIAL,loop-shape pointer-overlap,
+openai_gpt-oss-120b,syr2k,1,file,,,,,3 pragmas,True,ok,clean,correct,,,,
+openai_gpt-oss-120b,syr2k,2,0,,37,init_array,False,#pragma omp parallel for private(j),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,syr2k,2,1,,42,init_array,False,#pragma omp parallel for private(j),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,syr2k,2,2,,88,kernel_syr2k,True,"#pragma omp parallel for private(j,k)",True,ok,clean,correct,UNKNOWN,SEQUENTIAL,loop-shape pointer-overlap,
+openai_gpt-oss-120b,syr2k,2,file,,,,,3 pragmas,True,ok,clean,correct,,,,
+openai_gpt-oss-120b,syrk,0,0,,36,init_array,False,#pragma omp parallel for private(j),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,syrk,0,1,,39,init_array,False,#pragma omp parallel for private(j),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,syrk,0,2,,55,print_array,False,#pragma omp parallel for private(j),True,mismatch,clean,wrong,UNKNOWN,SEQUENTIAL,opaque-callee,2 threads
+openai_gpt-oss-120b,syrk,0,3,,83,kernel_syrk,True,"#pragma omp parallel for private(j,k)",True,ok,clean,correct,UNKNOWN,SEQUENTIAL,loop-shape pointer-overlap,
+openai_gpt-oss-120b,syrk,0,file,,,,,4 pragmas,True,mismatch,clean,wrong,,,,2 threads
+openai_gpt-oss-120b,syrk,1,0,,36,init_array,False,#pragma omp parallel for private(j) schedule(static),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,syrk,1,1,,39,init_array,False,#pragma omp parallel for private(j) schedule(static),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,syrk,1,2,,83,kernel_syrk,True,"#pragma omp parallel for private(j,k) schedule(static)",True,ok,clean,correct,UNKNOWN,SEQUENTIAL,loop-shape pointer-overlap,
+openai_gpt-oss-120b,syrk,1,file,,,,,3 pragmas,True,ok,clean,correct,,,,
+openai_gpt-oss-120b,syrk,2,0,,36,init_array,False,#pragma omp parallel for schedule(static),True,ok,race,wrong,SAFE,CPU_PARALLEL,,race at syrk.c:38
+openai_gpt-oss-120b,syrk,2,1,,39,init_array,False,#pragma omp parallel for schedule(static),True,ok,race,wrong,SAFE,CPU_PARALLEL,,race at syrk.c:41
+openai_gpt-oss-120b,syrk,2,2,,83,kernel_syrk,True,"#pragma omp parallel for private(j,k) schedule(static)",True,ok,clean,correct,UNKNOWN,SEQUENTIAL,loop-shape pointer-overlap,
+openai_gpt-oss-120b,syrk,2,file,,,,,3 pragmas,True,ok,race,wrong,,,,race at syrk.c:38
+openai_gpt-oss-120b,trmm,0,0,,34,init_array,False,#pragma omp parallel for private(j),True,ok,clean,correct,UNKNOWN,SEQUENTIAL,loop-shape pointer-overlap,
+openai_gpt-oss-120b,trmm,0,1,,87,kernel_trmm,True,#pragma omp parallel for private(k),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,trmm,0,file,,,,,2 pragmas,True,ok,clean,correct,,,,
+openai_gpt-oss-120b,trmm,1,0,,34,init_array,False,#pragma omp parallel for private(j) schedule(static),True,ok,clean,correct,UNKNOWN,SEQUENTIAL,loop-shape pointer-overlap,
+openai_gpt-oss-120b,trmm,1,1,,87,kernel_trmm,True,#pragma omp parallel for private(k) schedule(static),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,trmm,1,file,,,,,2 pragmas,True,ok,clean,correct,,,,
+openai_gpt-oss-120b,trmm,2,0,,34,init_array,False,#pragma omp parallel for private(j),True,ok,clean,correct,UNKNOWN,SEQUENTIAL,loop-shape pointer-overlap,
+openai_gpt-oss-120b,trmm,2,1,,87,kernel_trmm,True,#pragma omp parallel for private(k) schedule(static),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,trmm,2,file,,,,,2 pragmas,True,ok,clean,correct,,,,
+openai_gpt-oss-120b,2mm,0,0,,38,init_array,False,#pragma omp parallel for collapse(2),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,2mm,0,1,,41,init_array,False,#pragma omp parallel for collapse(2),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,2mm,0,2,,44,init_array,False,#pragma omp parallel for collapse(2),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,2mm,0,3,,47,init_array,False,#pragma omp parallel for collapse(2),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,2mm,0,4,,89,kernel_2mm,True,#pragma omp parallel for collapse(2),True,ok,race,wrong,SAFE,CPU_PARALLEL,,race at 2mm.c:94
+openai_gpt-oss-120b,2mm,0,5,,96,kernel_2mm,True,#pragma omp parallel for collapse(2),True,ok,race,wrong,SAFE,CPU_PARALLEL,,race at 2mm.c:101
+openai_gpt-oss-120b,2mm,0,file,,,,,6 pragmas,True,ok,race,wrong,,,,race at 2mm.c:98
+openai_gpt-oss-120b,2mm,1,file,,,,,,,,,modified,,,,changes lines other than OpenMP pragmas
+openai_gpt-oss-120b,2mm,2,0,,38,init_array,False,#pragma omp parallel for private(j),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,2mm,2,1,,41,init_array,False,#pragma omp parallel for private(j),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,2mm,2,2,,44,init_array,False,#pragma omp parallel for private(j),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,2mm,2,3,,47,init_array,False,#pragma omp parallel for private(j),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,2mm,2,4,,89,kernel_2mm,True,"#pragma omp parallel for private(j,k)",True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,2mm,2,5,,96,kernel_2mm,True,"#pragma omp parallel for private(j,k)",True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,2mm,2,file,,,,,6 pragmas,True,ok,clean,correct,,,,
+openai_gpt-oss-120b,3mm,0,0,,34,init_array,False,#pragma omp parallel for private(j),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,3mm,0,1,,37,init_array,False,#pragma omp parallel for private(j),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,3mm,0,2,,40,init_array,False,#pragma omp parallel for private(j),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,3mm,0,3,,43,init_array,False,#pragma omp parallel for private(j),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,3mm,0,4,,85,kernel_3mm,True,"#pragma omp parallel for private(j,k)",True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,3mm,0,5,,93,kernel_3mm,True,"#pragma omp parallel for private(j,k)",True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,3mm,0,6,,101,kernel_3mm,True,"#pragma omp parallel for private(j,k)",True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,3mm,0,file,,,,,7 pragmas,True,ok,clean,correct,,,,
+openai_gpt-oss-120b,3mm,1,0,,34,init_array,False,#pragma omp parallel for schedule(static) collapse(2),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,3mm,1,1,,37,init_array,False,#pragma omp parallel for schedule(static) collapse(2),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,3mm,1,2,,40,init_array,False,#pragma omp parallel for schedule(static) collapse(2),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,3mm,1,3,,43,init_array,False,#pragma omp parallel for schedule(static) collapse(2),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,3mm,1,4,,85,kernel_3mm,True,#pragma omp parallel for schedule(static) collapse(2) private(k),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,3mm,1,5,,93,kernel_3mm,True,#pragma omp parallel for schedule(static) collapse(2) private(k),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,3mm,1,6,,101,kernel_3mm,True,#pragma omp parallel for schedule(static) collapse(2) private(k),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,3mm,1,file,,,,,7 pragmas,True,ok,clean,correct,,,,
+openai_gpt-oss-120b,3mm,2,0,,34,init_array,False,#pragma omp parallel for private(j),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,3mm,2,1,,37,init_array,False,#pragma omp parallel for private(j),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,3mm,2,2,,40,init_array,False,#pragma omp parallel for private(j),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,3mm,2,3,,43,init_array,False,#pragma omp parallel for private(j),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,3mm,2,4,,85,kernel_3mm,True,#pragma omp parallel for collapse(2) private(k),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,3mm,2,5,,93,kernel_3mm,True,#pragma omp parallel for collapse(2) private(k),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,3mm,2,6,,101,kernel_3mm,True,#pragma omp parallel for collapse(2) private(k),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,3mm,2,file,,,,,7 pragmas,True,ok,clean,correct,,,,
+openai_gpt-oss-120b,atax,0,0,,34,init_array,False,#pragma omp parallel for,True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,atax,0,1,,36,init_array,False,#pragma omp parallel for collapse(2),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,atax,0,2,,74,kernel_atax,True,#pragma omp parallel for,True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,atax,0,3,,76,kernel_atax,True,#pragma omp parallel for private(j) reduction(+:y[:_PB_N]),True,ok,clean,correct,UNKNOWN,SEQUENTIAL,loop-shape pointer-overlap,
+openai_gpt-oss-120b,atax,0,file,,,,,4 pragmas,True,ok,clean,correct,,,,
+openai_gpt-oss-120b,atax,1,0,,34,init_array,False,#pragma omp parallel for,True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,atax,1,1,,36,init_array,False,#pragma omp parallel for collapse(2),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,atax,1,2,,74,kernel_atax,True,#pragma omp parallel for,True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,atax,1,3,,76,kernel_atax,True,#pragma omp parallel for reduction(+:y[:_PB_N]),True,ok,race,wrong,UNKNOWN,SEQUENTIAL,loop-shape pointer-overlap,race at atax.c:80
+openai_gpt-oss-120b,atax,1,file,,,,,4 pragmas,True,ok,race,wrong,,,,race at atax.c:83
+openai_gpt-oss-120b,atax,2,0,,34,init_array,False,#pragma omp parallel for,True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,atax,2,1,,36,init_array,False,#pragma omp parallel for collapse(2),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,atax,2,2,,74,kernel_atax,True,#pragma omp parallel for,True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,atax,2,3,,76,kernel_atax,True,#pragma omp parallel for reduction(+:y[:_PB_N]),True,ok,race,wrong,UNKNOWN,SEQUENTIAL,loop-shape pointer-overlap,race at atax.c:80
+openai_gpt-oss-120b,atax,2,file,,,,,4 pragmas,True,ok,race,wrong,,,,race at atax.c:83
+openai_gpt-oss-120b,bicg,0,0,,33,init_array,False,#pragma omp parallel for,True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,bicg,0,1,,35,init_array,False,#pragma omp parallel for private(j),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,bicg,0,2,,83,kernel_bicg,True,#pragma omp parallel for,True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,bicg,0,3,,85,kernel_bicg,True,#pragma omp parallel for private(j) reduction(+:s[:_PB_M]),True,ok,clean,correct,UNSAFE,SEQUENTIAL,array-dependence,
+openai_gpt-oss-120b,bicg,0,file,,,,,4 pragmas,True,ok,clean,correct,,,,
+openai_gpt-oss-120b,bicg,1,0,,33,init_array,False,#pragma omp parallel for,True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,bicg,1,1,,35,init_array,False,#pragma omp parallel for private(j),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,bicg,1,2,,83,kernel_bicg,True,#pragma omp parallel for,True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,bicg,1,3,,85,kernel_bicg,True,#pragma omp parallel for private(j) reduction(+:s[:_PB_M]),True,ok,clean,correct,UNSAFE,SEQUENTIAL,array-dependence,
+openai_gpt-oss-120b,bicg,1,file,,,,,4 pragmas,True,ok,clean,correct,,,,
+openai_gpt-oss-120b,bicg,2,0,,33,init_array,False,#pragma omp parallel for,True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,bicg,2,1,,35,init_array,False,#pragma omp parallel for private(j),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,bicg,2,2,,83,kernel_bicg,True,#pragma omp parallel for,True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,bicg,2,3,,85,kernel_bicg,True,#pragma omp parallel for private(j) reduction(+:s[:_PB_M]),True,ok,clean,correct,UNSAFE,SEQUENTIAL,array-dependence,
+openai_gpt-oss-120b,bicg,2,file,,,,,4 pragmas,True,ok,clean,correct,,,,
+openai_gpt-oss-120b,doitgen,0,0,,32,init_array,False,#pragma omp parallel for collapse(3),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,doitgen,0,1,,36,init_array,False,#pragma omp parallel for collapse(2),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,doitgen,0,2,,75,kernel_doitgen,True,#pragma omp parallel for,True,ok,race,wrong,SAFE,CPU_PARALLEL,,race at doitgen.c:78
+openai_gpt-oss-120b,doitgen,0,3,,80,kernel_doitgen,True,#pragma omp parallel for,True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,doitgen,0,file,,,,,4 pragmas,True,ok,race,wrong,,,,race at doitgen.c:80
+openai_gpt-oss-120b,doitgen,1,0,,32,init_array,False,#pragma omp parallel for,True,mismatch,race,wrong,SAFE,CPU_PARALLEL,,2 threads
+openai_gpt-oss-120b,doitgen,1,1,,36,init_array,False,#pragma omp parallel for,True,ok,race,wrong,SAFE,CPU_PARALLEL,,race at doitgen.c:38
+openai_gpt-oss-120b,doitgen,1,2,,75,kernel_doitgen,True,#pragma omp parallel for private(s),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,doitgen,1,3,,80,kernel_doitgen,True,#pragma omp parallel for,True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,doitgen,1,file,,,,,4 pragmas,True,mismatch,race,wrong,,,,2 threads
+openai_gpt-oss-120b,doitgen,2,0,,32,init_array,False,#pragma omp parallel for,True,mismatch,race,wrong,SAFE,CPU_PARALLEL,,2 threads
+openai_gpt-oss-120b,doitgen,2,1,,36,init_array,False,#pragma omp parallel for,True,ok,race,wrong,SAFE,CPU_PARALLEL,,race at doitgen.c:38
+openai_gpt-oss-120b,doitgen,2,2,,75,kernel_doitgen,True,#pragma omp parallel for,True,ok,race,wrong,SAFE,CPU_PARALLEL,,race at doitgen.c:78
+openai_gpt-oss-120b,doitgen,2,3,,80,kernel_doitgen,True,#pragma omp parallel for,True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,doitgen,2,file,,,,,4 pragmas,True,mismatch,race,wrong,,,,2 threads
+openai_gpt-oss-120b,mvt,0,0,,35,init_array,False,#pragma omp parallel for private(j),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,mvt,0,1,,88,kernel_mvt,True,#pragma omp parallel for private(j),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,mvt,0,2,,91,kernel_mvt,True,#pragma omp parallel for private(j),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,mvt,0,file,,,,,3 pragmas,True,ok,clean,correct,,,,
+openai_gpt-oss-120b,mvt,1,0,,35,init_array,False,#pragma omp parallel for private(j),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,mvt,1,1,,88,kernel_mvt,True,#pragma omp parallel for private(j),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,mvt,1,2,,91,kernel_mvt,True,#pragma omp parallel for private(j),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,mvt,1,file,,,,,3 pragmas,True,ok,clean,correct,,,,
+openai_gpt-oss-120b,mvt,2,0,,35,init_array,False,#pragma omp parallel for private(j),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,mvt,2,1,,88,kernel_mvt,True,#pragma omp parallel for private(j),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,mvt,2,2,,91,kernel_mvt,True,#pragma omp parallel for private(j),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,mvt,2,file,,,,,3 pragmas,True,ok,clean,correct,,,,
+openai_gpt-oss-120b,cholesky,0,file,,,,,,,,,modified,,,,changes lines other than OpenMP pragmas
+openai_gpt-oss-120b,cholesky,1,0,,31,init_array,False,#pragma omp parallel for,True,ok,race,wrong,UNKNOWN,SEQUENTIAL,loop-shape,race at cholesky.c:34
+openai_gpt-oss-120b,cholesky,1,1,,44,init_array,False,#pragma omp parallel for collapse(2),True,ok,clean,correct,UNKNOWN,SEQUENTIAL,unknown-base,
+openai_gpt-oss-120b,cholesky,1,2,,51,init_array,False,#pragma omp parallel for collapse(2),True,ok,clean,correct,UNKNOWN,SEQUENTIAL,unknown-base,
+openai_gpt-oss-120b,cholesky,1,file,,,,,3 pragmas,True,ok,race,wrong,,,,race at cholesky.c:34
+openai_gpt-oss-120b,cholesky,2,0,,31,init_array,False,#pragma omp parallel for private(j),True,ok,clean,correct,UNKNOWN,SEQUENTIAL,loop-shape,
+openai_gpt-oss-120b,cholesky,2,1,,44,init_array,False,#pragma omp parallel for collapse(2),True,ok,clean,correct,UNKNOWN,SEQUENTIAL,unknown-base,
+openai_gpt-oss-120b,cholesky,2,2,,51,init_array,False,#pragma omp parallel for private(s),True,ok,clean,correct,UNKNOWN,SEQUENTIAL,unknown-base,
+openai_gpt-oss-120b,cholesky,2,file,,,,,3 pragmas,True,ok,clean,correct,,,,
+openai_gpt-oss-120b,durbin,0,0,,31,init_array,False,#pragma omp parallel for,True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,durbin,0,1,,80,kernel_durbin,True,#pragma omp parallel for reduction(+:sum),True,ok,clean,correct,UNSAFE,SEQUENTIAL,fp-reduction,
+openai_gpt-oss-120b,durbin,0,2,,85,kernel_durbin,True,#pragma omp parallel for,True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,durbin,0,3,,88,kernel_durbin,True,#pragma omp parallel for,True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,durbin,0,file,,,,,4 pragmas,True,ok,clean,correct,,,,
+openai_gpt-oss-120b,durbin,1,0,,31,init_array,False,#pragma omp parallel for,True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,durbin,1,1,,80,kernel_durbin,True,#pragma omp parallel for reduction(+:sum),True,ok,clean,correct,UNSAFE,SEQUENTIAL,fp-reduction,
+openai_gpt-oss-120b,durbin,1,2,,85,kernel_durbin,True,#pragma omp parallel for,True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,durbin,1,3,,88,kernel_durbin,True,#pragma omp parallel for,True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,durbin,1,file,,,,,4 pragmas,True,ok,clean,correct,,,,
+openai_gpt-oss-120b,durbin,2,0,,31,init_array,False,#pragma omp parallel for,True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,durbin,2,1,,80,kernel_durbin,True,#pragma omp parallel for reduction(+:sum),True,ok,clean,correct,UNSAFE,SEQUENTIAL,fp-reduction,
+openai_gpt-oss-120b,durbin,2,2,,85,kernel_durbin,True,#pragma omp parallel for,True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,durbin,2,3,,88,kernel_durbin,True,#pragma omp parallel for,True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,durbin,2,file,,,,,4 pragmas,True,ok,clean,correct,,,,
+openai_gpt-oss-120b,gramschmidt,0,0,,33,init_array,False,#pragma omp parallel for collapse(2),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,gramschmidt,0,1,,38,init_array,False,#pragma omp parallel for collapse(2),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,gramschmidt,0,2,,92,kernel_gramschmidt,True,#pragma omp parallel for reduction(+:nrm),True,fp-mismatch,clean,fp-sensitive,UNSAFE,SEQUENTIAL,fp-reduction,2 threads: beyond the tolerance
+openai_gpt-oss-120b,gramschmidt,0,3,,95,kernel_gramschmidt,True,#pragma omp parallel for,True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,gramschmidt,0,4,,102,kernel_gramschmidt,True,#pragma omp parallel for,True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,gramschmidt,0,file,,,,,5 pragmas,True,fp-mismatch,clean,fp-sensitive,,,,2 threads: beyond the tolerance
+openai_gpt-oss-120b,gramschmidt,1,0,,33,init_array,False,#pragma omp parallel for collapse(2),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,gramschmidt,1,1,,38,init_array,False,#pragma omp parallel for collapse(2),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,gramschmidt,1,2,,92,kernel_gramschmidt,True,#pragma omp parallel for reduction(+:nrm),True,fp-mismatch,clean,fp-sensitive,UNSAFE,SEQUENTIAL,fp-reduction,2 threads: beyond the tolerance
+openai_gpt-oss-120b,gramschmidt,1,3,,95,kernel_gramschmidt,True,#pragma omp parallel for,True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,gramschmidt,1,4,,102,kernel_gramschmidt,True,#pragma omp parallel for,True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,gramschmidt,1,file,,,,,5 pragmas,True,fp-mismatch,clean,fp-sensitive,,,,2 threads: beyond the tolerance
+openai_gpt-oss-120b,gramschmidt,2,0,,33,init_array,False,#pragma omp parallel for private(j),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,gramschmidt,2,1,,38,init_array,False,#pragma omp parallel for private(j),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,gramschmidt,2,2,,56,print_array,False,#pragma omp parallel for private(j),True,mismatch,clean,wrong,UNKNOWN,SEQUENTIAL,opaque-callee,2 threads
+openai_gpt-oss-120b,gramschmidt,2,3,,64,print_array,False,#pragma omp parallel for private(j),True,mismatch,clean,wrong,UNKNOWN,SEQUENTIAL,opaque-callee,2 threads
+openai_gpt-oss-120b,gramschmidt,2,4,,92,kernel_gramschmidt,True,#pragma omp parallel for reduction(+:nrm),True,fp-mismatch,clean,fp-sensitive,UNSAFE,SEQUENTIAL,fp-reduction,2 threads: beyond the tolerance
+openai_gpt-oss-120b,gramschmidt,2,5,,95,kernel_gramschmidt,True,#pragma omp parallel for,True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,gramschmidt,2,6,,102,kernel_gramschmidt,True,#pragma omp parallel for,True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,gramschmidt,2,file,,,,,7 pragmas,True,fp-mismatch,clean,fp-sensitive,,,,2 threads: beyond the tolerance
+openai_gpt-oss-120b,lu,0,0,,31,init_array,False,#pragma omp parallel for,True,ok,race,wrong,UNKNOWN,SEQUENTIAL,loop-shape,race at lu.c:34
+openai_gpt-oss-120b,lu,0,1,,45,init_array,False,#pragma omp parallel for,True,ok,race,wrong,UNKNOWN,SEQUENTIAL,unknown-base,race at lu.c:47
+openai_gpt-oss-120b,lu,0,2,,71,print_array,False,#pragma omp parallel for,True,mismatch,race,wrong,UNKNOWN,SEQUENTIAL,opaque-callee,2 threads
+openai_gpt-oss-120b,lu,0,file,,,,,3 pragmas,True,mismatch,race,wrong,,,,2 threads
+openai_gpt-oss-120b,lu,1,0,,31,init_array,False,#pragma omp parallel for private(j) schedule(static),True,ok,clean,correct,UNKNOWN,SEQUENTIAL,loop-shape,
+openai_gpt-oss-120b,lu,1,1,,45,init_array,False,"#pragma omp parallel for collapse(2) private(r,s) schedule(static)",True,ok,clean,correct,UNKNOWN,SEQUENTIAL,unknown-base,
+openai_gpt-oss-120b,lu,1,2,,52,init_array,False,#pragma omp parallel for private(s) schedule(static),True,ok,clean,correct,UNKNOWN,SEQUENTIAL,unknown-base,
+openai_gpt-oss-120b,lu,1,3,,97,kernel_lu,True,#pragma omp parallel for private(k) schedule(static),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,lu,1,file,,,,,4 pragmas,True,ok,clean,correct,,,,
+openai_gpt-oss-120b,lu,2,0,,31,init_array,False,#pragma omp parallel for private(j),True,ok,clean,correct,UNKNOWN,SEQUENTIAL,loop-shape,
+openai_gpt-oss-120b,lu,2,1,,45,init_array,False,#pragma omp parallel for private(s),True,ok,clean,correct,UNKNOWN,SEQUENTIAL,unknown-base,
+openai_gpt-oss-120b,lu,2,2,,53,init_array,False,#pragma omp parallel for private(s),True,ok,clean,correct,UNKNOWN,SEQUENTIAL,unknown-base,
+openai_gpt-oss-120b,lu,2,3,,98,kernel_lu,True,#pragma omp parallel for private(k),True,mismatch,race,wrong,UNSAFE,SEQUENTIAL,array-dependence unproven-dependence,2 threads
+openai_gpt-oss-120b,lu,2,file,,,,,4 pragmas,True,mismatch,race,wrong,,,,2 threads
+openai_gpt-oss-120b,ludcmp,0,0,,35,init_array,False,#pragma omp parallel for,True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,ludcmp,0,1,,42,init_array,False,#pragma omp parallel for,True,ok,race,wrong,UNKNOWN,SEQUENTIAL,loop-shape,race at ludcmp.c:47
+openai_gpt-oss-120b,ludcmp,0,2,,56,init_array,False,#pragma omp parallel for,True,ok,race,wrong,UNKNOWN,SEQUENTIAL,unknown-base,race at ludcmp.c:58
+openai_gpt-oss-120b,ludcmp,0,file,,,,,3 pragmas,True,ok,race,wrong,,,,race at ludcmp.c:46
+openai_gpt-oss-120b,ludcmp,1,0,,35,init_array,False,#pragma omp parallel for,True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,ludcmp,1,1,,42,init_array,False,#pragma omp parallel for,True,ok,race,wrong,UNKNOWN,SEQUENTIAL,loop-shape,race at ludcmp.c:47
+openai_gpt-oss-120b,ludcmp,1,2,,56,init_array,False,#pragma omp parallel for collapse(2),True,ok,clean,correct,UNKNOWN,SEQUENTIAL,unknown-base,
+openai_gpt-oss-120b,ludcmp,1,3,,63,init_array,False,#pragma omp parallel for collapse(2),True,ok,clean,correct,UNKNOWN,SEQUENTIAL,unknown-base,
+openai_gpt-oss-120b,ludcmp,1,4,,113,kernel_ludcmp,True,#pragma omp parallel for private(w),True,ok,race,wrong,SAFE,CPU_PARALLEL,,race at ludcmp.c:116
+openai_gpt-oss-120b,ludcmp,1,file,,,,,5 pragmas,True,ok,race,wrong,,,,race at ludcmp.c:46
+openai_gpt-oss-120b,ludcmp,2,0,,35,init_array,False,#pragma omp parallel for,True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,ludcmp,2,1,,42,init_array,False,#pragma omp parallel for private(j),True,ok,clean,correct,UNKNOWN,SEQUENTIAL,loop-shape,
+openai_gpt-oss-120b,ludcmp,2,2,,56,init_array,False,#pragma omp parallel for private(s),True,ok,clean,correct,UNKNOWN,SEQUENTIAL,unknown-base,
+openai_gpt-oss-120b,ludcmp,2,3,,63,init_array,False,#pragma omp parallel for private(s),True,ok,clean,correct,UNKNOWN,SEQUENTIAL,unknown-base,
+openai_gpt-oss-120b,ludcmp,2,4,,113,kernel_ludcmp,True,#pragma omp parallel for private(w),True,ok,race,wrong,SAFE,CPU_PARALLEL,,race at ludcmp.c:116
+openai_gpt-oss-120b,ludcmp,2,file,,,,,5 pragmas,True,ok,race,wrong,,,,race at ludcmp.c:120
+openai_gpt-oss-120b,trisolv,0,0,,33,init_array,False,#pragma omp parallel for private(j),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,trisolv,0,file,,,,,1 pragmas,True,ok,clean,correct,,,,
+openai_gpt-oss-120b,trisolv,1,0,,33,init_array,False,#pragma omp parallel for private(j),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,trisolv,1,file,,,,,1 pragmas,True,ok,clean,correct,,,,
+openai_gpt-oss-120b,trisolv,2,0,,33,init_array,False,#pragma omp parallel for private(j),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,trisolv,2,file,,,,,1 pragmas,True,ok,clean,correct,,,,
+openai_gpt-oss-120b,deriche,0,0,,35,init_array,False,#pragma omp parallel for collapse(2) schedule(static),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,deriche,0,1,,92,kernel_deriche,True,"#pragma omp parallel for private(j, xm1, ym1, ym2) schedule(static)",True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,deriche,0,2,,104,kernel_deriche,True,"#pragma omp parallel for private(j, xp1, xp2, yp1, yp2) schedule(static)",True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,deriche,0,3,,118,kernel_deriche,True,#pragma omp parallel for collapse(2) schedule(static),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,deriche,0,4,,123,kernel_deriche,True,"#pragma omp parallel for private(i, tm1, ym1, ym2) schedule(static)",True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,deriche,0,5,,136,kernel_deriche,True,"#pragma omp parallel for private(i, tp1, tp2, yp1, yp2) schedule(static)",True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,deriche,0,6,,150,kernel_deriche,True,#pragma omp parallel for collapse(2) schedule(static),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,deriche,0,file,,,,,7 pragmas,True,ok,clean,correct,,,,
+openai_gpt-oss-120b,deriche,1,0,,35,init_array,False,#pragma omp parallel for private(j),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,deriche,1,1,,92,kernel_deriche,True,"#pragma omp parallel for private(xm1, ym1, ym2)",True,ok,race,wrong,SAFE,CPU_PARALLEL,,race at deriche.c:97
+openai_gpt-oss-120b,deriche,1,2,,104,kernel_deriche,True,"#pragma omp parallel for private(xp1, xp2, yp1, yp2)",True,ok,race,wrong,SAFE,CPU_PARALLEL,,race at deriche.c:110
+openai_gpt-oss-120b,deriche,1,3,,118,kernel_deriche,True,#pragma omp parallel for collapse(2),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,deriche,1,4,,123,kernel_deriche,True,"#pragma omp parallel for private(tm1, ym1, ym2)",True,ok,race,wrong,SAFE,CPU_PARALLEL,,race at deriche.c:128
+openai_gpt-oss-120b,deriche,1,5,,136,kernel_deriche,True,"#pragma omp parallel for private(tp1, tp2, yp1, yp2)",True,ok,race,wrong,SAFE,CPU_PARALLEL,,race at deriche.c:142
+openai_gpt-oss-120b,deriche,1,6,,150,kernel_deriche,True,#pragma omp parallel for collapse(2),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,deriche,1,file,,,,,7 pragmas,True,ok,race,wrong,,,,race at deriche.c:98
+openai_gpt-oss-120b,deriche,2,0,,35,init_array,False,#pragma omp parallel for collapse(2) schedule(static),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,deriche,2,1,,92,kernel_deriche,True,"#pragma omp parallel for private(xm1, ym1, ym2) schedule(static)",True,ok,race,wrong,SAFE,CPU_PARALLEL,,race at deriche.c:97
+openai_gpt-oss-120b,deriche,2,2,,104,kernel_deriche,True,"#pragma omp parallel for private(xp1, xp2, yp1, yp2) schedule(static)",True,ok,race,wrong,SAFE,CPU_PARALLEL,,race at deriche.c:110
+openai_gpt-oss-120b,deriche,2,3,,118,kernel_deriche,True,#pragma omp parallel for collapse(2) schedule(static),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,deriche,2,4,,123,kernel_deriche,True,"#pragma omp parallel for private(tm1, ym1, ym2) schedule(static)",True,ok,race,wrong,SAFE,CPU_PARALLEL,,race at deriche.c:128
+openai_gpt-oss-120b,deriche,2,5,,136,kernel_deriche,True,"#pragma omp parallel for private(tp1, tp2, yp1, yp2) schedule(static)",True,ok,race,wrong,SAFE,CPU_PARALLEL,,race at deriche.c:142
+openai_gpt-oss-120b,deriche,2,6,,150,kernel_deriche,True,#pragma omp parallel for collapse(2) schedule(static),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,deriche,2,file,,,,,7 pragmas,True,ok,race,wrong,,,,race at deriche.c:98
+openai_gpt-oss-120b,floyd-warshall,0,0,,31,init_array,False,#pragma omp parallel for,True,mismatch,race,wrong,SAFE,CPU_PARALLEL,,2 threads
+openai_gpt-oss-120b,floyd-warshall,0,1,,72,kernel_floyd_warshall,True,#pragma omp parallel for,True,ok,race,wrong,UNKNOWN,SEQUENTIAL,unproven-dependence,race at floyd-warshall.c:74
+openai_gpt-oss-120b,floyd-warshall,0,file,,,,,2 pragmas,True,mismatch,race,wrong,,,,2 threads
+openai_gpt-oss-120b,floyd-warshall,1,0,,31,init_array,False,#pragma omp parallel for private(j),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,floyd-warshall,1,1,,72,kernel_floyd_warshall,True,#pragma omp parallel for private(j),True,ok,race,wrong,UNKNOWN,SEQUENTIAL,unproven-dependence,race at floyd-warshall.c:75:43
+openai_gpt-oss-120b,floyd-warshall,1,file,,,,,2 pragmas,True,ok,race,wrong,,,,race at floyd-warshall.c:76:43
+openai_gpt-oss-120b,floyd-warshall,2,0,,31,init_array,False,#pragma omp parallel for collapse(2),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,floyd-warshall,2,1,,72,kernel_floyd_warshall,True,#pragma omp parallel for private(j),True,ok,race,wrong,UNKNOWN,SEQUENTIAL,unproven-dependence,race at floyd-warshall.c:75:43
+openai_gpt-oss-120b,floyd-warshall,2,file,,,,,2 pragmas,True,ok,race,wrong,,,,race at floyd-warshall.c:76:43
+openai_gpt-oss-120b,nussinov,0,0,,38,init_array,False,#pragma omp parallel for,True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,nussinov,0,1,,42,init_array,False,#pragma omp parallel for collapse(2),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,nussinov,0,file,,,,,2 pragmas,True,ok,clean,correct,,,,
+openai_gpt-oss-120b,nussinov,1,0,,38,init_array,False,#pragma omp parallel for,True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,nussinov,1,1,,42,init_array,False,#pragma omp parallel for collapse(2),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,nussinov,1,file,,,,,2 pragmas,True,ok,clean,correct,,,,
+openai_gpt-oss-120b,nussinov,2,0,,38,init_array,False,#pragma omp parallel for,True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,nussinov,2,1,,42,init_array,False,#pragma omp parallel for,True,ok,race,wrong,SAFE,CPU_PARALLEL,,race at nussinov.c:44
+openai_gpt-oss-120b,nussinov,2,file,,,,,2 pragmas,True,ok,race,wrong,,,,race at nussinov.c:45
+openai_gpt-oss-120b,adi,0,0,,31,init_array,False,#pragma omp parallel for collapse(2),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,adi,0,1,,98,kernel_adi,True,#pragma omp parallel for private(j),True,ok,clean,correct,UNKNOWN,SEQUENTIAL,loop-shape pointer-overlap,
+openai_gpt-oss-120b,adi,0,2,,113,kernel_adi,True,#pragma omp parallel for private(j),True,ok,clean,correct,UNKNOWN,SEQUENTIAL,loop-shape pointer-overlap,
+openai_gpt-oss-120b,adi,0,file,,,,,3 pragmas,True,ok,clean,correct,,,,
+openai_gpt-oss-120b,adi,1,0,,31,init_array,False,#pragma omp parallel for private(j),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,adi,1,1,,98,kernel_adi,True,#pragma omp parallel for private(j),True,ok,clean,correct,UNKNOWN,SEQUENTIAL,loop-shape pointer-overlap,
+openai_gpt-oss-120b,adi,1,2,,113,kernel_adi,True,#pragma omp parallel for private(j),True,ok,clean,correct,UNKNOWN,SEQUENTIAL,loop-shape pointer-overlap,
+openai_gpt-oss-120b,adi,1,file,,,,,3 pragmas,True,ok,clean,correct,,,,
+openai_gpt-oss-120b,adi,2,0,,31,init_array,False,#pragma omp parallel for private(j),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,adi,2,1,,98,kernel_adi,True,#pragma omp parallel for private(j),True,ok,clean,correct,UNKNOWN,SEQUENTIAL,loop-shape pointer-overlap,
+openai_gpt-oss-120b,adi,2,2,,113,kernel_adi,True,#pragma omp parallel for private(j),True,ok,clean,correct,UNKNOWN,SEQUENTIAL,loop-shape pointer-overlap,
+openai_gpt-oss-120b,adi,2,file,,,,,3 pragmas,True,ok,clean,correct,,,,
+openai_gpt-oss-120b,fdtd-2d,0,0,,36,init_array,False,#pragma omp parallel for,True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,fdtd-2d,0,1,,38,init_array,False,"#pragma omp parallel for collapse(2) private(i,j)",True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,fdtd-2d,0,2,,104,kernel_fdtd_2d,True,#pragma omp parallel for private(j),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,fdtd-2d,0,3,,106,kernel_fdtd_2d,True,"#pragma omp parallel for collapse(2) private(i,j)",True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,fdtd-2d,0,4,,109,kernel_fdtd_2d,True,"#pragma omp parallel for collapse(2) private(i,j)",True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,fdtd-2d,0,5,,112,kernel_fdtd_2d,True,"#pragma omp parallel for collapse(2) private(i,j)",True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,fdtd-2d,0,file,,,,,6 pragmas,True,ok,clean,correct,,,,
+openai_gpt-oss-120b,fdtd-2d,1,0,,36,init_array,False,#pragma omp parallel for,True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,fdtd-2d,1,1,,38,init_array,False,#pragma omp parallel for collapse(2),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,fdtd-2d,1,2,,104,kernel_fdtd_2d,True,#pragma omp parallel for,True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,fdtd-2d,1,3,,106,kernel_fdtd_2d,True,#pragma omp parallel for collapse(2),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,fdtd-2d,1,4,,109,kernel_fdtd_2d,True,#pragma omp parallel for collapse(2),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,fdtd-2d,1,5,,112,kernel_fdtd_2d,True,#pragma omp parallel for collapse(2),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,fdtd-2d,1,file,,,,,6 pragmas,True,ok,clean,correct,,,,
+openai_gpt-oss-120b,fdtd-2d,2,0,,36,init_array,False,#pragma omp parallel for,True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,fdtd-2d,2,1,,38,init_array,False,#pragma omp parallel for private(j),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,fdtd-2d,2,2,,104,kernel_fdtd_2d,True,#pragma omp parallel for private(j),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,fdtd-2d,2,3,,106,kernel_fdtd_2d,True,#pragma omp parallel for private(j),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,fdtd-2d,2,4,,109,kernel_fdtd_2d,True,#pragma omp parallel for private(j),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,fdtd-2d,2,5,,112,kernel_fdtd_2d,True,#pragma omp parallel for private(j),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,fdtd-2d,2,file,,,,,6 pragmas,True,ok,clean,correct,,,,
+openai_gpt-oss-120b,heat-3d,0,0,,32,init_array,False,#pragma omp parallel for collapse(3),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,heat-3d,0,1,,73,kernel_heat_3d,True,#pragma omp parallel for collapse(3),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,heat-3d,0,2,,83,kernel_heat_3d,True,#pragma omp parallel for collapse(3),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,heat-3d,0,file,,,,,3 pragmas,True,ok,clean,correct,,,,
+openai_gpt-oss-120b,heat-3d,1,0,,32,init_array,False,#pragma omp parallel for collapse(3),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,heat-3d,1,1,,73,kernel_heat_3d,True,#pragma omp parallel for collapse(3),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,heat-3d,1,2,,83,kernel_heat_3d,True,#pragma omp parallel for collapse(3),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,heat-3d,1,file,,,,,3 pragmas,True,ok,clean,correct,,,,
+openai_gpt-oss-120b,heat-3d,2,0,,32,init_array,False,#pragma omp parallel for collapse(3),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,heat-3d,2,1,,74,kernel_heat_3d,True,#pragma omp parallel for collapse(3),False,na,na,no-compile,SAFE,CPU_PARALLEL,,"/p05/eval/llm_baseline/work/check-linux/bin/521485668eb14831.tmp7/heat-3d.c:77:21: error: expected 3 for loops after '#pragma omp parallel for', but found only 2"
+openai_gpt-oss-120b,heat-3d,2,2,,84,kernel_heat_3d,True,#pragma omp parallel for collapse(3),False,na,na,no-compile,SAFE,CPU_PARALLEL,,"/p05/eval/llm_baseline/work/check-linux/bin/13d2f5895dcface9.tmp7/heat-3d.c:87:20: error: expected 3 for loops after '#pragma omp parallel for', but found only 2"
+openai_gpt-oss-120b,heat-3d,2,file,,,,,3 pragmas,False,na,na,no-compile,,,,"/p05/eval/llm_baseline/work/check-linux/bin/3448c24bda69233b.tmp7/heat-3d.c:78:21: error: expected 3 for loops after '#pragma omp parallel for', but found only 2"
+openai_gpt-oss-120b,jacobi-1d,0,0,,32,init_array,False,#pragma omp parallel for,True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,jacobi-1d,0,1,,74,kernel_jacobi_1d,True,#pragma omp parallel for,True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,jacobi-1d,0,2,,76,kernel_jacobi_1d,True,#pragma omp parallel for,True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,jacobi-1d,0,file,,,,,3 pragmas,True,ok,clean,correct,,,,
+openai_gpt-oss-120b,jacobi-1d,1,0,,32,init_array,False,#pragma omp parallel for,True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,jacobi-1d,1,1,,74,kernel_jacobi_1d,True,#pragma omp parallel for,True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,jacobi-1d,1,2,,76,kernel_jacobi_1d,True,#pragma omp parallel for,True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,jacobi-1d,1,file,,,,,3 pragmas,True,ok,clean,correct,,,,
+openai_gpt-oss-120b,jacobi-1d,2,0,,32,init_array,False,#pragma omp parallel for,True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,jacobi-1d,2,1,,74,kernel_jacobi_1d,True,#pragma omp parallel for,True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,jacobi-1d,2,2,,76,kernel_jacobi_1d,True,#pragma omp parallel for,True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,jacobi-1d,2,file,,,,,3 pragmas,True,ok,clean,correct,,,,
+openai_gpt-oss-120b,jacobi-2d,0,0,,32,init_array,False,#pragma omp parallel for collapse(2),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,jacobi-2d,0,1,,75,kernel_jacobi_2d,True,#pragma omp parallel for collapse(2),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,jacobi-2d,0,2,,78,kernel_jacobi_2d,True,#pragma omp parallel for collapse(2),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,jacobi-2d,0,file,,,,,3 pragmas,True,ok,clean,correct,,,,
+openai_gpt-oss-120b,jacobi-2d,1,0,,32,init_array,False,#pragma omp parallel for collapse(2),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,jacobi-2d,1,1,,75,kernel_jacobi_2d,True,#pragma omp parallel for collapse(2),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,jacobi-2d,1,2,,78,kernel_jacobi_2d,True,#pragma omp parallel for collapse(2),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,jacobi-2d,1,file,,,,,3 pragmas,True,ok,clean,correct,,,,
+openai_gpt-oss-120b,jacobi-2d,2,0,,32,init_array,False,#pragma omp parallel for collapse(2),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,jacobi-2d,2,1,,75,kernel_jacobi_2d,True,#pragma omp parallel for collapse(2),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,jacobi-2d,2,2,,78,kernel_jacobi_2d,True,#pragma omp parallel for collapse(2),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,jacobi-2d,2,file,,,,,3 pragmas,True,ok,clean,correct,,,,
+openai_gpt-oss-120b,seidel-2d,0,0,,31,init_array,False,#pragma omp parallel for collapse(2),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,seidel-2d,0,file,,,,,1 pragmas,True,ok,clean,correct,,,,
+openai_gpt-oss-120b,seidel-2d,1,0,,31,init_array,False,#pragma omp parallel for collapse(2),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+openai_gpt-oss-120b,seidel-2d,1,file,,,,,1 pragmas,True,ok,clean,correct,,,,
+openai_gpt-oss-120b,seidel-2d,2,0,,31,init_array,False,#pragma omp parallel for,True,ok,race,wrong,SAFE,CPU_PARALLEL,,race at seidel-2d.c:33
+openai_gpt-oss-120b,seidel-2d,2,file,,,,,1 pragmas,True,ok,race,wrong,,,,race at seidel-2d.c:33

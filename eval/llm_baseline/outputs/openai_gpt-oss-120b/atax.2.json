@@ -1,0 +1,49 @@
+{
+ "provider": "groq",
+ "model": "openai/gpt-oss-120b",
+ "kernel": "linear-algebra/kernels/atax/atax.c",
+ "sample": 2,
+ "requested": "2026-11-18T22:00:10.439903+00:00",
+ "outcome": "complete",
+ "temperature": "default",
+ "response": {
+  "id": "chatcmpl-dce2a33b-a0b1-49c1-b205-91d0b40c0bd2",
+  "object": "chat.completion",
+  "created": 1795039221,
+  "model": "openai/gpt-oss-120b",
+  "choices": [
+   {
+    "index": 0,
+    "message": {
+     "role": "assistant",
+     "content": "```c\n/**\n * This version is stamped on May 10, 2016\n *\n * Contact:\n *   Louis-Noel Pouchet <pouchet.ohio-state.edu>\n *   Tomofumi Yuki <tomofumi.yuki.fr>\n *\n * Web address: http://polybench.sourceforge.net\n */\n/* atax.c: this file is part of PolyBench/C */\n\n#include <stdio.h>\n#include <unistd.h>\n#include <string.h>\n#include <math.h>\n\n/* Include polybench common header. */\n#include <polybench.h>\n\n/* Include benchmark-specific header. */\n#include \"atax.h\"\n\n\n/* Array initialization. */\nstatic\nvoid init_array (int m, int n,\n\t\t DATA_TYPE POLYBENCH_2D(A,M,N,m,n),\n\t\t DATA_TYPE POLYBENCH_1D(x,N,n))\n{\n  int i, j;\n  DATA_TYPE fn;\n  fn = (DATA_TYPE)n;\n\n#pragma omp parallel for\n  for (i = 0; i < n; i++)\n      x[i] = 1 + (i / fn);\n#pragma omp parallel for collapse(2)\n  for (i = 0; i < m; i++)\n    for (j = 0; j < n; j++)\n      A[i][j] = (DATA_TYPE) ((i+j) % n) / (5*m);\n}\n\n\n/* DCE code. Must scan the entire live-out data.\n   Can be used also to check the correctness of the output. */\nstatic\nvoid print_array(int n,\n\t\t DATA_TYPE POLYBENCH_1D(y,N,n))\n\n{\n  int i;\n\n  POLYBENCH_DUMP_START;\n  POLYBENCH_DUMP_BEGIN(\"y\");\n  for (i = 0; i < n; i++) {\n    if (i % 20 == 0) fprintf (POLYBENCH_DUMP_TARGET, \"\\n\");\n    fprintf (POLYBENCH_DUMP_TARGET, DATA_PRINTF_MODIFIER, y[i]);\n  }\n  POLYBENCH_DUMP_END(\"y\");\n  POLYBENCH_DUMP_FINISH;\n}\n\n\n/* Main computational kernel. The whole function will be timed,\n   including the call and return. */\nstatic\nvoid kernel_atax(int m, int n,\n\t\t DATA_TYPE POLYBENCH_2D(A,M,N,m,n),\n\t\t DATA_TYPE POLYBENCH_1D(x,N,n),\n\t\t DATA_TYPE POLYBENCH_1D(y,N,n),\n\t\t DATA_TYPE POLYBENCH_1D(tmp,M,m))\n{\n  int i, j;\n\n#pragma scop\n#pragma omp parallel for\n  for (i = 0; i < _PB_N; i++)\n    y[i] = 0;\n#pragma omp parallel for reduction(+:y[:_PB_N])\n  for (i = 0; i < _PB_M; i++)\n    {\n      tmp[i] = SCALAR_VAL(0.0);\n      for (j = 0; j < _PB_N; j++)\n\ttmp[i] = tmp[i] + A[i][j] * x[j];\n      for (j = 0; j < _PB_N; j++)\n\ty[j] = y[j] + A[i][j] * tmp[i];\n    }\n#pragma endscop\n\n}\n\n\nint main(int argc, char** argv)\n{\n  /* Retrieve problem size. */\n  int m = M;\n  int n = N;\n\n  /* Variable declaration/allocation. */\n  POLYBENCH_2D_ARRAY_DECL(A, DATA_TYPE, M, N, m, n);\n  POLYBENCH_1D_ARRAY_DECL(x, DATA_TYPE, N, n);\n  POLYBENCH_1D_ARRAY_DECL(y, DATA_TYPE, N, n);\n  POLYBENCH_1D_ARRAY_DECL(tmp, DATA_TYPE, M, m);\n\n  /* Initialize array(s). */\n  init_array (m, n, POLYBENCH_ARRAY(A), POLYBENCH_ARRAY(x));\n\n  /* Start timer. */\n  polybench_start_instruments;\n\n  /* Run kernel. */\n  kernel_atax (m, n,\n\t       POLYBENCH_ARRAY(A),\n\t       POLYBENCH_ARRAY(x),\n\t       POLYBENCH_ARRAY(y),\n\t       POLYBENCH_ARRAY(tmp));\n\n  /* Stop and print timer. */\n  polybench_stop_instruments;\n  polybench_print_instruments;\n\n  /* Prevent dead-code elimination. All live-out data must be printed\n     by the function call in argument. */\n  polybench_prevent_dce(print_array(n, POLYBENCH_ARRAY(y)));\n\n  /* Be clean. */\n  POLYBENCH_FREE_ARRAY(A);\n  POLYBENCH_FREE_ARRAY(x);\n  POLYBENCH_FREE_ARRAY(y);\n  POLYBENCH_FREE_ARRAY(tmp);\n\n  return 0;\n}\n```\n",
+     "reasoning": "We need to add #pragma omp parallel for directives where loops can be parallelized safely. Must not change code otherwise. Need to insert directives before loops.\n\nLook at loops:\n\n1. init_array: \n   - first loop over i from 0 to n: x[i] = 1 + (i / fn); independent, safe parallel. Need pragma before it.\n   - second nested loops: for i=0..m-1, for j=0..n-1: A[i][j] = ... depends only on i,j, safe. Could use collapse(2) or just parallel for outer. Use pragma omp parallel for collapse(2) to parallelize both loops.\n\n2. print_array: loop over i prints y[i]; independent, safe. Could parallelize but printing order may change; but function is for DCE, output order may be required. Changing order could affect output. Better leave without pragma (since order matters). So no pragma.\n\n3. kernel_atax: loops inside #pragma scop region.\n\n- First loop: for (i = 0; i < _PB_N; i++) y[i] = 0; independent, can parallelize. Use pragma omp parallel for.\n\n- Second outer loop: for (i = 0; i < _PB_M; i++) { ... } Inside, there are operations:\n\n   tmp[i] = 0; then inner loop over j: tmp[i] += A[i][j] * x[j]; That's reduction over j into tmp[i] but each iteration of outer i writes to distinct tmp[i]; So inner loop can be parallelized with reduction, but since each i is independent, we could also parallelize outer i loop and keep inner sequential. However inner loop also independent per j (reads A[i][j] and x[j]), writes to tmp[i] (a private variable per i). Since each i's tmp[i] is distinct, we can parallelize outer i loop with no race. But there is also second inner loop: for (j = 0; j < _PB_N; j++) y[j] = y[j] + A[i][j] * tmp[i]; This updates y[j] across different i; there is a race because multiple i iterations will update same y[j] concurrently. So cannot parallelize outer i loop without reduction on y. y is being accumulated across i. This is a reduction over y[j] across i. OpenMP supports reduction on arrays not directly; you could use reduction(+:y[:_PB_N]) with OpenMP 4.5 (array reduction). Not sure if allowed. Safer: we could parallelize inner loops with appropriate reduction but need to handle y accumulation.\n\nOption: Parallelize outer i loop with reduction on y array using reduction(+:y[:_PB_N]) if allowed. Assuming modern OpenMP, we can use that. Use #pragma omp parallel for reduction(+:y[:_PB_N]) private(tmp_i) maybe.\n\nBut we also need to compute tmp[i] within same iteration. Since each thread will have its own copy of tmp[i] (element of array) that's okay because each i distinct. However we write to tmp[i] which is shared array but each i unique, no race.\n\nThus we can do:\n\n#pragma omp parallel for reduction(+:y[:_PB_N])\nfor (i=0;i<_PB_M;i++) {\n   tmp[i]=0;\n   for (j=0;j<_PB_N;j++) tmp[i] += A[i][j] * x[j];\n   for (j=0;j<_PB_N;j++) y[j] += A[i][j] * tmp[i];\n}\n\nBut need to ensure y array is correctly reduced across threads. Use reduction on array slice.\n\nAlternatively, we could keep outer i loop sequential, but parallelize inner loops with private temporary variable for tmp[i]; However second inner loop still writes y[j] race. Could parallelize that loop with atomic updates, but not efficient.\n\nBetter to use reduction.\n\nThus we insert pragma before outer i loop.\n\nAlso need to include private clause for i,j perhaps; OpenMP automatically makes loop variable private. But for reduction array we need to ensure correct.\n\nAlso before first y zeroing loop, add pragma.\n\nNow also need to ensure include <omp.h>? Not required for pragmas.\n\nNow implement modifications:\n\nAdd pragma before init loops.\n\nIn init_array first loop: #pragma omp parallel for\n\nSecond nested loops: #pragma omp parallel for collapse(2)\n\nIn kernel: before first y zero loop: #pragma omp parallel for\n\nBefore outer i loop: #pragma omp parallel for reduction(+:y[:_PB_N])\n\nPotential issue: the reduction on y requires that y is a pointer to contiguous array; in this code y is defined via POLYBENCH_1D_ARRAY_DECL macro; likely contiguous.\n\nNow produce final file with inserted pragmas lines.\n\nWe must not change any other line. Insert lines exactly before loops.\n\nLet's craft.\n\nNote line numbers not needed.\n\nImplementation:\n\nAfter line with for (i = 0; i < n; i++) x[i] = ... ; add pragma before that line.\n\nIn code snippet:\n\nfor (i = 0; i < n; i++)\n    x[i] = ...\n\nWe add pragma before for.\n\nSimilarly for nested loops: after \"for (i = 0; i < m; i++)\" line? Actually we need pragma before outer for.\n\nThus:\n\n#pragma omp parallel for collapse(2)\nfor (i = 0; i < m; i++)\n    for (j = 0; j < n; j++)\n        A[i][j] = ...\n\nNow kernel:\n\n#pragma omp parallel for\nfor (i = 0; i < _PB_N; i++)\n    y[i] = 0;\n\nThen outer i loop:\n\n#pragma omp parallel for reduction(+:y[:_PB_N])\nfor (i = 0; i < _PB_M; i++)\n{\n   ...\n}\n\nWe should also ensure that the reduction clause works with variable y defined as array; need to use y[0:_PB_N] or y[:_PB_N] whichever syntax. OpenMP supports array sections like y[:_PB_N] (C). We'll use y[:_PB_N].\n\nNow produce final code block."
+    },
+    "logprobs": null,
+    "finish_reason": "stop"
+   }
+  ],
+  "usage": {
+   "queue_time": 0.048634215,
+   "prompt_tokens": 1203,
+   "prompt_time": 0.009561593,
+   "completion_tokens": 2323,
+   "completion_time": 5.967830886,
+   "total_tokens": 3526,
+   "total_time": 5.977392479,
+   "prompt_tokens_details": {
+    "cached_tokens": 1024
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 1301
+   }
+  },
+  "usage_breakdown": null,
+  "system_fingerprint": "fp_a4be3b0989",
+  "x_groq": {
+   "id": "req_01m7rasfzzemev8ybj5g30093d",
+   "seed": 319986221
+  },
+  "service_tier": "on_demand"
+ }
+}
