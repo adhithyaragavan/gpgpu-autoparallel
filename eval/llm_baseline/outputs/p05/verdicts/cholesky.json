@@ -1,0 +1,129 @@
+{
+ "31": {
+  "categories": [
+   "loop-shape"
+  ],
+  "function": "init_array",
+  "safety": "UNKNOWN",
+  "target": "SEQUENTIAL"
+ },
+ "33": {
+  "categories": [],
+  "function": "init_array",
+  "safety": "SAFE",
+  "target": "GPU_OFFLOAD"
+ },
+ "35": {
+  "categories": [],
+  "function": "init_array",
+  "safety": "SAFE",
+  "target": "GPU_OFFLOAD"
+ },
+ "44": {
+  "categories": [
+   "unknown-base"
+  ],
+  "function": "init_array",
+  "safety": "UNKNOWN",
+  "target": "SEQUENTIAL"
+ },
+ "45": {
+  "categories": [
+   "unknown-base"
+  ],
+  "function": "init_array",
+  "safety": "UNKNOWN",
+  "target": "SEQUENTIAL"
+ },
+ "47": {
+  "categories": [
+   "unknown-base"
+  ],
+  "function": "init_array",
+  "safety": "UNKNOWN",
+  "target": "SEQUENTIAL"
+ },
+ "48": {
+  "categories": [
+   "unknown-base"
+  ],
+  "function": "init_array",
+  "safety": "UNKNOWN",
+  "target": "SEQUENTIAL"
+ },
+ "49": {
+  "categories": [
+   "unknown-base"
+  ],
+  "function": "init_array",
+  "safety": "UNKNOWN",
+  "target": "SEQUENTIAL"
+ },
+ "51": {
+  "categories": [
+   "unknown-base"
+  ],
+  "function": "init_array",
+  "safety": "UNKNOWN",
+  "target": "SEQUENTIAL"
+ },
+ "52": {
+  "categories": [
+   "unknown-base"
+  ],
+  "function": "init_array",
+  "safety": "UNKNOWN",
+  "target": "SEQUENTIAL"
+ },
+ "70": {
+  "categories": [
+   "opaque-callee"
+  ],
+  "function": "print_array",
+  "safety": "UNKNOWN",
+  "target": "SEQUENTIAL"
+ },
+ "71": {
+  "categories": [
+   "opaque-callee"
+  ],
+  "function": "print_array",
+  "safety": "UNKNOWN",
+  "target": "SEQUENTIAL"
+ },
+ "90": {
+  "categories": [
+   "loop-shape",
+   "unproven-dependence"
+  ],
+  "function": "kernel_cholesky",
+  "safety": "UNKNOWN",
+  "target": "SEQUENTIAL"
+ },
+ "92": {
+  "categories": [
+   "unproven-dependence"
+  ],
+  "function": "kernel_cholesky",
+  "safety": "UNKNOWN",
+  "target": "SEQUENTIAL"
+ },
+ "93": {
+  "categories": [
+   "array-dependence",
+   "unproven-dependence"
+  ],
+  "function": "kernel_cholesky",
+  "safety": "UNSAFE",
+  "target": "SEQUENTIAL"
+ },
+ "99": {
+  "categories": [
+   "array-dependence",
+   "unproven-dependence"
+  ],
+  "function": "kernel_cholesky",
+  "safety": "UNSAFE",
+  "target": "SEQUENTIAL"
+ }
+}

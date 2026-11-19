@@ -3434,3 +3434,82 @@ Survey unchanged by the fixes.
 - Any call in the loop disables the inspector, including calls whose summaries show no writes.
 - Reports print a substituted counter by name: with an outer `i` and the header's own `i`, an
   access reads `[64*b + i + i]` (the value is right, the text ambiguous).
+
+### 2026-11-19 — Phase 2.5 item 4: correctness baseline against learned parallelizers
+
+**Decision:** Measure how often other tools' OpenMP pragmas are *wrong* on PolyBench/C 4.2.1
+(pinned commit 3e87254, 30 kernels, MEDIUM_DATASET), with one checker for every tool
+(`eval/llm_baseline/`). Tools: P05 (`-rewrite -policy all-cpu`, also with every `if(...)` guard
+stripped), OMPar (OMPify + MonoCoder_OMP, run on Colab by `eval/colab/ompar.ipynb`) and one other
+vendor's LLM, `openai/gpt-oss-120b` on Groq, given one fixed prompt (`prompt.md`), 3 samples per
+kernel, provider defaults. Not Claude (the user's choice: the tool was built with it). Gemini 3.1
+Pro was the first choice; its free tier has no quota for it.
+
+**How a pragma is judged (check.py):** pragmas are found by a line diff against the original (any
+other change makes the reply "modified", unscored). Pragmas form groups (a parallel/target/teams
+head plus the worksharing lines it owns); each group is compiled into the original file alone,
+together with the groups nested inside it, and run at 2, 8 and 16 threads, 3 runs each, with
+POLYBENCH_DUMP_ARRAYS and the header's print format patched to `%a` (exact). Verdicts: correct,
+wrong (output differs, crash, or an Archer race), no-compile, timeout, fp-sensitive (a group with
+a reduction/atomic/critical whose output differs only beyond rtol 1e-6, then hand-audited),
+nested-wrong (fails only because a wrong group inside it is included), not-parallel (num_threads(1),
+a constant false `if`, a worksharing line without a head). Archer (LLVM 22 libarcher, Docker
+image) runs every compiled group at 4 threads; a startup probe proves the library is Archer.
+**Reasoning:** One group at a time attributes a wrong result to the pragma that caused it; the
+whole-file result is reported too ("files wrong"). Output comparison misses races that happen not
+to change the answer at these sizes, hence Archer; Archer misses wrong values without a race
+(ludcmp's `reduction(*:w)` in the self-test), hence both.
+
+**Self-test (`selftest.py`, in CI with Archer):** 21 planted pragmas on 7 kernels, each with its
+expected verdict (races, a wrong reduction operator, nested-wrong, if(0), orphaned `for`, simd,
+num_threads(1), parallel without worksharing, taskloop, no-compile, fp-sensitive, atomic, critical).
+Also checks that a missing or non-Archer `--archer-lib` is refused.
+
+**Review findings fixed:** pragmas at one position inserted in reverse order; groups re-sorted so
+a member came before its head; atomic and critical `+=` reorder FP sums (now "tolerant"); a
+shared build cache between macOS and Linux runs; false timeouts from spin-waiting teams
+oversubscribing the machine (OMP_WAIT_POLICY=passive, and a timed-out group is re-run alone with a
+long limit); a thread-unsafe "last stdout" field; the Archer probe exiting 66 without
+`ignore_noninstrumented_modules=1`; an Archer check that demanded the banner from runs that never
+start the OpenMP runtime, and then from runs killed by the timeout (their race logs stay valid;
+the probe already proved the library).
+
+**OMPar finding:** its published `gen_par` calls `generate(max_length=64)`, which counts the input,
+so every loop longer than about 64 tokens raises ValueError and gets no pragma: 86 of the 198 loops
+it classifies as parallel. Reported twice: "ompar" as published, "ompar-long" with 64 *new* tokens
+(`ompar/ompar_run.py`).
+
+**Results (Archer, Linux; means per sample over loops in kernel_* functions):**
+
+| tool | groups | wrong (rate) | wrong on P05-SAFE loops | nested-wrong | fp-sens. | no-compile | correct, P05 not SAFE |
+|---|---|---|---|---|---|---|---|
+| p05 | 54 | 0 (0%) | 0 | 0 | 0 | 0 | 0 |
+| p05, guards stripped | 54 | 0 (0%) | 0 | 0 | 0 | 0 | 0 |
+| ompar | 61 | 29 (48%) | 0 | 0 | 1 | 0 | 4 |
+| ompar-long | 138 | 43 (36%) | 3 | 18 | 1 | 1 | 11 |
+
+(107 P05 groups in all files; 0 wrong, also with all 58 guarded pragmas' guards removed.)
+Archer moved 12 OMPar groups (1 published, 11 long) from correct or fp-sensitive to wrong or
+nested-wrong: races that the dumped output did not show.
+
+- **Wrong on loops P05 parallelizes** (deriche:136, symm:94, ludcmp:113): each time OMPar left a
+  scalar shared that P05 privatizes (tp1/tp2/yp1/yp2; temp2; w). OMPar's error, not a P05 false SAFE.
+- **fp-sensitive** (audited): one group, gramschmidt:92 `reduction(+:nrm)`. A valid reduction;
+  Gram-Schmidt amplifies the reassociation error past 1e-6. P05 rejects it (FP reductions off by
+  default) and its `-fp-reductions` hint would allow it.
+- **P05's misses** (11 loops OMPar gets right that P05 rejects): 5 are FP reductions (durbin:80,
+  ludcmp:108/115/124, symm:97; off by default, user's decision 2026-10-12). 5 are outer loops
+  (gemm:89, syrk:83, syr2k:88, gramschmidt:97, adi:113) where an inner loop's counter is declared at
+  function scope and reused by sibling inner loops: from the outer loop P05 sees `j` "modified
+  inside the loop", so its subscripts are non-affine, the dependence test and the overlap guard
+  both give up, and P05 parallelizes the inner loops instead (finer grain). 1 (covariance:85) is a
+  triangular inner range (`j = i ..`) the overlap guard cannot bound. The counter reuse is a real,
+  fixable gap: a counter written only by its own loop's header is that loop's private IV.
+
+**gpt-oss-120b:** PENDING (Groq free tier: 200k tokens/day). The first 3072-token cap was Groq's
+default; 7 replies were cut off and re-requested with `--max-tokens 32768`.
+
+**Limits:** Only loops a tool chose are judged, so tools are compared on different loop sets
+("wrong on P05-SAFE loops" and "correct, P05 not SAFE" are the overlap). Correct means "no
+difference seen and no race reported at MEDIUM size on this machine", not proven. LLM results are
+for one model, one prompt, provider defaults, on a date; PolyBench is likely in its training data.

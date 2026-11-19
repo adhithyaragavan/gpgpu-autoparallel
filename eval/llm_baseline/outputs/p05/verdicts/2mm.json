@@ -1,0 +1,106 @@
+{
+ "100": {
+  "categories": [
+   "array-dependence"
+  ],
+  "function": "kernel_2mm",
+  "safety": "UNSAFE",
+  "target": "SEQUENTIAL"
+ },
+ "38": {
+  "categories": [],
+  "function": "init_array",
+  "safety": "SAFE",
+  "target": "CPU_PARALLEL"
+ },
+ "39": {
+  "categories": [],
+  "function": "init_array",
+  "safety": "SAFE",
+  "target": "CPU_PARALLEL"
+ },
+ "41": {
+  "categories": [],
+  "function": "init_array",
+  "safety": "SAFE",
+  "target": "CPU_PARALLEL"
+ },
+ "42": {
+  "categories": [],
+  "function": "init_array",
+  "safety": "SAFE",
+  "target": "CPU_PARALLEL"
+ },
+ "44": {
+  "categories": [],
+  "function": "init_array",
+  "safety": "SAFE",
+  "target": "CPU_PARALLEL"
+ },
+ "45": {
+  "categories": [],
+  "function": "init_array",
+  "safety": "SAFE",
+  "target": "CPU_PARALLEL"
+ },
+ "47": {
+  "categories": [],
+  "function": "init_array",
+  "safety": "SAFE",
+  "target": "CPU_PARALLEL"
+ },
+ "48": {
+  "categories": [],
+  "function": "init_array",
+  "safety": "SAFE",
+  "target": "CPU_PARALLEL"
+ },
+ "63": {
+  "categories": [
+   "opaque-callee"
+  ],
+  "function": "print_array",
+  "safety": "UNKNOWN",
+  "target": "SEQUENTIAL"
+ },
+ "64": {
+  "categories": [
+   "opaque-callee"
+  ],
+  "function": "print_array",
+  "safety": "UNKNOWN",
+  "target": "SEQUENTIAL"
+ },
+ "89": {
+  "categories": [],
+  "function": "kernel_2mm",
+  "safety": "SAFE",
+  "target": "CPU_PARALLEL"
+ },
+ "90": {
+  "categories": [],
+  "function": "kernel_2mm",
+  "safety": "SAFE",
+  "target": "CPU_PARALLEL"
+ },
+ "93": {
+  "categories": [
+   "array-dependence"
+  ],
+  "function": "kernel_2mm",
+  "safety": "UNSAFE",
+  "target": "SEQUENTIAL"
+ },
+ "96": {
+  "categories": [],
+  "function": "kernel_2mm",
+  "safety": "SAFE",
+  "target": "CPU_PARALLEL"
+ },
+ "97": {
+  "categories": [],
+  "function": "kernel_2mm",
+  "safety": "SAFE",
+  "target": "CPU_PARALLEL"
+ }
+}

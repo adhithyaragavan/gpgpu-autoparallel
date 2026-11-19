@@ -1,0 +1,40 @@
+{
+ "33": {
+  "categories": [],
+  "function": "init_array",
+  "safety": "SAFE",
+  "target": "CPU_PARALLEL"
+ },
+ "37": {
+  "categories": [],
+  "function": "init_array",
+  "safety": "SAFE",
+  "target": "CPU_PARALLEL"
+ },
+ "54": {
+  "categories": [
+   "opaque-callee"
+  ],
+  "function": "print_array",
+  "safety": "UNKNOWN",
+  "target": "SEQUENTIAL"
+ },
+ "74": {
+  "categories": [
+   "pointer-overlap",
+   "unproven-dependence"
+  ],
+  "function": "kernel_trisolv",
+  "safety": "UNKNOWN",
+  "target": "SEQUENTIAL"
+ },
+ "77": {
+  "categories": [
+   "array-dependence",
+   "unproven-dependence"
+  ],
+  "function": "kernel_trisolv",
+  "safety": "UNSAFE",
+  "target": "SEQUENTIAL"
+ }
+}

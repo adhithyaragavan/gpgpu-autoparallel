@@ -1,0 +1,333 @@
+{"kernel": "correlation", "line": 35, "parallel": false, "tokens": 50, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "correlation", "line": 36, "parallel": false, "tokens": 34, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "correlation", "line": 53, "parallel": false, "tokens": 101, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "correlation", "line": 54, "parallel": false, "tokens": 82, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "correlation", "line": 79, "parallel": true, "tokens": 90, "pragma": null, "published_error": "Input length of input_ids is 90, but `max_length` is set to 64", "pragma_long": "omp parallel for private(i, j)"}
+{"kernel": "correlation", "line": 82, "parallel": true, "tokens": 28, "pragma": "omp parallel for private(i)", "published_error": null, "pragma_long": "omp parallel for private(i)"}
+{"kernel": "correlation", "line": 88, "parallel": true, "tokens": 215, "pragma": null, "published_error": "Input length of input_ids is 215, but `max_length` is set to 64", "pragma_long": "omp parallel for private(i, j)"}
+{"kernel": "correlation", "line": 91, "parallel": true, "tokens": 49, "pragma": "omp parallel for private(i)", "published_error": null, "pragma_long": "omp parallel for private(i)"}
+{"kernel": "correlation", "line": 102, "parallel": true, "tokens": 89, "pragma": null, "published_error": "Input length of input_ids is 89, but `max_length` is set to 64", "pragma_long": "omp parallel for private(j)"}
+{"kernel": "correlation", "line": 103, "parallel": true, "tokens": 64, "pragma": null, "published_error": "Input length of input_ids is 64, but `max_length` is set to 64", "pragma_long": "omp parallel for private(j)"}
+{"kernel": "correlation", "line": 110, "parallel": false, "tokens": 184, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "correlation", "line": 113, "parallel": true, "tokens": 111, "pragma": null, "published_error": "Input length of input_ids is 111, but `max_length` is set to 64", "pragma_long": "omp parallel for private(j, k)"}
+{"kernel": "correlation", "line": 116, "parallel": true, "tokens": 39, "pragma": "omp parallel for", "published_error": null, "pragma_long": "omp parallel for"}
+{"kernel": "covariance", "line": 34, "parallel": false, "tokens": 49, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "covariance", "line": 35, "parallel": true, "tokens": 33, "pragma": "omp parallel for private(j)", "published_error": null, "pragma_long": "omp parallel for private(j)"}
+{"kernel": "covariance", "line": 51, "parallel": false, "tokens": 100, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "covariance", "line": 52, "parallel": false, "tokens": 81, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "covariance", "line": 73, "parallel": true, "tokens": 90, "pragma": null, "published_error": "Input length of input_ids is 90, but `max_length` is set to 64", "pragma_long": "omp parallel for private(i, j)"}
+{"kernel": "covariance", "line": 76, "parallel": true, "tokens": 28, "pragma": "omp parallel for private(i)", "published_error": null, "pragma_long": "omp parallel for private(i)"}
+{"kernel": "covariance", "line": 81, "parallel": true, "tokens": 47, "pragma": "omp parallel for private(j)", "published_error": null, "pragma_long": "omp parallel for private(j)"}
+{"kernel": "covariance", "line": 82, "parallel": true, "tokens": 28, "pragma": "omp parallel for private(j)", "published_error": null, "pragma_long": "omp parallel for private(j)"}
+{"kernel": "covariance", "line": 85, "parallel": true, "tokens": 162, "pragma": null, "published_error": "Input length of input_ids is 162, but `max_length` is set to 64", "pragma_long": "omp parallel for private(j, k)"}
+{"kernel": "covariance", "line": 86, "parallel": true, "tokens": 131, "pragma": null, "published_error": "Input length of input_ids is 131, but `max_length` is set to 64", "pragma_long": "omp parallel for private(j, k)"}
+{"kernel": "covariance", "line": 89, "parallel": true, "tokens": 37, "pragma": "omp parallel for", "published_error": null, "pragma_long": "omp parallel for"}
+{"kernel": "gemm", "line": 37, "parallel": false, "tokens": 56, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "gemm", "line": 38, "parallel": true, "tokens": 40, "pragma": "omp parallel for private(j)", "published_error": null, "pragma_long": "omp parallel for private(j)"}
+{"kernel": "gemm", "line": 40, "parallel": false, "tokens": 59, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "gemm", "line": 41, "parallel": false, "tokens": 43, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "gemm", "line": 43, "parallel": false, "tokens": 60, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "gemm", "line": 44, "parallel": true, "tokens": 43, "pragma": "omp parallel for private(j)", "published_error": null, "pragma_long": "omp parallel for private(j)"}
+{"kernel": "gemm", "line": 59, "parallel": false, "tokens": 105, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "gemm", "line": 60, "parallel": false, "tokens": 86, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "gemm", "line": 89, "parallel": true, "tokens": 122, "pragma": null, "published_error": "Input length of input_ids is 122, but `max_length` is set to 64", "pragma_long": "omp parallel for private(j, k)"}
+{"kernel": "gemm", "line": 90, "parallel": true, "tokens": 29, "pragma": "omp parallel for private(j)", "published_error": null, "pragma_long": "omp parallel for private(j)"}
+{"kernel": "gemm", "line": 92, "parallel": true, "tokens": 64, "pragma": null, "published_error": "Input length of input_ids is 64, but `max_length` is set to 64", "pragma_long": "omp parallel for private(j)"}
+{"kernel": "gemm", "line": 93, "parallel": true, "tokens": 40, "pragma": "omp parallel for private(j)", "published_error": null, "pragma_long": "omp parallel for private(j)"}
+{"kernel": "gemver", "line": 46, "parallel": false, "tokens": 203, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "gemver", "line": 56, "parallel": true, "tokens": 36, "pragma": "omp parallel for private(j)", "published_error": null, "pragma_long": "omp parallel for private(j)"}
+{"kernel": "gemver", "line": 72, "parallel": false, "tokens": 74, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "gemver", "line": 101, "parallel": true, "tokens": 73, "pragma": null, "published_error": "Input length of input_ids is 73, but `max_length` is set to 64", "pragma_long": "omp parallel for private(j)"}
+{"kernel": "gemver", "line": 102, "parallel": true, "tokens": 54, "pragma": "omp parallel for private(j)", "published_error": null, "pragma_long": "omp parallel for private(j)"}
+{"kernel": "gemver", "line": 105, "parallel": true, "tokens": 59, "pragma": "omp parallel for", "published_error": null, "pragma_long": "omp parallel for private(j)"}
+{"kernel": "gemver", "line": 106, "parallel": true, "tokens": 40, "pragma": "omp parallel for private(j)", "published_error": null, "pragma_long": "omp parallel for private(j)"}
+{"kernel": "gemver", "line": 109, "parallel": true, "tokens": 31, "pragma": "omp parallel for private(i)", "published_error": null, "pragma_long": "omp parallel for private(i)"}
+{"kernel": "gemver", "line": 112, "parallel": true, "tokens": 60, "pragma": "omp parallel for", "published_error": null, "pragma_long": "omp parallel for private(j)"}
+{"kernel": "gemver", "line": 113, "parallel": true, "tokens": 41, "pragma": "omp parallel for private(j)", "published_error": null, "pragma_long": "omp parallel for private(j)"}
+{"kernel": "gesummv", "line": 37, "parallel": false, "tokens": 123, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "gesummv", "line": 40, "parallel": true, "tokens": 69, "pragma": null, "published_error": "Input length of input_ids is 69, but `max_length` is set to 64", "pragma_long": "omp parallel for"}
+{"kernel": "gesummv", "line": 59, "parallel": false, "tokens": 74, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "gesummv", "line": 83, "parallel": true, "tokens": 172, "pragma": null, "published_error": "Input length of input_ids is 172, but `max_length` is set to 64", "pragma_long": "omp parallel for private(j)"}
+{"kernel": "gesummv", "line": 87, "parallel": true, "tokens": 71, "pragma": null, "published_error": "Input length of input_ids is 71, but `max_length` is set to 64", "pragma_long": "omp parallel for private(j)"}
+{"kernel": "symm", "line": 37, "parallel": false, "tokens": 86, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "symm", "line": 38, "parallel": true, "tokens": 67, "pragma": null, "published_error": "Input length of input_ids is 67, but `max_length` is set to 64", "pragma_long": "omp parallel for"}
+{"kernel": "symm", "line": 42, "parallel": false, "tokens": 96, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "symm", "line": 43, "parallel": true, "tokens": 37, "pragma": "omp parallel for private(j)", "published_error": null, "pragma_long": "omp parallel for private(j)"}
+{"kernel": "symm", "line": 45, "parallel": true, "tokens": 36, "pragma": "omp parallel for", "published_error": null, "pragma_long": "omp parallel for"}
+{"kernel": "symm", "line": 61, "parallel": false, "tokens": 104, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "symm", "line": 62, "parallel": false, "tokens": 85, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "symm", "line": 93, "parallel": true, "tokens": 171, "pragma": null, "published_error": "Input length of input_ids is 171, but `max_length` is set to 64", "pragma_long": "omp parallel for private(j, k)"}
+{"kernel": "symm", "line": 94, "parallel": true, "tokens": 138, "pragma": null, "published_error": "Input length of input_ids is 138, but `max_length` is set to 64", "pragma_long": "omp parallel for private(j, k)"}
+{"kernel": "symm", "line": 97, "parallel": true, "tokens": 59, "pragma": "omp parallel for", "published_error": null, "pragma_long": "omp parallel for reduction( + :temp2)"}
+{"kernel": "syr2k", "line": 37, "parallel": false, "tokens": 88, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "syr2k", "line": 38, "parallel": true, "tokens": 69, "pragma": null, "published_error": "Input length of input_ids is 69, but `max_length` is set to 64", "pragma_long": "omp parallel for"}
+{"kernel": "syr2k", "line": 42, "parallel": false, "tokens": 59, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "syr2k", "line": 43, "parallel": true, "tokens": 42, "pragma": "omp parallel for private(j)", "published_error": null, "pragma_long": "omp parallel for private(j)"}
+{"kernel": "syr2k", "line": 59, "parallel": false, "tokens": 104, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "syr2k", "line": 60, "parallel": false, "tokens": 85, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "syr2k", "line": 88, "parallel": true, "tokens": 139, "pragma": null, "published_error": "Input length of input_ids is 139, but `max_length` is set to 64", "pragma_long": "omp parallel for private(j, k)"}
+{"kernel": "syr2k", "line": 89, "parallel": true, "tokens": 24, "pragma": "omp parallel for private(j)", "published_error": null, "pragma_long": "omp parallel for private(j)"}
+{"kernel": "syr2k", "line": 91, "parallel": true, "tokens": 83, "pragma": null, "published_error": "Input length of input_ids is 83, but `max_length` is set to 64", "pragma_long": "omp parallel for private(j, k)"}
+{"kernel": "syr2k", "line": 92, "parallel": true, "tokens": 60, "pragma": "omp parallel for", "published_error": null, "pragma_long": "omp parallel for private(j)"}
+{"kernel": "syrk", "line": 36, "parallel": false, "tokens": 55, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "syrk", "line": 37, "parallel": true, "tokens": 39, "pragma": "omp parallel for private(j)", "published_error": null, "pragma_long": "omp parallel for private(j)"}
+{"kernel": "syrk", "line": 39, "parallel": false, "tokens": 55, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "syrk", "line": 40, "parallel": true, "tokens": 39, "pragma": "omp parallel for private(j)", "published_error": null, "pragma_long": "omp parallel for private(j)"}
+{"kernel": "syrk", "line": 55, "parallel": false, "tokens": 104, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "syrk", "line": 56, "parallel": false, "tokens": 85, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "syrk", "line": 83, "parallel": true, "tokens": 111, "pragma": null, "published_error": "Input length of input_ids is 111, but `max_length` is set to 64", "pragma_long": "omp parallel for private(j, k)"}
+{"kernel": "syrk", "line": 84, "parallel": true, "tokens": 24, "pragma": "omp parallel for private(j)", "published_error": null, "pragma_long": "omp parallel for private(j)"}
+{"kernel": "syrk", "line": 86, "parallel": true, "tokens": 58, "pragma": "omp parallel for private(j)", "published_error": null, "pragma_long": "omp parallel for private(j)"}
+{"kernel": "syrk", "line": 87, "parallel": true, "tokens": 36, "pragma": "omp parallel for private(j)", "published_error": null, "pragma_long": "omp parallel for private(j)"}
+{"kernel": "trmm", "line": 34, "parallel": false, "tokens": 125, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "trmm", "line": 35, "parallel": false, "tokens": 39, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "trmm", "line": 39, "parallel": true, "tokens": 41, "pragma": "omp parallel for private(j)", "published_error": null, "pragma_long": "omp parallel for private(j)"}
+{"kernel": "trmm", "line": 57, "parallel": false, "tokens": 104, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "trmm", "line": 58, "parallel": false, "tokens": 85, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "trmm", "line": 86, "parallel": true, "tokens": 111, "pragma": null, "published_error": "Input length of input_ids is 111, but `max_length` is set to 64", "pragma_long": "omp parallel for private(j, k)"}
+{"kernel": "trmm", "line": 87, "parallel": true, "tokens": 82, "pragma": null, "published_error": "Input length of input_ids is 82, but `max_length` is set to 64", "pragma_long": "omp parallel for private(j, k)"}
+{"kernel": "trmm", "line": 88, "parallel": true, "tokens": 40, "pragma": "omp parallel for", "published_error": null, "pragma_long": "omp parallel for"}
+{"kernel": "2mm", "line": 38, "parallel": false, "tokens": 56, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "2mm", "line": 39, "parallel": true, "tokens": 40, "pragma": "omp parallel for private(j)", "published_error": null, "pragma_long": "omp parallel for private(j)"}
+{"kernel": "2mm", "line": 41, "parallel": false, "tokens": 60, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "2mm", "line": 42, "parallel": true, "tokens": 43, "pragma": "omp parallel for private(j)", "published_error": null, "pragma_long": "omp parallel for private(j)"}
+{"kernel": "2mm", "line": 44, "parallel": false, "tokens": 62, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "2mm", "line": 45, "parallel": false, "tokens": 45, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "2mm", "line": 47, "parallel": false, "tokens": 59, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "2mm", "line": 48, "parallel": false, "tokens": 43, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "2mm", "line": 63, "parallel": false, "tokens": 105, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "2mm", "line": 64, "parallel": false, "tokens": 86, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "2mm", "line": 89, "parallel": true, "tokens": 117, "pragma": null, "published_error": "Input length of input_ids is 117, but `max_length` is set to 64", "pragma_long": "omp parallel for private(j, k)"}
+{"kernel": "2mm", "line": 90, "parallel": true, "tokens": 90, "pragma": null, "published_error": "Input length of input_ids is 90, but `max_length` is set to 64", "pragma_long": "omp parallel for private(j, k)"}
+{"kernel": "2mm", "line": 93, "parallel": true, "tokens": 40, "pragma": "omp parallel for private(k)", "published_error": null, "pragma_long": "omp parallel for private(k)"}
+{"kernel": "2mm", "line": 96, "parallel": true, "tokens": 108, "pragma": null, "published_error": "Input length of input_ids is 108, but `max_length` is set to 64", "pragma_long": "omp parallel for private(j, k)"}
+{"kernel": "2mm", "line": 97, "parallel": true, "tokens": 81, "pragma": null, "published_error": "Input length of input_ids is 81, but `max_length` is set to 64", "pragma_long": "omp parallel for private(j, k)"}
+{"kernel": "2mm", "line": 100, "parallel": true, "tokens": 38, "pragma": "omp parallel for private(k)", "published_error": null, "pragma_long": "omp parallel for private(k)"}
+{"kernel": "3mm", "line": 34, "parallel": false, "tokens": 59, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "3mm", "line": 35, "parallel": true, "tokens": 43, "pragma": "omp parallel for private(j)", "published_error": null, "pragma_long": "omp parallel for private(j)"}
+{"kernel": "3mm", "line": 37, "parallel": false, "tokens": 65, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "3mm", "line": 38, "parallel": true, "tokens": 48, "pragma": "omp parallel for private(j)", "published_error": null, "pragma_long": "omp parallel for private(j)"}
+{"kernel": "3mm", "line": 40, "parallel": false, "tokens": 61, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "3mm", "line": 41, "parallel": false, "tokens": 44, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "3mm", "line": 43, "parallel": false, "tokens": 64, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "3mm", "line": 44, "parallel": true, "tokens": 48, "pragma": "omp parallel for private(j)", "published_error": null, "pragma_long": "omp parallel for private(j)"}
+{"kernel": "3mm", "line": 59, "parallel": false, "tokens": 105, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "3mm", "line": 60, "parallel": false, "tokens": 86, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "3mm", "line": 85, "parallel": true, "tokens": 115, "pragma": null, "published_error": "Input length of input_ids is 115, but `max_length` is set to 64", "pragma_long": "omp parallel for private(j, k)"}
+{"kernel": "3mm", "line": 86, "parallel": true, "tokens": 88, "pragma": null, "published_error": "Input length of input_ids is 88, but `max_length` is set to 64", "pragma_long": "omp parallel for private(j, k)"}
+{"kernel": "3mm", "line": 89, "parallel": true, "tokens": 38, "pragma": "omp parallel for", "published_error": null, "pragma_long": "omp parallel for"}
+{"kernel": "3mm", "line": 93, "parallel": false, "tokens": 115, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "3mm", "line": 94, "parallel": true, "tokens": 88, "pragma": null, "published_error": "Input length of input_ids is 88, but `max_length` is set to 64", "pragma_long": "omp parallel for private(j, k)"}
+{"kernel": "3mm", "line": 97, "parallel": true, "tokens": 38, "pragma": "omp parallel for", "published_error": null, "pragma_long": "omp parallel for"}
+{"kernel": "3mm", "line": 101, "parallel": true, "tokens": 115, "pragma": null, "published_error": "Input length of input_ids is 115, but `max_length` is set to 64", "pragma_long": "omp parallel for private(k)"}
+{"kernel": "3mm", "line": 102, "parallel": true, "tokens": 88, "pragma": null, "published_error": "Input length of input_ids is 88, but `max_length` is set to 64", "pragma_long": "omp parallel for private(j, k)"}
+{"kernel": "3mm", "line": 105, "parallel": true, "tokens": 38, "pragma": "omp parallel for", "published_error": null, "pragma_long": "omp parallel for"}
+{"kernel": "atax", "line": 34, "parallel": true, "tokens": 28, "pragma": "omp parallel for", "published_error": null, "pragma_long": "omp parallel for"}
+{"kernel": "atax", "line": 36, "parallel": false, "tokens": 56, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "atax", "line": 37, "parallel": true, "tokens": 40, "pragma": "omp parallel for private(j)", "published_error": null, "pragma_long": "omp parallel for private(j)"}
+{"kernel": "atax", "line": 53, "parallel": false, "tokens": 74, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "atax", "line": 74, "parallel": false, "tokens": 24, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "atax", "line": 76, "parallel": true, "tokens": 132, "pragma": null, "published_error": "Input length of input_ids is 132, but `max_length` is set to 64", "pragma_long": "omp parallel for private(j)"}
+{"kernel": "atax", "line": 79, "parallel": true, "tokens": 38, "pragma": "omp parallel for private(j)", "published_error": null, "pragma_long": "omp parallel for private(j)"}
+{"kernel": "atax", "line": 81, "parallel": true, "tokens": 38, "pragma": "omp parallel for private(j)", "published_error": null, "pragma_long": "omp parallel for private(j)"}
+{"kernel": "bicg", "line": 33, "parallel": false, "tokens": 31, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "bicg", "line": 35, "parallel": false, "tokens": 77, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "bicg", "line": 37, "parallel": true, "tokens": 39, "pragma": "omp parallel for private(j)", "published_error": null, "pragma_long": "omp parallel for private(j)"}
+{"kernel": "bicg", "line": 55, "parallel": false, "tokens": 74, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "bicg", "line": 61, "parallel": false, "tokens": 74, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "bicg", "line": 83, "parallel": false, "tokens": 24, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "bicg", "line": 85, "parallel": true, "tokens": 131, "pragma": null, "published_error": "Input length of input_ids is 131, but `max_length` is set to 64", "pragma_long": "omp parallel for private(j)"}
+{"kernel": "bicg", "line": 88, "parallel": true, "tokens": 71, "pragma": null, "published_error": "Input length of input_ids is 71, but `max_length` is set to 64", "pragma_long": "omp parallel for private(j)"}
+{"kernel": "doitgen", "line": 32, "parallel": false, "tokens": 77, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "doitgen", "line": 33, "parallel": true, "tokens": 58, "pragma": "omp parallel for private(j)", "published_error": null, "pragma_long": "omp parallel for private(j, k)"}
+{"kernel": "doitgen", "line": 34, "parallel": true, "tokens": 41, "pragma": "omp parallel for", "published_error": null, "pragma_long": "omp parallel for"}
+{"kernel": "doitgen", "line": 36, "parallel": false, "tokens": 53, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "doitgen", "line": 37, "parallel": true, "tokens": 37, "pragma": "omp parallel for private(j)", "published_error": null, "pragma_long": "omp parallel for private(j)"}
+{"kernel": "doitgen", "line": 52, "parallel": false, "tokens": 133, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "doitgen", "line": 53, "parallel": false, "tokens": 110, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "doitgen", "line": 54, "parallel": false, "tokens": 90, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "doitgen", "line": 73, "parallel": true, "tokens": 173, "pragma": null, "published_error": "Input length of input_ids is 173, but `max_length` is set to 64", "pragma_long": "omp parallel for"}
+{"kernel": "doitgen", "line": 74, "parallel": true, "tokens": 141, "pragma": null, "published_error": "Input length of input_ids is 141, but `max_length` is set to 64", "pragma_long": "omp parallel for"}
+{"kernel": "doitgen", "line": 75, "parallel": true, "tokens": 78, "pragma": null, "published_error": "Input length of input_ids is 78, but `max_length` is set to 64", "pragma_long": "omp parallel for"}
+{"kernel": "doitgen", "line": 77, "parallel": true, "tokens": 38, "pragma": "omp parallel for", "published_error": null, "pragma_long": "omp parallel for"}
+{"kernel": "doitgen", "line": 80, "parallel": true, "tokens": 30, "pragma": "omp parallel for", "published_error": null, "pragma_long": "omp parallel for"}
+{"kernel": "mvt", "line": 35, "parallel": false, "tokens": 165, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "mvt", "line": 41, "parallel": true, "tokens": 36, "pragma": "omp parallel for private(j)", "published_error": null, "pragma_long": "omp parallel for private(j)"}
+{"kernel": "mvt", "line": 59, "parallel": false, "tokens": 75, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "mvt", "line": 66, "parallel": false, "tokens": 75, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "mvt", "line": 88, "parallel": true, "tokens": 61, "pragma": "omp parallel for", "published_error": null, "pragma_long": "omp parallel for private(j)"}
+{"kernel": "mvt", "line": 89, "parallel": true, "tokens": 42, "pragma": "omp parallel for private(j)", "published_error": null, "pragma_long": "omp parallel for private(j)"}
+{"kernel": "mvt", "line": 91, "parallel": true, "tokens": 61, "pragma": "omp parallel for", "published_error": null, "pragma_long": "omp parallel for private(j)"}
+{"kernel": "mvt", "line": 92, "parallel": true, "tokens": 42, "pragma": "omp parallel for private(j)", "published_error": null, "pragma_long": "omp parallel for private(j)"}
+{"kernel": "cholesky", "line": 31, "parallel": false, "tokens": 114, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "cholesky", "line": 33, "parallel": true, "tokens": 36, "pragma": "omp parallel for private(j)", "published_error": null, "pragma_long": "omp parallel for private(j)"}
+{"kernel": "cholesky", "line": 35, "parallel": true, "tokens": 28, "pragma": "omp parallel for", "published_error": null, "pragma_long": "omp parallel for"}
+{"kernel": "cholesky", "line": 44, "parallel": false, "tokens": 52, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "cholesky", "line": 45, "parallel": true, "tokens": 35, "pragma": "omp parallel for", "published_error": null, "pragma_long": "omp parallel for"}
+{"kernel": "cholesky", "line": 47, "parallel": true, "tokens": 82, "pragma": null, "published_error": "Input length of input_ids is 82, but `max_length` is set to 64", "pragma_long": "omp parallel for"}
+{"kernel": "cholesky", "line": 48, "parallel": true, "tokens": 63, "pragma": "omp parallel for", "published_error": null, "pragma_long": "omp parallel for"}
+{"kernel": "cholesky", "line": 49, "parallel": true, "tokens": 46, "pragma": "omp parallel for", "published_error": null, "pragma_long": "omp parallel for"}
+{"kernel": "cholesky", "line": 51, "parallel": true, "tokens": 56, "pragma": "omp parallel for", "published_error": null, "pragma_long": "omp parallel for"}
+{"kernel": "cholesky", "line": 52, "parallel": true, "tokens": 39, "pragma": "omp parallel for", "published_error": null, "pragma_long": "omp parallel for"}
+{"kernel": "cholesky", "line": 70, "parallel": false, "tokens": 95, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "cholesky", "line": 71, "parallel": false, "tokens": 82, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "cholesky", "line": 90, "parallel": true, "tokens": 195, "pragma": null, "published_error": "Input length of input_ids is 195, but `max_length` is set to 64", "pragma_long": "omp parallel for private(j, k)"}
+{"kernel": "cholesky", "line": 92, "parallel": true, "tokens": 78, "pragma": null, "published_error": "Input length of input_ids is 78, but `max_length` is set to 64", "pragma_long": "omp parallel for"}
+{"kernel": "cholesky", "line": 93, "parallel": true, "tokens": 38, "pragma": "omp parallel for", "published_error": null, "pragma_long": "omp parallel for"}
+{"kernel": "cholesky", "line": 99, "parallel": true, "tokens": 38, "pragma": "omp parallel for", "published_error": null, "pragma_long": "omp parallel for"}
+{"kernel": "durbin", "line": 31, "parallel": false, "tokens": 34, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "durbin", "line": 49, "parallel": false, "tokens": 74, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "durbin", "line": 77, "parallel": false, "tokens": 181, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "durbin", "line": 80, "parallel": true, "tokens": 33, "pragma": "omp parallel for reduction( + :sum)", "published_error": null, "pragma_long": "omp parallel for reduction( + :sum)"}
+{"kernel": "durbin", "line": 85, "parallel": true, "tokens": 38, "pragma": "omp parallel for", "published_error": null, "pragma_long": "omp parallel for"}
+{"kernel": "durbin", "line": 88, "parallel": true, "tokens": 26, "pragma": "omp parallel for", "published_error": null, "pragma_long": "omp parallel for"}
+{"kernel": "gramschmidt", "line": 33, "parallel": false, "tokens": 79, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "gramschmidt", "line": 34, "parallel": true, "tokens": 60, "pragma": "omp parallel for", "published_error": null, "pragma_long": "omp parallel for private(j)"}
+{"kernel": "gramschmidt", "line": 38, "parallel": false, "tokens": 41, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "gramschmidt", "line": 39, "parallel": true, "tokens": 25, "pragma": "omp parallel for private(j)", "published_error": null, "pragma_long": "omp parallel for private(j)"}
+{"kernel": "gramschmidt", "line": 56, "parallel": false, "tokens": 104, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "gramschmidt", "line": 57, "parallel": false, "tokens": 85, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "gramschmidt", "line": 64, "parallel": false, "tokens": 104, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "gramschmidt", "line": 65, "parallel": false, "tokens": 85, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "gramschmidt", "line": 89, "parallel": true, "tokens": 316, "pragma": null, "published_error": "Input length of input_ids is 316, but `max_length` is set to 64", "pragma_long": "omp parallel for private(i, j, k)"}
+{"kernel": "gramschmidt", "line": 92, "parallel": true, "tokens": 33, "pragma": "omp parallel for reduction( + :nrm)", "published_error": null, "pragma_long": "omp parallel for reduction( + :nrm)"}
+{"kernel": "gramschmidt", "line": 95, "parallel": true, "tokens": 37, "pragma": "omp parallel for", "published_error": null, "pragma_long": "omp parallel for"}
+{"kernel": "gramschmidt", "line": 97, "parallel": true, "tokens": 141, "pragma": null, "published_error": "Input length of input_ids is 141, but `max_length` is set to 64", "pragma_long": "omp parallel for private(i, j)"}
+{"kernel": "gramschmidt", "line": 100, "parallel": true, "tokens": 37, "pragma": "omp parallel for", "published_error": null, "pragma_long": "omp parallel for"}
+{"kernel": "gramschmidt", "line": 102, "parallel": true, "tokens": 44, "pragma": "omp parallel for", "published_error": null, "pragma_long": "omp parallel for"}
+{"kernel": "lu", "line": 31, "parallel": false, "tokens": 114, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "lu", "line": 33, "parallel": true, "tokens": 36, "pragma": "omp parallel for private(j)", "published_error": null, "pragma_long": "omp parallel for private(j)"}
+{"kernel": "lu", "line": 35, "parallel": true, "tokens": 28, "pragma": "omp parallel for", "published_error": null, "pragma_long": "omp parallel for"}
+{"kernel": "lu", "line": 45, "parallel": false, "tokens": 52, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "lu", "line": 46, "parallel": true, "tokens": 35, "pragma": "omp parallel for", "published_error": null, "pragma_long": "omp parallel for"}
+{"kernel": "lu", "line": 48, "parallel": true, "tokens": 82, "pragma": null, "published_error": "Input length of input_ids is 82, but `max_length` is set to 64", "pragma_long": "omp parallel for"}
+{"kernel": "lu", "line": 49, "parallel": true, "tokens": 63, "pragma": "omp parallel for", "published_error": null, "pragma_long": "omp parallel for"}
+{"kernel": "lu", "line": 50, "parallel": true, "tokens": 46, "pragma": "omp parallel for", "published_error": null, "pragma_long": "omp parallel for"}
+{"kernel": "lu", "line": 52, "parallel": true, "tokens": 56, "pragma": "omp parallel for", "published_error": null, "pragma_long": "omp parallel for"}
+{"kernel": "lu", "line": 53, "parallel": true, "tokens": 39, "pragma": "omp parallel for", "published_error": null, "pragma_long": "omp parallel for"}
+{"kernel": "lu", "line": 71, "parallel": false, "tokens": 100, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "lu", "line": 72, "parallel": false, "tokens": 81, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "lu", "line": 90, "parallel": true, "tokens": 180, "pragma": null, "published_error": "Input length of input_ids is 180, but `max_length` is set to 64", "pragma_long": "omp parallel for private(j, k)"}
+{"kernel": "lu", "line": 91, "parallel": true, "tokens": 79, "pragma": null, "published_error": "Input length of input_ids is 79, but `max_length` is set to 64", "pragma_long": "omp parallel for private(j, k)"}
+{"kernel": "lu", "line": 92, "parallel": true, "tokens": 38, "pragma": "omp parallel for", "published_error": null, "pragma_long": "omp parallel for"}
+{"kernel": "lu", "line": 97, "parallel": true, "tokens": 67, "pragma": null, "published_error": "Input length of input_ids is 67, but `max_length` is set to 64", "pragma_long": "omp parallel for private(j, k)"}
+{"kernel": "lu", "line": 98, "parallel": true, "tokens": 38, "pragma": "omp parallel for", "published_error": null, "pragma_long": "omp parallel for"}
+{"kernel": "ludcmp", "line": 35, "parallel": true, "tokens": 62, "pragma": "omp parallel for", "published_error": null, "pragma_long": "omp parallel for"}
+{"kernel": "ludcmp", "line": 42, "parallel": false, "tokens": 114, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "ludcmp", "line": 44, "parallel": true, "tokens": 36, "pragma": "omp parallel for private(j)", "published_error": null, "pragma_long": "omp parallel for private(j)"}
+{"kernel": "ludcmp", "line": 46, "parallel": true, "tokens": 28, "pragma": "omp parallel for", "published_error": null, "pragma_long": "omp parallel for"}
+{"kernel": "ludcmp", "line": 56, "parallel": false, "tokens": 52, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "ludcmp", "line": 57, "parallel": true, "tokens": 35, "pragma": "omp parallel for", "published_error": null, "pragma_long": "omp parallel for"}
+{"kernel": "ludcmp", "line": 59, "parallel": true, "tokens": 82, "pragma": null, "published_error": "Input length of input_ids is 82, but `max_length` is set to 64", "pragma_long": "omp parallel for"}
+{"kernel": "ludcmp", "line": 60, "parallel": true, "tokens": 63, "pragma": "omp parallel for", "published_error": null, "pragma_long": "omp parallel for"}
+{"kernel": "ludcmp", "line": 61, "parallel": true, "tokens": 46, "pragma": "omp parallel for", "published_error": null, "pragma_long": "omp parallel for"}
+{"kernel": "ludcmp", "line": 63, "parallel": true, "tokens": 56, "pragma": "omp parallel for", "published_error": null, "pragma_long": "omp parallel for"}
+{"kernel": "ludcmp", "line": 64, "parallel": true, "tokens": 39, "pragma": "omp parallel for", "published_error": null, "pragma_long": "omp parallel for"}
+{"kernel": "ludcmp", "line": 82, "parallel": false, "tokens": 74, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "ludcmp", "line": 105, "parallel": true, "tokens": 211, "pragma": null, "published_error": "Input length of input_ids is 211, but `max_length` is set to 64", "pragma_long": "omp parallel for private(j, k, w)"}
+{"kernel": "ludcmp", "line": 106, "parallel": true, "tokens": 86, "pragma": null, "published_error": "Input length of input_ids is 86, but `max_length` is set to 64", "pragma_long": "omp parallel for"}
+{"kernel": "ludcmp", "line": 108, "parallel": true, "tokens": 33, "pragma": "omp parallel for reduction( + :w)", "published_error": null, "pragma_long": "omp parallel for reduction( + :w)"}
+{"kernel": "ludcmp", "line": 113, "parallel": true, "tokens": 87, "pragma": null, "published_error": "Input length of input_ids is 87, but `max_length` is set to 64", "pragma_long": "omp parallel for private(j, k)"}
+{"kernel": "ludcmp", "line": 115, "parallel": true, "tokens": 33, "pragma": "omp parallel for reduction( + :w)", "published_error": null, "pragma_long": "omp parallel for reduction( + :w)"}
+{"kernel": "ludcmp", "line": 122, "parallel": false, "tokens": 71, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "ludcmp", "line": 124, "parallel": true, "tokens": 28, "pragma": "omp parallel for reduction( + :w)", "published_error": null, "pragma_long": "omp parallel for reduction( + :w)"}
+{"kernel": "ludcmp", "line": 129, "parallel": false, "tokens": 85, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "ludcmp", "line": 131, "parallel": true, "tokens": 33, "pragma": "omp parallel for private(j)", "published_error": null, "pragma_long": "omp parallel for private(j)"}
+{"kernel": "trisolv", "line": 33, "parallel": false, "tokens": 89, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "trisolv", "line": 37, "parallel": true, "tokens": 39, "pragma": "omp parallel for private(j)", "published_error": null, "pragma_long": "omp parallel for private(j)"}
+{"kernel": "trisolv", "line": 54, "parallel": false, "tokens": 74, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "trisolv", "line": 74, "parallel": true, "tokens": 92, "pragma": null, "published_error": "Input length of input_ids is 92, but `max_length` is set to 64", "pragma_long": "omp parallel for private(j)"}
+{"kernel": "trisolv", "line": 77, "parallel": true, "tokens": 30, "pragma": "omp parallel for private(j)", "published_error": null, "pragma_long": "omp parallel for private(j)"}
+{"kernel": "deriche", "line": 35, "parallel": false, "tokens": 67, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "deriche", "line": 36, "parallel": true, "tokens": 49, "pragma": "omp parallel for private(j)", "published_error": null, "pragma_long": "omp parallel for private(j)"}
+{"kernel": "deriche", "line": 52, "parallel": false, "tokens": 101, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "deriche", "line": 53, "parallel": false, "tokens": 82, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "deriche", "line": 92, "parallel": true, "tokens": 206, "pragma": null, "published_error": "Input length of input_ids is 206, but `max_length` is set to 64", "pragma_long": "omp parallel for private(j, xm1, ym2)"}
+{"kernel": "deriche", "line": 96, "parallel": true, "tokens": 102, "pragma": null, "published_error": "Input length of input_ids is 102, but `max_length` is set to 64", "pragma_long": "omp parallel for private(j)"}
+{"kernel": "deriche", "line": 104, "parallel": false, "tokens": 224, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "deriche", "line": 109, "parallel": false, "tokens": 109, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "deriche", "line": 118, "parallel": true, "tokens": 75, "pragma": null, "published_error": "Input length of input_ids is 75, but `max_length` is set to 64", "pragma_long": "omp parallel for private(j)"}
+{"kernel": "deriche", "line": 119, "parallel": true, "tokens": 49, "pragma": "omp parallel for private(j)", "published_error": null, "pragma_long": "omp parallel for private(j)"}
+{"kernel": "deriche", "line": 123, "parallel": true, "tokens": 196, "pragma": null, "published_error": "Input length of input_ids is 196, but `max_length` is set to 64", "pragma_long": "omp parallel for private(i, j, x1, ym1)"}
+{"kernel": "deriche", "line": 127, "parallel": false, "tokens": 101, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "deriche", "line": 136, "parallel": true, "tokens": 229, "pragma": null, "published_error": "Input length of input_ids is 229, but `max_length` is set to 64", "pragma_long": "omp parallel for private(i, j, k)"}
+{"kernel": "deriche", "line": 141, "parallel": false, "tokens": 112, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "deriche", "line": 150, "parallel": true, "tokens": 69, "pragma": null, "published_error": "Input length of input_ids is 69, but `max_length` is set to 64", "pragma_long": "omp parallel for private(j)"}
+{"kernel": "deriche", "line": 151, "parallel": true, "tokens": 46, "pragma": "omp parallel for private(j)", "published_error": null, "pragma_long": "omp parallel for private(j)"}
+{"kernel": "floyd-warshall", "line": 31, "parallel": false, "tokens": 100, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "floyd-warshall", "line": 32, "parallel": true, "tokens": 79, "pragma": null, "published_error": "Input length of input_ids is 79, but `max_length` is set to 64", "pragma_long": "omp parallel for"}
+{"kernel": "floyd-warshall", "line": 51, "parallel": false, "tokens": 100, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "floyd-warshall", "line": 52, "parallel": false, "tokens": 81, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "floyd-warshall", "line": 70, "parallel": true, "tokens": 127, "pragma": null, "published_error": "Input length of input_ids is 127, but `max_length` is set to 64", "pragma_long": "omp parallel for private(i, j, k)"}
+{"kernel": "floyd-warshall", "line": 72, "parallel": true, "tokens": 90, "pragma": null, "published_error": "Input length of input_ids is 90, but `max_length` is set to 64", "pragma_long": "omp parallel for private(j)"}
+{"kernel": "floyd-warshall", "line": 73, "parallel": true, "tokens": 69, "pragma": null, "published_error": "Input length of input_ids is 69, but `max_length` is set to 64", "pragma_long": "omp parallel for private(j)"}
+{"kernel": "nussinov", "line": 38, "parallel": false, "tokens": 34, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "nussinov", "line": 42, "parallel": false, "tokens": 41, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "nussinov", "line": 43, "parallel": true, "tokens": 23, "pragma": "omp parallel for private(j)", "published_error": null, "pragma_long": "omp parallel for private(j)"}
+{"kernel": "nussinov", "line": 60, "parallel": false, "tokens": 104, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "nussinov", "line": 61, "parallel": false, "tokens": 80, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "nussinov", "line": 86, "parallel": false, "tokens": 316, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "nussinov", "line": 87, "parallel": true, "tokens": 280, "pragma": null, "published_error": "Input length of input_ids is 280, but `max_length` is set to 64", "pragma_long": "omp parallel for"}
+{"kernel": "nussinov", "line": 102, "parallel": true, "tokens": 52, "pragma": "omp parallel for", "published_error": null, "pragma_long": "omp parallel for"}
+{"kernel": "adi", "line": 31, "parallel": false, "tokens": 64, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "adi", "line": 32, "parallel": true, "tokens": 44, "pragma": "omp parallel for private(j)", "published_error": null, "pragma_long": "omp parallel for private(j)"}
+{"kernel": "adi", "line": 50, "parallel": false, "tokens": 100, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "adi", "line": 51, "parallel": false, "tokens": 81, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "adi", "line": 96, "parallel": false, "tokens": 688, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "adi", "line": 98, "parallel": false, "tokens": 289, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "adi", "line": 102, "parallel": true, "tokens": 128, "pragma": null, "published_error": "Input length of input_ids is 128, but `max_length` is set to 64", "pragma_long": "omp parallel for private(j)"}
+{"kernel": "adi", "line": 108, "parallel": true, "tokens": 53, "pragma": "omp parallel for private(j)", "published_error": null, "pragma_long": "omp parallel for private(j)"}
+{"kernel": "adi", "line": 113, "parallel": true, "tokens": 290, "pragma": null, "published_error": "Input length of input_ids is 290, but `max_length` is set to 64", "pragma_long": "omp parallel for private(j)"}
+{"kernel": "adi", "line": 117, "parallel": true, "tokens": 128, "pragma": null, "published_error": "Input length of input_ids is 128, but `max_length` is set to 64", "pragma_long": "omp parallel for private(j)"}
+{"kernel": "adi", "line": 122, "parallel": true, "tokens": 53, "pragma": "omp parallel for private(j)", "published_error": null, "pragma_long": "omp parallel for private(j)"}
+{"kernel": "fdtd-2d", "line": 36, "parallel": false, "tokens": 30, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "fdtd-2d", "line": 38, "parallel": false, "tokens": 126, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "fdtd-2d", "line": 39, "parallel": false, "tokens": 101, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "fdtd-2d", "line": 61, "parallel": false, "tokens": 103, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "fdtd-2d", "line": 62, "parallel": false, "tokens": 83, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "fdtd-2d", "line": 70, "parallel": false, "tokens": 103, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "fdtd-2d", "line": 71, "parallel": false, "tokens": 83, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "fdtd-2d", "line": 78, "parallel": false, "tokens": 104, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "fdtd-2d", "line": 79, "parallel": false, "tokens": 84, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "fdtd-2d", "line": 102, "parallel": true, "tokens": 386, "pragma": null, "published_error": "Input length of input_ids is 386, but `max_length` is set to 64", "pragma_long": "omp parallel for private(j, j)"}
+{"kernel": "fdtd-2d", "line": 104, "parallel": true, "tokens": 31, "pragma": "omp parallel for private(j)", "published_error": null, "pragma_long": "omp parallel for private(j)"}
+{"kernel": "fdtd-2d", "line": 106, "parallel": true, "tokens": 76, "pragma": null, "published_error": "Input length of input_ids is 76, but `max_length` is set to 64", "pragma_long": "omp parallel for private(j)"}
+{"kernel": "fdtd-2d", "line": 107, "parallel": true, "tokens": 56, "pragma": "omp parallel for private(j)", "published_error": null, "pragma_long": "omp parallel for private(j)"}
+{"kernel": "fdtd-2d", "line": 109, "parallel": true, "tokens": 76, "pragma": null, "published_error": "Input length of input_ids is 76, but `max_length` is set to 64", "pragma_long": "omp parallel for private(j)"}
+{"kernel": "fdtd-2d", "line": 110, "parallel": true, "tokens": 56, "pragma": "omp parallel for private(j)", "published_error": null, "pragma_long": "omp parallel for private(j)"}
+{"kernel": "fdtd-2d", "line": 112, "parallel": true, "tokens": 133, "pragma": null, "published_error": "Input length of input_ids is 133, but `max_length` is set to 64", "pragma_long": "omp parallel for private(j)"}
+{"kernel": "fdtd-2d", "line": 113, "parallel": true, "tokens": 109, "pragma": null, "published_error": "Input length of input_ids is 109, but `max_length` is set to 64", "pragma_long": "omp parallel for private(j)"}
+{"kernel": "heat-3d", "line": 32, "parallel": false, "tokens": 87, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "heat-3d", "line": 33, "parallel": true, "tokens": 69, "pragma": null, "published_error": "Input length of input_ids is 69, but `max_length` is set to 64", "pragma_long": "omp parallel for"}
+{"kernel": "heat-3d", "line": 34, "parallel": false, "tokens": 53, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "heat-3d", "line": 50, "parallel": false, "tokens": 132, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "heat-3d", "line": 51, "parallel": false, "tokens": 110, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "heat-3d", "line": 52, "parallel": false, "tokens": 91, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "heat-3d", "line": 72, "parallel": true, "tokens": 786, "pragma": null, "published_error": "Input length of input_ids is 786, but `max_length` is set to 64", "pragma_long": "omp parallel for private(i, j, k)"}
+{"kernel": "heat-3d", "line": 73, "parallel": true, "tokens": 350, "pragma": null, "published_error": "Input length of input_ids is 350, but `max_length` is set to 64", "pragma_long": "omp parallel for private(j, k)"}
+{"kernel": "heat-3d", "line": 74, "parallel": true, "tokens": 299, "pragma": null, "published_error": "Input length of input_ids is 299, but `max_length` is set to 64", "pragma_long": "omp parallel for private(j, k)"}
+{"kernel": "heat-3d", "line": 75, "parallel": true, "tokens": 256, "pragma": null, "published_error": "Input length of input_ids is 256, but `max_length` is set to 64", "pragma_long": "omp parallel for"}
+{"kernel": "heat-3d", "line": 83, "parallel": true, "tokens": 350, "pragma": null, "published_error": "Input length of input_ids is 350, but `max_length` is set to 64", "pragma_long": "omp parallel for private(j, k)"}
+{"kernel": "heat-3d", "line": 84, "parallel": true, "tokens": 299, "pragma": null, "published_error": "Input length of input_ids is 299, but `max_length` is set to 64", "pragma_long": "omp parallel for private(j, k)"}
+{"kernel": "heat-3d", "line": 85, "parallel": true, "tokens": 256, "pragma": null, "published_error": "Input length of input_ids is 256, but `max_length` is set to 64", "pragma_long": "omp parallel for"}
+{"kernel": "jacobi-1d", "line": 32, "parallel": false, "tokens": 68, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "jacobi-1d", "line": 51, "parallel": false, "tokens": 81, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "jacobi-1d", "line": 72, "parallel": false, "tokens": 135, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "jacobi-1d", "line": 74, "parallel": true, "tokens": 48, "pragma": "omp parallel for", "published_error": null, "pragma_long": "omp parallel for"}
+{"kernel": "jacobi-1d", "line": 76, "parallel": true, "tokens": 48, "pragma": "omp parallel for", "published_error": null, "pragma_long": "omp parallel for"}
+{"kernel": "jacobi-2d", "line": 32, "parallel": false, "tokens": 98, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "jacobi-2d", "line": 33, "parallel": true, "tokens": 76, "pragma": null, "published_error": "Input length of input_ids is 76, but `max_length` is set to 64", "pragma_long": "omp parallel for"}
+{"kernel": "jacobi-2d", "line": 52, "parallel": false, "tokens": 100, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "jacobi-2d", "line": 53, "parallel": false, "tokens": 81, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "jacobi-2d", "line": 73, "parallel": false, "tokens": 249, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "jacobi-2d", "line": 75, "parallel": true, "tokens": 101, "pragma": null, "published_error": "Input length of input_ids is 101, but `max_length` is set to 64", "pragma_long": "omp parallel for private(j)"}
+{"kernel": "jacobi-2d", "line": 76, "parallel": true, "tokens": 80, "pragma": null, "published_error": "Input length of input_ids is 80, but `max_length` is set to 64", "pragma_long": "omp parallel for private(j)"}
+{"kernel": "jacobi-2d", "line": 78, "parallel": true, "tokens": 101, "pragma": null, "published_error": "Input length of input_ids is 101, but `max_length` is set to 64", "pragma_long": "omp parallel for private(j)"}
+{"kernel": "jacobi-2d", "line": 79, "parallel": true, "tokens": 80, "pragma": null, "published_error": "Input length of input_ids is 80, but `max_length` is set to 64", "pragma_long": "omp parallel for private(j)"}
+{"kernel": "seidel-2d", "line": 31, "parallel": false, "tokens": 55, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "seidel-2d", "line": 32, "parallel": true, "tokens": 39, "pragma": "omp parallel for private(j)", "published_error": null, "pragma_long": "omp parallel for private(j)"}
+{"kernel": "seidel-2d", "line": 48, "parallel": false, "tokens": 100, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "seidel-2d", "line": 49, "parallel": false, "tokens": 81, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "seidel-2d", "line": 68, "parallel": false, "tokens": 205, "pragma": null, "published_error": null, "pragma_long": null}
+{"kernel": "seidel-2d", "line": 69, "parallel": true, "tokens": 176, "pragma": null, "published_error": "Input length of input_ids is 176, but `max_length` is set to 64", "pragma_long": "omp parallel for private(j)"}
+{"kernel": "seidel-2d", "line": 70, "parallel": true, "tokens": 150, "pragma": null, "published_error": "Input length of input_ids is 150, but `max_length` is set to 64", "pragma_long": "omp parallel for private(j)"}

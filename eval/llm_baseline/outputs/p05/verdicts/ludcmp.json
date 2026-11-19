@@ -1,0 +1,164 @@
+{
+ "105": {
+  "categories": [
+   "loop-shape"
+  ],
+  "function": "kernel_ludcmp",
+  "safety": "UNKNOWN",
+  "target": "SEQUENTIAL"
+ },
+ "106": {
+  "categories": [
+   "unproven-dependence"
+  ],
+  "function": "kernel_ludcmp",
+  "safety": "UNKNOWN",
+  "target": "SEQUENTIAL"
+ },
+ "108": {
+  "categories": [
+   "fp-reduction"
+  ],
+  "function": "kernel_ludcmp",
+  "safety": "UNSAFE",
+  "target": "SEQUENTIAL"
+ },
+ "113": {
+  "categories": [],
+  "function": "kernel_ludcmp",
+  "safety": "SAFE",
+  "target": "CPU_PARALLEL"
+ },
+ "115": {
+  "categories": [
+   "fp-reduction"
+  ],
+  "function": "kernel_ludcmp",
+  "safety": "UNSAFE",
+  "target": "SEQUENTIAL"
+ },
+ "122": {
+  "categories": [
+   "pointer-overlap",
+   "unproven-dependence"
+  ],
+  "function": "kernel_ludcmp",
+  "safety": "UNKNOWN",
+  "target": "SEQUENTIAL"
+ },
+ "124": {
+  "categories": [
+   "fp-reduction"
+  ],
+  "function": "kernel_ludcmp",
+  "safety": "UNSAFE",
+  "target": "SEQUENTIAL"
+ },
+ "129": {
+  "categories": [
+   "pointer-overlap",
+   "unproven-dependence"
+  ],
+  "function": "kernel_ludcmp",
+  "safety": "UNKNOWN",
+  "target": "SEQUENTIAL"
+ },
+ "131": {
+  "categories": [
+   "fp-reduction"
+  ],
+  "function": "kernel_ludcmp",
+  "safety": "UNSAFE",
+  "target": "SEQUENTIAL"
+ },
+ "35": {
+  "categories": [],
+  "function": "init_array",
+  "safety": "SAFE",
+  "target": "CPU_PARALLEL"
+ },
+ "42": {
+  "categories": [
+   "loop-shape"
+  ],
+  "function": "init_array",
+  "safety": "UNKNOWN",
+  "target": "SEQUENTIAL"
+ },
+ "44": {
+  "categories": [],
+  "function": "init_array",
+  "safety": "SAFE",
+  "target": "GPU_OFFLOAD"
+ },
+ "46": {
+  "categories": [],
+  "function": "init_array",
+  "safety": "SAFE",
+  "target": "GPU_OFFLOAD"
+ },
+ "56": {
+  "categories": [
+   "unknown-base"
+  ],
+  "function": "init_array",
+  "safety": "UNKNOWN",
+  "target": "SEQUENTIAL"
+ },
+ "57": {
+  "categories": [
+   "unknown-base"
+  ],
+  "function": "init_array",
+  "safety": "UNKNOWN",
+  "target": "SEQUENTIAL"
+ },
+ "59": {
+  "categories": [
+   "unknown-base"
+  ],
+  "function": "init_array",
+  "safety": "UNKNOWN",
+  "target": "SEQUENTIAL"
+ },
+ "60": {
+  "categories": [
+   "unknown-base"
+  ],
+  "function": "init_array",
+  "safety": "UNKNOWN",
+  "target": "SEQUENTIAL"
+ },
+ "61": {
+  "categories": [
+   "unknown-base"
+  ],
+  "function": "init_array",
+  "safety": "UNKNOWN",
+  "target": "SEQUENTIAL"
+ },
+ "63": {
+  "categories": [
+   "unknown-base"
+  ],
+  "function": "init_array",
+  "safety": "UNKNOWN",
+  "target": "SEQUENTIAL"
+ },
+ "64": {
+  "categories": [
+   "unknown-base"
+  ],
+  "function": "init_array",
+  "safety": "UNKNOWN",
+  "target": "SEQUENTIAL"
+ },
+ "82": {
+  "categories": [
+   "opaque-callee"
+  ],
+  "function": "print_array",
+  "safety": "UNKNOWN",
+  "target": "SEQUENTIAL"
+ }
+}

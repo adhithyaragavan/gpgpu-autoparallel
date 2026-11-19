@@ -83,5 +83,6 @@ These comparators should be runnable on our hardware:
   yardstick.
 - **P05 `-policy naive`**: the ablation baseline.
 
-Not run: Cetus, Par4All and the LLM tools. They are hard to install reproducibly, or they need
-weights and GPUs. These are discussed qualitatively only, and the paper says so.
+The LLM tools are measured by `eval/llm_baseline/` (Phase 2.5 item 4): OMPar on a Colab GPU and a
+frontier model through its API. Not run: Cetus, Par4All, AutoParLLM and OMPGPT. These are discussed
+qualitatively only, and the paper says so.

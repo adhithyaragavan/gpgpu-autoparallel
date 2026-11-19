@@ -73,6 +73,11 @@ jobs:
       - name: Address-logging fuzzer (no false SAFE; parallel output identical)
         run: CC="/usr/lib/llvm-$LLVM_VERSION/bin/clang" python3 eval/fuzz/fuzz.py --seed 1 --files 15 --keep build/fuzz
 
+      - name: LLM baseline checker catches planted wrong pragmas (Archer)
+        run: |
+          eval/llm_baseline/fetch_polybench.sh
+          python3 eval/llm_baseline/selftest.py --archer --cc "/usr/lib/llvm-$LLVM_VERSION/bin/clang"
+
       - name: Every fixing hint makes its loop SAFE (fixtures, benchmarks, fuzzer programs)
         run: |
           python3 scripts/check_hints.py tests/*.c benchmarks/*.c build/fuzz/seed*/prog.c --

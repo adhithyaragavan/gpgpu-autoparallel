@@ -1,0 +1,119 @@
+{
+ "102": {
+  "categories": [
+   "loop-shape",
+   "pointer-overlap"
+  ],
+  "function": "kernel_fdtd_2d",
+  "safety": "UNKNOWN",
+  "target": "SEQUENTIAL"
+ },
+ "104": {
+  "categories": [],
+  "function": "kernel_fdtd_2d",
+  "safety": "SAFE",
+  "target": "CPU_PARALLEL"
+ },
+ "106": {
+  "categories": [],
+  "function": "kernel_fdtd_2d",
+  "safety": "SAFE",
+  "target": "CPU_PARALLEL"
+ },
+ "107": {
+  "categories": [],
+  "function": "kernel_fdtd_2d",
+  "safety": "SAFE",
+  "target": "CPU_PARALLEL"
+ },
+ "109": {
+  "categories": [],
+  "function": "kernel_fdtd_2d",
+  "safety": "SAFE",
+  "target": "CPU_PARALLEL"
+ },
+ "110": {
+  "categories": [],
+  "function": "kernel_fdtd_2d",
+  "safety": "SAFE",
+  "target": "CPU_PARALLEL"
+ },
+ "112": {
+  "categories": [],
+  "function": "kernel_fdtd_2d",
+  "safety": "SAFE",
+  "target": "CPU_PARALLEL"
+ },
+ "113": {
+  "categories": [],
+  "function": "kernel_fdtd_2d",
+  "safety": "SAFE",
+  "target": "CPU_PARALLEL"
+ },
+ "36": {
+  "categories": [],
+  "function": "init_array",
+  "safety": "SAFE",
+  "target": "CPU_PARALLEL"
+ },
+ "38": {
+  "categories": [],
+  "function": "init_array",
+  "safety": "SAFE",
+  "target": "CPU_PARALLEL"
+ },
+ "39": {
+  "categories": [],
+  "function": "init_array",
+  "safety": "SAFE",
+  "target": "CPU_PARALLEL"
+ },
+ "61": {
+  "categories": [
+   "opaque-callee"
+  ],
+  "function": "print_array",
+  "safety": "UNKNOWN",
+  "target": "SEQUENTIAL"
+ },
+ "62": {
+  "categories": [
+   "opaque-callee"
+  ],
+  "function": "print_array",
+  "safety": "UNKNOWN",
+  "target": "SEQUENTIAL"
+ },
+ "70": {
+  "categories": [
+   "opaque-callee"
+  ],
+  "function": "print_array",
+  "safety": "UNKNOWN",
+  "target": "SEQUENTIAL"
+ },
+ "71": {
+  "categories": [
+   "opaque-callee"
+  ],
+  "function": "print_array",
+  "safety": "UNKNOWN",
+  "target": "SEQUENTIAL"
+ },
+ "78": {
+  "categories": [
+   "opaque-callee"
+  ],
+  "function": "print_array",
+  "safety": "UNKNOWN",
+  "target": "SEQUENTIAL"
+ },
+ "79": {
+  "categories": [
+   "opaque-callee"
+  ],
+  "function": "print_array",
+  "safety": "UNKNOWN",
+  "target": "SEQUENTIAL"
+ }
+}

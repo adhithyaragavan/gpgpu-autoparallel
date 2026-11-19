@@ -1,0 +1,134 @@
+{
+ "31": {
+  "categories": [
+   "loop-shape"
+  ],
+  "function": "init_array",
+  "safety": "UNKNOWN",
+  "target": "SEQUENTIAL"
+ },
+ "33": {
+  "categories": [],
+  "function": "init_array",
+  "safety": "SAFE",
+  "target": "GPU_OFFLOAD"
+ },
+ "35": {
+  "categories": [],
+  "function": "init_array",
+  "safety": "SAFE",
+  "target": "GPU_OFFLOAD"
+ },
+ "45": {
+  "categories": [
+   "unknown-base"
+  ],
+  "function": "init_array",
+  "safety": "UNKNOWN",
+  "target": "SEQUENTIAL"
+ },
+ "46": {
+  "categories": [
+   "unknown-base"
+  ],
+  "function": "init_array",
+  "safety": "UNKNOWN",
+  "target": "SEQUENTIAL"
+ },
+ "48": {
+  "categories": [
+   "unknown-base"
+  ],
+  "function": "init_array",
+  "safety": "UNKNOWN",
+  "target": "SEQUENTIAL"
+ },
+ "49": {
+  "categories": [
+   "unknown-base"
+  ],
+  "function": "init_array",
+  "safety": "UNKNOWN",
+  "target": "SEQUENTIAL"
+ },
+ "50": {
+  "categories": [
+   "unknown-base"
+  ],
+  "function": "init_array",
+  "safety": "UNKNOWN",
+  "target": "SEQUENTIAL"
+ },
+ "52": {
+  "categories": [
+   "unknown-base"
+  ],
+  "function": "init_array",
+  "safety": "UNKNOWN",
+  "target": "SEQUENTIAL"
+ },
+ "53": {
+  "categories": [
+   "unknown-base"
+  ],
+  "function": "init_array",
+  "safety": "UNKNOWN",
+  "target": "SEQUENTIAL"
+ },
+ "71": {
+  "categories": [
+   "opaque-callee"
+  ],
+  "function": "print_array",
+  "safety": "UNKNOWN",
+  "target": "SEQUENTIAL"
+ },
+ "72": {
+  "categories": [
+   "opaque-callee"
+  ],
+  "function": "print_array",
+  "safety": "UNKNOWN",
+  "target": "SEQUENTIAL"
+ },
+ "90": {
+  "categories": [
+   "loop-shape"
+  ],
+  "function": "kernel_lu",
+  "safety": "UNKNOWN",
+  "target": "SEQUENTIAL"
+ },
+ "91": {
+  "categories": [
+   "unproven-dependence"
+  ],
+  "function": "kernel_lu",
+  "safety": "UNKNOWN",
+  "target": "SEQUENTIAL"
+ },
+ "92": {
+  "categories": [
+   "array-dependence",
+   "unproven-dependence"
+  ],
+  "function": "kernel_lu",
+  "safety": "UNSAFE",
+  "target": "SEQUENTIAL"
+ },
+ "97": {
+  "categories": [],
+  "function": "kernel_lu",
+  "safety": "SAFE",
+  "target": "CPU_PARALLEL"
+ },
+ "98": {
+  "categories": [
+   "array-dependence",
+   "unproven-dependence"
+  ],
+  "function": "kernel_lu",
+  "safety": "UNSAFE",
+  "target": "SEQUENTIAL"
+ }
+}

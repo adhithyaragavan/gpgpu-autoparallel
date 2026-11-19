@@ -1,0 +1,71 @@
+{
+ "37": {
+  "categories": [],
+  "function": "init_array",
+  "safety": "SAFE",
+  "target": "CPU_PARALLEL"
+ },
+ "38": {
+  "categories": [],
+  "function": "init_array",
+  "safety": "SAFE",
+  "target": "CPU_PARALLEL"
+ },
+ "42": {
+  "categories": [],
+  "function": "init_array",
+  "safety": "SAFE",
+  "target": "CPU_PARALLEL"
+ },
+ "43": {
+  "categories": [],
+  "function": "init_array",
+  "safety": "SAFE",
+  "target": "CPU_PARALLEL"
+ },
+ "59": {
+  "categories": [
+   "opaque-callee"
+  ],
+  "function": "print_array",
+  "safety": "UNKNOWN",
+  "target": "SEQUENTIAL"
+ },
+ "60": {
+  "categories": [
+   "opaque-callee"
+  ],
+  "function": "print_array",
+  "safety": "UNKNOWN",
+  "target": "SEQUENTIAL"
+ },
+ "88": {
+  "categories": [
+   "loop-shape",
+   "pointer-overlap"
+  ],
+  "function": "kernel_syr2k",
+  "safety": "UNKNOWN",
+  "target": "SEQUENTIAL"
+ },
+ "89": {
+  "categories": [],
+  "function": "kernel_syr2k",
+  "safety": "SAFE",
+  "target": "CPU_PARALLEL"
+ },
+ "91": {
+  "categories": [
+   "array-dependence"
+  ],
+  "function": "kernel_syr2k",
+  "safety": "UNSAFE",
+  "target": "SEQUENTIAL"
+ },
+ "92": {
+  "categories": [],
+  "function": "kernel_syr2k",
+  "safety": "SAFE",
+  "target": "CPU_PARALLEL"
+ }
+}

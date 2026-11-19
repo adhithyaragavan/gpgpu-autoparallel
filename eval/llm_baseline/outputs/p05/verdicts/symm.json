@@ -1,0 +1,73 @@
+{
+ "37": {
+  "categories": [],
+  "function": "init_array",
+  "safety": "SAFE",
+  "target": "CPU_PARALLEL"
+ },
+ "38": {
+  "categories": [],
+  "function": "init_array",
+  "safety": "SAFE",
+  "target": "CPU_PARALLEL"
+ },
+ "42": {
+  "categories": [
+   "loop-shape"
+  ],
+  "function": "init_array",
+  "safety": "UNKNOWN",
+  "target": "SEQUENTIAL"
+ },
+ "43": {
+  "categories": [],
+  "function": "init_array",
+  "safety": "SAFE",
+  "target": "GPU_OFFLOAD"
+ },
+ "45": {
+  "categories": [],
+  "function": "init_array",
+  "safety": "SAFE",
+  "target": "GPU_OFFLOAD"
+ },
+ "61": {
+  "categories": [
+   "opaque-callee"
+  ],
+  "function": "print_array",
+  "safety": "UNKNOWN",
+  "target": "SEQUENTIAL"
+ },
+ "62": {
+  "categories": [
+   "opaque-callee"
+  ],
+  "function": "print_array",
+  "safety": "UNKNOWN",
+  "target": "SEQUENTIAL"
+ },
+ "93": {
+  "categories": [
+   "pointer-overlap",
+   "unproven-dependence"
+  ],
+  "function": "kernel_symm",
+  "safety": "UNKNOWN",
+  "target": "SEQUENTIAL"
+ },
+ "94": {
+  "categories": [],
+  "function": "kernel_symm",
+  "safety": "SAFE",
+  "target": "CPU_PARALLEL"
+ },
+ "97": {
+  "categories": [
+   "fp-reduction"
+  ],
+  "function": "kernel_symm",
+  "safety": "UNSAFE",
+  "target": "SEQUENTIAL"
+ }
+}

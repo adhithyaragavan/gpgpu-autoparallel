@@ -1,0 +1,66 @@
+{
+ "102": {
+  "categories": [
+   "array-dependence",
+   "unproven-dependence"
+  ],
+  "function": "kernel_nussinov",
+  "safety": "UNSAFE",
+  "target": "SEQUENTIAL"
+ },
+ "38": {
+  "categories": [],
+  "function": "init_array",
+  "safety": "SAFE",
+  "target": "CPU_PARALLEL"
+ },
+ "42": {
+  "categories": [],
+  "function": "init_array",
+  "safety": "SAFE",
+  "target": "CPU_PARALLEL"
+ },
+ "43": {
+  "categories": [],
+  "function": "init_array",
+  "safety": "SAFE",
+  "target": "CPU_PARALLEL"
+ },
+ "60": {
+  "categories": [
+   "opaque-callee",
+   "scalar-dependence"
+  ],
+  "function": "print_array",
+  "safety": "UNSAFE",
+  "target": "SEQUENTIAL"
+ },
+ "61": {
+  "categories": [
+   "opaque-callee",
+   "scalar-dependence"
+  ],
+  "function": "print_array",
+  "safety": "UNSAFE",
+  "target": "SEQUENTIAL"
+ },
+ "86": {
+  "categories": [
+   "pointer-overlap",
+   "unproven-dependence"
+  ],
+  "function": "kernel_nussinov",
+  "safety": "UNKNOWN",
+  "target": "SEQUENTIAL"
+ },
+ "87": {
+  "categories": [
+   "array-dependence",
+   "pointer-overlap",
+   "unproven-dependence"
+  ],
+  "function": "kernel_nussinov",
+  "safety": "UNSAFE",
+  "target": "SEQUENTIAL"
+ }
+}

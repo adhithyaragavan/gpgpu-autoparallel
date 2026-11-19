@@ -1,0 +1,58 @@
+{
+ "35": {
+  "categories": [],
+  "function": "init_array",
+  "safety": "SAFE",
+  "target": "CPU_PARALLEL"
+ },
+ "41": {
+  "categories": [],
+  "function": "init_array",
+  "safety": "SAFE",
+  "target": "CPU_PARALLEL"
+ },
+ "59": {
+  "categories": [
+   "opaque-callee"
+  ],
+  "function": "print_array",
+  "safety": "UNKNOWN",
+  "target": "SEQUENTIAL"
+ },
+ "66": {
+  "categories": [
+   "opaque-callee"
+  ],
+  "function": "print_array",
+  "safety": "UNKNOWN",
+  "target": "SEQUENTIAL"
+ },
+ "88": {
+  "categories": [],
+  "function": "kernel_mvt",
+  "safety": "SAFE",
+  "target": "CPU_PARALLEL"
+ },
+ "89": {
+  "categories": [
+   "array-dependence"
+  ],
+  "function": "kernel_mvt",
+  "safety": "UNSAFE",
+  "target": "SEQUENTIAL"
+ },
+ "91": {
+  "categories": [],
+  "function": "kernel_mvt",
+  "safety": "SAFE",
+  "target": "CPU_PARALLEL"
+ },
+ "92": {
+  "categories": [
+   "array-dependence"
+  ],
+  "function": "kernel_mvt",
+  "safety": "UNSAFE",
+  "target": "SEQUENTIAL"
+ }
+}

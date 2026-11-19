@@ -1,0 +1,89 @@
+{
+ "102": {
+  "categories": [
+   "array-dependence"
+  ],
+  "function": "kernel_adi",
+  "safety": "UNSAFE",
+  "target": "SEQUENTIAL"
+ },
+ "108": {
+  "categories": [
+   "array-dependence"
+  ],
+  "function": "kernel_adi",
+  "safety": "UNSAFE",
+  "target": "SEQUENTIAL"
+ },
+ "113": {
+  "categories": [
+   "loop-shape",
+   "pointer-overlap"
+  ],
+  "function": "kernel_adi",
+  "safety": "UNKNOWN",
+  "target": "SEQUENTIAL"
+ },
+ "117": {
+  "categories": [
+   "array-dependence"
+  ],
+  "function": "kernel_adi",
+  "safety": "UNSAFE",
+  "target": "SEQUENTIAL"
+ },
+ "122": {
+  "categories": [
+   "array-dependence"
+  ],
+  "function": "kernel_adi",
+  "safety": "UNSAFE",
+  "target": "SEQUENTIAL"
+ },
+ "31": {
+  "categories": [],
+  "function": "init_array",
+  "safety": "SAFE",
+  "target": "CPU_PARALLEL"
+ },
+ "32": {
+  "categories": [],
+  "function": "init_array",
+  "safety": "SAFE",
+  "target": "CPU_PARALLEL"
+ },
+ "50": {
+  "categories": [
+   "opaque-callee"
+  ],
+  "function": "print_array",
+  "safety": "UNKNOWN",
+  "target": "SEQUENTIAL"
+ },
+ "51": {
+  "categories": [
+   "opaque-callee"
+  ],
+  "function": "print_array",
+  "safety": "UNKNOWN",
+  "target": "SEQUENTIAL"
+ },
+ "96": {
+  "categories": [
+   "loop-shape",
+   "pointer-overlap"
+  ],
+  "function": "kernel_adi",
+  "safety": "UNKNOWN",
+  "target": "SEQUENTIAL"
+ },
+ "98": {
+  "categories": [
+   "loop-shape",
+   "pointer-overlap"
+  ],
+  "function": "kernel_adi",
+  "safety": "UNKNOWN",
+  "target": "SEQUENTIAL"
+ }
+}

@@ -1,0 +1,110 @@
+{
+ "104": {
+  "categories": [],
+  "function": "kernel_deriche",
+  "safety": "SAFE",
+  "target": "CPU_PARALLEL"
+ },
+ "109": {
+  "categories": [
+   "scalar-dependence"
+  ],
+  "function": "kernel_deriche",
+  "safety": "UNSAFE",
+  "target": "SEQUENTIAL"
+ },
+ "118": {
+  "categories": [],
+  "function": "kernel_deriche",
+  "safety": "SAFE",
+  "target": "CPU_PARALLEL"
+ },
+ "119": {
+  "categories": [],
+  "function": "kernel_deriche",
+  "safety": "SAFE",
+  "target": "CPU_PARALLEL"
+ },
+ "123": {
+  "categories": [],
+  "function": "kernel_deriche",
+  "safety": "SAFE",
+  "target": "CPU_PARALLEL"
+ },
+ "127": {
+  "categories": [
+   "scalar-dependence"
+  ],
+  "function": "kernel_deriche",
+  "safety": "UNSAFE",
+  "target": "SEQUENTIAL"
+ },
+ "136": {
+  "categories": [],
+  "function": "kernel_deriche",
+  "safety": "SAFE",
+  "target": "CPU_PARALLEL"
+ },
+ "141": {
+  "categories": [
+   "scalar-dependence"
+  ],
+  "function": "kernel_deriche",
+  "safety": "UNSAFE",
+  "target": "SEQUENTIAL"
+ },
+ "150": {
+  "categories": [],
+  "function": "kernel_deriche",
+  "safety": "SAFE",
+  "target": "CPU_PARALLEL"
+ },
+ "151": {
+  "categories": [],
+  "function": "kernel_deriche",
+  "safety": "SAFE",
+  "target": "CPU_PARALLEL"
+ },
+ "35": {
+  "categories": [],
+  "function": "init_array",
+  "safety": "SAFE",
+  "target": "CPU_PARALLEL"
+ },
+ "36": {
+  "categories": [],
+  "function": "init_array",
+  "safety": "SAFE",
+  "target": "CPU_PARALLEL"
+ },
+ "52": {
+  "categories": [
+   "opaque-callee"
+  ],
+  "function": "print_array",
+  "safety": "UNKNOWN",
+  "target": "SEQUENTIAL"
+ },
+ "53": {
+  "categories": [
+   "opaque-callee"
+  ],
+  "function": "print_array",
+  "safety": "UNKNOWN",
+  "target": "SEQUENTIAL"
+ },
+ "92": {
+  "categories": [],
+  "function": "kernel_deriche",
+  "safety": "SAFE",
+  "target": "CPU_PARALLEL"
+ },
+ "96": {
+  "categories": [
+   "scalar-dependence"
+  ],
+  "function": "kernel_deriche",
+  "safety": "UNSAFE",
+  "target": "SEQUENTIAL"
+ }
+}

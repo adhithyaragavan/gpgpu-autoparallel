@@ -1,0 +1,126 @@
+{
+ "101": {
+  "categories": [],
+  "function": "kernel_3mm",
+  "safety": "SAFE",
+  "target": "CPU_PARALLEL"
+ },
+ "102": {
+  "categories": [],
+  "function": "kernel_3mm",
+  "safety": "SAFE",
+  "target": "CPU_PARALLEL"
+ },
+ "105": {
+  "categories": [
+   "array-dependence"
+  ],
+  "function": "kernel_3mm",
+  "safety": "UNSAFE",
+  "target": "SEQUENTIAL"
+ },
+ "34": {
+  "categories": [],
+  "function": "init_array",
+  "safety": "SAFE",
+  "target": "CPU_PARALLEL"
+ },
+ "35": {
+  "categories": [],
+  "function": "init_array",
+  "safety": "SAFE",
+  "target": "CPU_PARALLEL"
+ },
+ "37": {
+  "categories": [],
+  "function": "init_array",
+  "safety": "SAFE",
+  "target": "CPU_PARALLEL"
+ },
+ "38": {
+  "categories": [],
+  "function": "init_array",
+  "safety": "SAFE",
+  "target": "CPU_PARALLEL"
+ },
+ "40": {
+  "categories": [],
+  "function": "init_array",
+  "safety": "SAFE",
+  "target": "CPU_PARALLEL"
+ },
+ "41": {
+  "categories": [],
+  "function": "init_array",
+  "safety": "SAFE",
+  "target": "CPU_PARALLEL"
+ },
+ "43": {
+  "categories": [],
+  "function": "init_array",
+  "safety": "SAFE",
+  "target": "CPU_PARALLEL"
+ },
+ "44": {
+  "categories": [],
+  "function": "init_array",
+  "safety": "SAFE",
+  "target": "CPU_PARALLEL"
+ },
+ "59": {
+  "categories": [
+   "opaque-callee"
+  ],
+  "function": "print_array",
+  "safety": "UNKNOWN",
+  "target": "SEQUENTIAL"
+ },
+ "60": {
+  "categories": [
+   "opaque-callee"
+  ],
+  "function": "print_array",
+  "safety": "UNKNOWN",
+  "target": "SEQUENTIAL"
+ },
+ "85": {
+  "categories": [],
+  "function": "kernel_3mm",
+  "safety": "SAFE",
+  "target": "CPU_PARALLEL"
+ },
+ "86": {
+  "categories": [],
+  "function": "kernel_3mm",
+  "safety": "SAFE",
+  "target": "CPU_PARALLEL"
+ },
+ "89": {
+  "categories": [
+   "array-dependence"
+  ],
+  "function": "kernel_3mm",
+  "safety": "UNSAFE",
+  "target": "SEQUENTIAL"
+ },
+ "93": {
+  "categories": [],
+  "function": "kernel_3mm",
+  "safety": "SAFE",
+  "target": "CPU_PARALLEL"
+ },
+ "94": {
+  "categories": [],
+  "function": "kernel_3mm",
+  "safety": "SAFE",
+  "target": "CPU_PARALLEL"
+ },
+ "97": {
+  "categories": [
+   "array-dependence"
+  ],
+  "function": "kernel_3mm",
+  "safety": "UNSAFE",
+  "target": "SEQUENTIAL"
+ }
+}
