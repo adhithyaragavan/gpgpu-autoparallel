@@ -41,6 +41,12 @@ int main(int argc, char **argv) {
   { pr_callers(NG); dump(g_arr, sizeof(long)); }
   { long *a = arr(NG + 1); rt_callers(a, NG); dump(a, sizeof(long) * (NG + 1)); }
   { long *a = arr(n), *b = arr(n); k_prefix(a, b, n); dump(a, sizeof(long) * n); }
+  // Phase 2.5 -tri-ranges: k_prefix now has an overlap check; a overlapping
+  // b (both ways) must fail it.
+  for (int off = -3; off <= 3; off += 6) {
+    long *m = arr(2 * n + 8), *a = m + 4, *b = m + 4 + off;
+    k_prefix(a, b, n); dump(m, sizeof(long) * (2 * n + 8));
+  }
   // review cases, disjoint and overlapping
   { long *a = arr(n + 1), *b = arr(n + 100002); k_shadowed_param(a, b, n); dump(a, sizeof(long) * n); }
   { long *a = arr(n + 1); k_shadowed_param(a, a, n); dump(a, sizeof(long) * (n + 1)); }

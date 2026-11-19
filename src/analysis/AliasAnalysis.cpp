@@ -590,7 +590,11 @@ void AliasAnalyzer::assignExtents(const FunctionDecl *F, LoopAccesses &A) {
       continue;
     for (size_t D = 0; D < X.Subscripts.size() && D < X.Extents.size(); ++D) {
       AffineExpr Lo, Hi;
-      if (X.Extents[D] > 0 && subscriptBounds(X.Subscripts[D], A, Lo, Hi) &&
+      // Phase 2.5: tight bounds only. A widened one (each variable at its
+      // own extreme, `g[i + j]` with j < 64 - i) may pass the extent in a
+      // program that never does.
+      if (X.Extents[D] > 0 &&
+          subscriptBounds(X.Subscripts[D], A, Lo, Hi, /*Widen=*/false) &&
           ((Lo.isConstant() && (Lo.Const < 0 || Lo.Const > X.Extents[D] - 1)) ||
            (Hi.isConstant() && (Hi.Const < 0 || Hi.Const > X.Extents[D] - 1))))
         Contradicted.insert(VD);
@@ -935,6 +939,30 @@ AliasAnalyzer::runtimeCheck(const FunctionDecl *F, SourceLocation At,
         for (const auto &[S, C] : (*E)->SymTerms)
           if (!Nameable(S))
             return std::nullopt;
+  // Phase 2.5: and every name in the bounds the check is built from, which
+  // may come from other loops' ranges (-tri-ranges: `j <= k`, k's bound a
+  // field the loop only loads behind a condition) or from sibling loops'
+  // (-sibling-ranges), not only from the used variables'.
+  for (const ArrayAccess &X : Acc.Accesses) {
+    if (X.Base != A && X.Base != B)
+      continue;
+    for (size_t D = 0; D < accessRank(X); ++D) {
+      AffineExpr L, H;
+      if (!accessBounds(X, D, Acc, L, H))
+        continue; // Range() fails on it
+      for (const AffineExpr *E : {&L, &H}) {
+        for (const auto &[S, C] : E->SymTerms)
+          if (!Nameable(S))
+            return std::nullopt;
+        for (const auto &[V, C] : E->IVTerms)
+          if (!llvm::is_contained(Acc.OuterIVs, V) || !Nameable(V)) {
+            if (Why.empty())
+              Why = "a bound of " + X.Text + " uses a loop variable";
+            return std::nullopt;
+          }
+      }
+    }
+  }
 
   // The base's address, as an integer.
   bool NeedRuns = false;

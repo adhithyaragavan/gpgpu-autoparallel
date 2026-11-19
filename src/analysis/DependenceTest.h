@@ -119,9 +119,10 @@ LoopDependence testLoopDependences(const LoopAccesses &A, int64_t RootStep,
 /// Smallest and largest value S takes while the analyzed loop runs, with the
 /// loop's own and inner loops' variables at the ends of their ranges, in
 /// terms fixed while it runs (symbols, enclosing loops' variables). False
-/// when a needed range is unknown.
+/// when a needed range is unknown. Widen=false: only ranges usableRange has
+/// (no -tri-ranges/-sibling-ranges widening), for tight bounds.
 bool subscriptBounds(const AffineExpr &S, const LoopAccesses &A,
-                     AffineExpr &Lo, AffineExpr &Hi);
+                     AffineExpr &Lo, AffineExpr &Hi, bool Widen = true);
 
 /// Phase 2.5: smallest and largest value of a non-affine subscript's
 /// ValueBound while the analyzed loop runs (affine leaves through

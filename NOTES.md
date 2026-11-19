@@ -3615,3 +3615,79 @@ globals/statics; writes to `j` in the root's own header; init forms (`(j) = 0` o
 computed goto; the other `isCleanIV` callers (linked counters, `rowIndexInRange`, function mode,
 the enclosing-chain poison). Missed opportunity, not a bug: siblings over different ranges of
 one row stay UNKNOWN, since a doubly bound `j` gets no range.
+
+### 2026-11-19 — Phase 2.5: bounds for triangular and sibling loop ranges
+
+**The gap**: after the counter-reuse fix, syrk:83, syr2k:88, gramschmidt:97 and adi:98 (and
+covariance:85, correlation:110 before it) stopped at the overlap guard: "a loop range in A[j][k]
+can't be bounded". Two causes:
+- a range end that mentions another variable of the nest (`j <= i`, `j = i ..`) was dropped by
+  `usableRange` (it only keeps ends in fixed terms), so `subscriptBounds` gave up;
+- a counter bound by two sibling loops (adi's ascending and descending `j`) got an empty range in
+  `recordRange`.
+
+**The rule** (`boundingRange` in DependenceTest.cpp, used by `subscriptBounds` only):
+- `-tri-ranges`: an end that mentions a non-fixed variable is bounded through that variable's own
+  bounding range, at the extreme the coefficient's sign picks (`j <= i`, `i <= n - 1` gives
+  `j <= n - 1`), recursively (depth 8; a self-reference gives none).
+- `-sibling-ranges`: `recordRange` now keeps each binding loop's range in
+  `LoopAccesses::SiblingRanges` (the merged `Ranges` entry stays empty, as before), and the bound
+  is their span when every pair of ends differs by a constant (else none).
+Both contain every value the variable takes (an empty inner range for some `i` only makes it
+loose), so they are sound for anything that needs a superset: the overlap guard, map() sections,
+the same-array range test, the extent-contradiction check. They are never Exact, and the
+dependence equations (Banerjee, the "Free" claim) still use `usableRange`: there a triangular
+range that is empty for some `i` must not be read as "a dependence exists". DataRegions'
+`Exact()` now also refuses a range whose ends mention a non-fixed variable (it trusted
+`Ranges[j].Exact` for `j <= i`, which says the ends are reached for each `i`, not that the
+widened section is covered). I could not build a fixture where that changes a section today (a
+triangular write maps whole rows, or is correctly UNKNOWN); it is there for the pointer sections
+the widened bounds now allow.
+
+**Results.**
+- Both flags off: byte-identical to 6ffd053 on every fixture, benchmark and PolyBench kernel.
+- PolyBench: syrk:83, syr2k:88, gramschmidt:97 and adi:98 SAFE behind overlap checks.
+  covariance:85 and correlation:110 get past the guard and stop at the dependence test:
+  `cov[i][j]` vs `cov[j][i]` is independent only through `j >= i`, a relation between an inner and
+  the outer variable that the dependence equations (independent ranges per variable) can't use.
+  That needs constraints in the dependence test, a separate item.
+- Item 4 re-check (Archer): P05 101 groups, 0 wrong, also with every guard stripped. "Correct, P05
+  not SAFE": ompar-long 9 -> 6, gpt-oss-120b 7.3 -> 4.3 (left: FP reductions, array reductions,
+  covariance/correlation).
+- Fixtures: `alias.c` k_prefix (documented "j's range depends on i") is SAFE behind a check; its
+  driver now also calls it with a overlapping both ways. `hints.c`/`hints.test` (and their Inputs)
+  and `bounds.c`/`bounds.test` run with `-tri-ranges=off`: the hint loops were built to be
+  unguardable through a triangular read, and bounds.c's `sz_tri*` test declared-size bounds,
+  which the triangular bound now supersedes; both are about something else, and keep testing it.
+- New `tests/ranges.{c,test}` + `eval/runtime/ranges_main.c` (in CI, also OFFLOAD and gated):
+  lower and upper triangles, a two-level chain (`k = j ..`, `j <= i`), syrk's rows, adi's
+  siblings, siblings a constant apart; twins: siblings whose ends differ by a symbol, a real
+  carried dependence through `j < i`; GPU sections of triangular writes stay `tofrom`. Every
+  guarded loop is called with disjoint and overlapping arguments; with its guard stripped each of
+  the six mismatches (3/3 runs), so every guard is load-bearing.
+- Fuzzer: no change in SAFE count or guards over 55 files with the flags on vs off (its arrays
+  are mostly distinct objects): no evidence from it either way.
+
+**Adversarial review** (separate agent, runtime-checked): 1 unsound guard + 1 precision loss, both
+fixed; the range arithmetic itself held (16 shapes by hand and against overlapping calls at
+offsets -8..8: negative coefficients, steps 2/3, descending root and inner loops, `break` in a
+sibling, a sibling under `if`, three bindings, chains, unsigned/short counters, callee ranges;
+GPU sections incl. hoisted hulls in Docker under naive and gated).
+- **Guard loads a field the loop only loads conditionally** (crash). `runtimeCheck` checked names
+  only in `Ranges` of the variables a subscript uses. A widened bound brings in names from other
+  ranges: `if (s) for (k < s->m) for (j <= k) t += b[j]` put `s->m` in b's bound through k's
+  range (k is in no subscript), and with sibling loops `Ranges[j]` is empty so `SiblingRanges`
+  was never looked at. The guard then read `s->m` with s == NULL (exit 139; the sequential
+  program never loads it). Shadowed names slipped through the same way. Fix: every symbol and
+  outer variable in the final bounds of each access (`accessBounds`) goes through `Nameable`
+  (`symbolEvaluable` + `NameScope`), and no other loop variable may remain. Pinned as `u_field`,
+  `u_field_sib` (driver calls them with s == 0).
+- **Extent wrongly "contradicted"** (SAFE -> UNKNOWN). The extent-contradiction check in
+  AliasAnalysis took widened bounds: `g[i + j]` with `j < 64 - i` bounds to 126 with i and j each
+  at their own maximum, so the in-bounds program looked like it read past `g[64]`, its extents
+  were dropped and `g[idx[i]]` lost its bound. `subscriptBounds(..., Widen=false)` there (tight
+  bounds, as before). Pinned as `s_extent`.
+- The first Linux run of the new driver caught my own bug: an overlapping call wrote one element
+  past `g_ext` (UB; it hit the driver's FILE pointer). The call now passes `g_ext` itself.
+- Not from this change, noted: a narrow or unsigned counter that wraps makes `Lo = Start` /
+  `Hi = Bound - 1` invalid; widening passes such a range on but doesn't create it.

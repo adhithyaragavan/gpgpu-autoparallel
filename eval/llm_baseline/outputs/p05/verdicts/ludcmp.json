@@ -39,7 +39,6 @@
  },
  "122": {
   "categories": [
-   "pointer-overlap",
    "unproven-dependence"
   ],
   "function": "kernel_ludcmp",
@@ -56,7 +55,6 @@
  },
  "129": {
   "categories": [
-   "pointer-overlap",
    "unproven-dependence"
   ],
   "function": "kernel_ludcmp",

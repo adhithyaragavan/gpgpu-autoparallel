@@ -82,12 +82,11 @@ void kernel_syrk(int n, int m,
 //A is NxM
 //C is NxN
 #pragma scop
+  #pragma omp parallel for if(parallel: ((__INTPTR_TYPE__)C + 8 * ((((__INTPTR_TYPE__)n - 1)) * 240 + ((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)A + 8 * ((0) * 200 + 0) || (__INTPTR_TYPE__)A + 8 * ((((__INTPTR_TYPE__)n - 1)) * 200 + ((__INTPTR_TYPE__)m - 1) + 1) <= (__INTPTR_TYPE__)C + 8 * ((0) * 240 + 0))) private(j, k)
   for (i = 0; i < _PB_N; i++) {
-    #pragma omp parallel for
     for (j = 0; j <= i; j++)
       C[i][j] *= beta;
     for (k = 0; k < _PB_M; k++) {
-      #pragma omp parallel for if(parallel: ((__INTPTR_TYPE__)C + 8 * (((__INTPTR_TYPE__)i) * 240 + (__INTPTR_TYPE__)i + 1) <= (__INTPTR_TYPE__)A + (8 * (((__INTPTR_TYPE__)i) * 200 + (__INTPTR_TYPE__)k) < 8 * ((0) * 200 + (__INTPTR_TYPE__)k) ? 8 * (((__INTPTR_TYPE__)i) * 200 + (__INTPTR_TYPE__)k) : 8 * ((0) * 200 + (__INTPTR_TYPE__)k)) || (__INTPTR_TYPE__)A + 8 * (((__INTPTR_TYPE__)i) * 200 + (__INTPTR_TYPE__)k + 1) <= (__INTPTR_TYPE__)C + 8 * (((__INTPTR_TYPE__)i) * 240 + 0)))
       for (j = 0; j <= i; j++)
         C[i][j] += alpha * A[i][k] * A[j][k];
     }

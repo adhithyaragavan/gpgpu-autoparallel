@@ -1,4 +1,4 @@
-// RUN: %p05 %s -- %cflags | FileCheck %s
+// RUN: %p05 -tri-ranges=off %s -- %cflags | FileCheck %s
 // CHECK: Analyzed 26 loop(s).
 //
 // Phase 2.5 item 3: bounds for accesses whose subscript isn't affine.

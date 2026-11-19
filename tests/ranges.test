@@ -1,0 +1,35 @@
+# Phase 2.5 widened ranges (tests/ranges.c pins the default verdicts).
+#
+# 1. -tri-ranges=off: the triangular loops have no overlap check again.
+RUN: %p05 -tri-ranges=off %S/ranges.c -- %cflags | FileCheck --check-prefix=NOTRI %s
+NOTRI-LABEL: ranges.c:30:3
+NOTRI: safety     : UNKNOWN
+NOTRI: no run-time check is possible: the range of 'b' it touches is unknown: a loop range in b[j] can't be bounded
+NOTRI-LABEL: ranges.c:64:3
+NOTRI: safety     : UNKNOWN
+NOTRI-LABEL: ranges.c:98:3
+NOTRI: safety     : UNKNOWN
+NOTRI-LABEL: ranges.c:147:3
+NOTRI: safety     : UNKNOWN
+#    ... but the sibling loops keep theirs.
+NOTRI-LABEL: ranges.c:207:3
+NOTRI: safety     : SAFE
+NOTRI-LABEL: ranges.c:265:3
+NOTRI: safety     : SAFE
+#
+# 2. -sibling-ranges=off: the sibling loops lose theirs, the triangular keep.
+RUN: %p05 -sibling-ranges=off %S/ranges.c -- %cflags | FileCheck --check-prefix=NOSIB %s
+NOSIB-LABEL: ranges.c:30:3
+NOSIB: safety     : SAFE
+NOSIB-LABEL: ranges.c:207:3
+NOSIB: safety     : UNKNOWN
+NOSIB-LABEL: ranges.c:265:3
+NOSIB: safety     : UNKNOWN
+#
+# 3. On the GPU path a triangular write's section isn't fully written: tofrom,
+#    never from.
+RUN: %p05 -policy naive %S/ranges.c -- %cflags | FileCheck --check-prefix=GPU %s
+GPU-LABEL: ranges.c:409:3
+GPU: T (map(tofrom: T[0:
+GPU-LABEL: ranges.c:438:3
+GPU: o (map(tofrom: o[0:n][0:64])

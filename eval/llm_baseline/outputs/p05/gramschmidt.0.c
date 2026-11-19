@@ -97,13 +97,13 @@ void kernel_gramschmidt(int m, int n,
       #pragma omp parallel for if(parallel: ((__INTPTR_TYPE__)Q + 8 * ((((__INTPTR_TYPE__)m - 1)) * 240 + (__INTPTR_TYPE__)k + 1) <= (__INTPTR_TYPE__)A + 8 * ((0) * 240 + (__INTPTR_TYPE__)k) || (__INTPTR_TYPE__)A + 8 * ((((__INTPTR_TYPE__)m - 1)) * 240 + (__INTPTR_TYPE__)k + 1) <= (__INTPTR_TYPE__)Q + 8 * ((0) * 240 + (__INTPTR_TYPE__)k)) && ((__INTPTR_TYPE__)Q + 8 * ((((__INTPTR_TYPE__)m - 1)) * 240 + (__INTPTR_TYPE__)k + 1) <= (__INTPTR_TYPE__)R + 8 * (((__INTPTR_TYPE__)k) * 240 + (__INTPTR_TYPE__)k) || (__INTPTR_TYPE__)R + 8 * (((__INTPTR_TYPE__)k) * 240 + (__INTPTR_TYPE__)k + 1) <= (__INTPTR_TYPE__)Q + 8 * ((0) * 240 + (__INTPTR_TYPE__)k)))
       for (i = 0; i < _PB_M; i++)
         Q[i][k] = A[i][k] / R[k][k];
+      #pragma omp parallel for if(parallel: ((__INTPTR_TYPE__)R + 8 * (((__INTPTR_TYPE__)k) * 240 + ((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)Q + 8 * ((0) * 240 + (__INTPTR_TYPE__)k) || (__INTPTR_TYPE__)Q + 8 * ((((__INTPTR_TYPE__)m - 1)) * 240 + (__INTPTR_TYPE__)k + 1) <= (__INTPTR_TYPE__)R + 8 * (((__INTPTR_TYPE__)k) * 240 + ((__INTPTR_TYPE__)k + 1))) && ((__INTPTR_TYPE__)R + 8 * (((__INTPTR_TYPE__)k) * 240 + ((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)A + 8 * ((0) * 240 + ((__INTPTR_TYPE__)k + 1)) || (__INTPTR_TYPE__)A + 8 * ((((__INTPTR_TYPE__)m - 1)) * 240 + ((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)R + 8 * (((__INTPTR_TYPE__)k) * 240 + ((__INTPTR_TYPE__)k + 1))) && ((__INTPTR_TYPE__)Q + 8 * ((((__INTPTR_TYPE__)m - 1)) * 240 + (__INTPTR_TYPE__)k + 1) <= (__INTPTR_TYPE__)A + 8 * ((0) * 240 + ((__INTPTR_TYPE__)k + 1)) || (__INTPTR_TYPE__)A + 8 * ((((__INTPTR_TYPE__)m - 1)) * 240 + ((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)Q + 8 * ((0) * 240 + (__INTPTR_TYPE__)k))) private(i)
       for (j = k + 1; j < _PB_N; j++)
 	{
 	  R[k][j] = SCALAR_VAL(0.0);
 	  for (i = 0; i < _PB_M; i++)
 	    R[k][j] += Q[i][k] * A[i][j];
-	  #pragma omp parallel for if(parallel: ((__INTPTR_TYPE__)A + 8 * ((((__INTPTR_TYPE__)m - 1)) * 240 + (__INTPTR_TYPE__)j + 1) <= (__INTPTR_TYPE__)Q + 8 * ((0) * 240 + (__INTPTR_TYPE__)k) || (__INTPTR_TYPE__)Q + 8 * ((((__INTPTR_TYPE__)m - 1)) * 240 + (__INTPTR_TYPE__)k + 1) <= (__INTPTR_TYPE__)A + 8 * ((0) * 240 + (__INTPTR_TYPE__)j)) && ((__INTPTR_TYPE__)A + 8 * ((((__INTPTR_TYPE__)m - 1)) * 240 + (__INTPTR_TYPE__)j + 1) <= (__INTPTR_TYPE__)R + 8 * (((__INTPTR_TYPE__)k) * 240 + (__INTPTR_TYPE__)j) || (__INTPTR_TYPE__)R + 8 * (((__INTPTR_TYPE__)k) * 240 + (__INTPTR_TYPE__)j + 1) <= (__INTPTR_TYPE__)A + 8 * ((0) * 240 + (__INTPTR_TYPE__)j)))
-   for (i = 0; i < _PB_M; i++)
+	  for (i = 0; i < _PB_M; i++)
 	    A[i][j] = A[i][j] - Q[i][k] * R[k][j];
 	}
     }

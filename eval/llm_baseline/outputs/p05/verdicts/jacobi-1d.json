@@ -15,7 +15,6 @@
  },
  "72": {
   "categories": [
-   "pointer-overlap",
    "unproven-dependence"
   ],
   "function": "kernel_jacobi_1d",

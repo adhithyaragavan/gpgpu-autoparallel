@@ -143,6 +143,9 @@ bool fieldBasesFromFlags();
 bool boundChecksFromFlags();
 /// -field-scalars (Phase 2.5; default on): FieldPath::Scalar symbols.
 bool fieldScalarsFromFlags();
+/// -tri-ranges / -sibling-ranges (Phase 2.5; default on): boundingRange.
+bool triRangesFromFlags();
+bool siblingRangesFromFlags();
 
 struct LoopAccesses;
 /// Phase 2.5: can a check placed before the loop Acc describes write the
@@ -358,6 +361,10 @@ struct LoopAccesses {
   /// Ranges of RootIV and of every inner recognized loop's variable. A
   /// variable bound by two different loops inside gets an empty range.
   llvm::DenseMap<const clang::VarDecl *, IVRange> Ranges;
+  /// Phase 2.5: for a variable bound by several loops inside (sibling loops
+  /// reusing a counter), each binding loop's range, in traversal order. Only
+  /// for bounds (DependenceTest.h boundingRange), never exact.
+  llvm::DenseMap<const clang::VarDecl *, std::vector<IVRange>> SiblingRanges;
   /// Variables declared inside the analyzed loop (body or header clauses):
   /// an array among them is private to each iteration.
   llvm::DenseSet<const clang::VarDecl *> DeclaredInLoop;

@@ -15,7 +15,6 @@
  },
  "77": {
   "categories": [
-   "pointer-overlap",
    "scalar-dependence",
    "unproven-dependence"
   ],

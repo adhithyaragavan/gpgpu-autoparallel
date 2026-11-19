@@ -55,7 +55,6 @@
  },
  "85": {
   "categories": [
-   "pointer-overlap",
    "unproven-dependence"
   ],
   "function": "kernel_covariance",

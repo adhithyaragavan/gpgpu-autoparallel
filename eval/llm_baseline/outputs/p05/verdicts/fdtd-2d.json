@@ -1,7 +1,6 @@
 {
  "102": {
   "categories": [
-   "pointer-overlap",
    "unproven-dependence"
   ],
   "function": "kernel_fdtd_2d",

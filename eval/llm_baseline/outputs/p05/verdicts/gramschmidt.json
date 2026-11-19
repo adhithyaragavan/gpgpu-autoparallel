@@ -71,7 +71,6 @@
  },
  "89": {
   "categories": [
-   "pointer-overlap",
    "unproven-dependence"
   ],
   "function": "kernel_gramschmidt",
@@ -93,11 +92,9 @@
   "target": "CPU_PARALLEL"
  },
  "97": {
-  "categories": [
-   "pointer-overlap"
-  ],
+  "categories": [],
   "function": "kernel_gramschmidt",
-  "safety": "UNKNOWN",
-  "target": "SEQUENTIAL"
+  "safety": "SAFE",
+  "target": "CPU_PARALLEL"
  }
 }

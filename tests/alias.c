@@ -193,9 +193,10 @@ void rt_callers(long *a, int n) {
 
 // --- 3. no proof and no check: UNKNOWN -------------------------------------
 
-// UNKNOWN: j's range depends on i, so b's touched range can't be bounded.
+// Checked at run time: j's range depends on i (j < i), so b's touched range
+// is bounded through i's: j <= n - 2 (Phase 2.5 -tri-ranges; UNKNOWN before).
 void k_prefix(long *a, const long *b, int n) {
-  // CHECK: alias.c:[[#LOOP9:@LINE+12]]:3{{$}}
+  // CHECK: alias.c:[[#LOOP9:@LINE+13]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 1 child loop(s){{$}}
@@ -203,13 +204,14 @@ void k_prefix(long *a, const long *b, int n) {
   // CHECK: accesses   : 2 (2 affine){{$}}
   // CHECK-NEXT: R b[j] : [j]{{$}}
   // CHECK-NEXT: W a[i] : [i]{{$}}
-  // CHECK-NEXT: safety     : UNKNOWN{{$}}
-  // CHECK: - 'b' and 'a' may overlap (not restrict, and not every call is known to pass disjoint objects), and no run-time check is possible: the range of 'b' it touches is unknown: a loop range in b[j] can't be bounded{{$}}
+  // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
-  // CHECK: profitability : SEQUENTIAL{{$}}
+  // CHECK: alias      : 'b' and 'a' may overlap: checked at run time{{$}}
+  // CHECK: alias guard: ((__INTPTR_TYPE__)b + 8 * (((__INTPTR_TYPE__)n - 2) + 1) <= (__INTPTR_TYPE__)a + 0 || (__INTPTR_TYPE__)a + 8 * (((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)b + 0){{$}}
+  // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
   for (int i = 0; i < n; i++) {
     long s = 0;
-    // CHECK: alias.c:[[#LOOP10:@LINE+12]]:5{{$}}
+    // CHECK: alias.c:[[#LOOP10:@LINE+11]]:5{{$}}
     // CHECK: kind       : VARIABLE_BOUND{{$}}
     // CHECK: trip count : <not statically known>{{$}}
     // CHECK: nest       : depth 1, parent [[#LOOP9]]:3, 0 child loop(s), triangular{{$}}
@@ -220,7 +222,6 @@ void k_prefix(long *a, const long *b, int n) {
     // CHECK: deps       : 0 pair(s), 0 independent{{$}}
     // CHECK: scalars    : reduction(+: s){{$}}
     // CHECK: profitability : CPU_PARALLEL if (i >= {{[0-9]+}}){{$}}
-    // CHECK: - data region (line {{[0-9]+}}): not hoisted: 'i' changes inside it{{$}}
     for (int j = 0; j < i; j++)
       s += b[j];
     a[i] = s;

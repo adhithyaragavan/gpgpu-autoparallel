@@ -422,6 +422,13 @@ RegionPlan RegionPlanner::plan(const LoopInfo &LI, const LoopAccesses &A,
         const IVRange *R = RangeOf(V);
         if (!R || !R->Exact)
           return false;
+        // Phase 2.5: a triangular range (`j <= i`) reaches its ends only
+        // for some values of the other variable; its bounds (boundingRange)
+        // are the extremes over all of them, so they aren't surely touched.
+        for (const std::optional<AffineExpr> *E : {&R->Lo, &R->Hi})
+          for (const auto &[W, C] : (*E)->IVTerms)
+            if (!IsFixed(W))
+              return false;
       }
     return true;
   };

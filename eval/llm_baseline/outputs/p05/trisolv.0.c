@@ -30,7 +30,7 @@ void init_array(int n,
 {
   int i, j;
 
-  #pragma omp parallel for if(parallel: ((__INTPTR_TYPE__)x + 8 * (((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)b + 0 || (__INTPTR_TYPE__)b + 8 * (((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)x + 0) && ((__INTPTR_TYPE__)x + 8 * (((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)L + 8 * ((0) * 400 + 0) || (__INTPTR_TYPE__)L + 8 * ((((__INTPTR_TYPE__)n - 1)) * 400 + 399 + 1) <= (__INTPTR_TYPE__)x + 0) && ((__INTPTR_TYPE__)b + 8 * (((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)L + 8 * ((0) * 400 + 0) || (__INTPTR_TYPE__)L + 8 * ((((__INTPTR_TYPE__)n - 1)) * 400 + 399 + 1) <= (__INTPTR_TYPE__)b + 0)) private(j)
+  #pragma omp parallel for if(parallel: ((__INTPTR_TYPE__)x + 8 * (((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)b + 0 || (__INTPTR_TYPE__)b + 8 * (((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)x + 0) && ((__INTPTR_TYPE__)x + 8 * (((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)L + 8 * ((0) * 400 + 0) || (__INTPTR_TYPE__)L + 8 * ((((__INTPTR_TYPE__)n - 1)) * 400 + ((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)x + 0) && ((__INTPTR_TYPE__)b + 8 * (((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)L + 8 * ((0) * 400 + 0) || (__INTPTR_TYPE__)L + 8 * ((((__INTPTR_TYPE__)n - 1)) * 400 + ((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)b + 0)) private(j)
   for (i = 0; i < n; i++)
     {
       x[i] = - 999;

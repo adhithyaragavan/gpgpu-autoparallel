@@ -47,7 +47,6 @@
  },
  "93": {
   "categories": [
-   "pointer-overlap",
    "unproven-dependence"
   ],
   "function": "kernel_symm",

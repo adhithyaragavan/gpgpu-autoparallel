@@ -1,4 +1,4 @@
-// RUN: %p05 %s -- %cflags | FileCheck %s
+// RUN: %p05 -tri-ranges=off %s -- %cflags | FileCheck %s
 // CHECK: Analyzed 45 loop(s).
 // Phase 2.5 item 1: rejection categories and hints (Rejection.h).
 //
@@ -8,8 +8,9 @@
 // loop the report calls fixable and checks that the loop is then SAFE.
 //
 // The restrict loops all read b through a triangular inner loop, so the
-// range of b they touch depends on i and no run-time overlap check can be
-// built (tests/alias.c k_prefix): only a proof helps.
+// range of b they touch depends on i and, with -tri-ranges=off (every RUN
+// here), no run-time overlap check can be built: only a proof helps. By
+// default such a loop gets an overlap check instead (tests/ranges.c).
 
 // --- 1. restrict hints, one per declarator shape -----------------------------
 

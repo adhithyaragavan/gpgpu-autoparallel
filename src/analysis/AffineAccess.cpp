@@ -85,6 +85,27 @@ static llvm::cl::opt<OnOff> FlagReuseCounters(
                    "any other write makes it unknown (ablation baseline)")),
     llvm::cl::init(OnOff::On), llvm::cl::cat(optionCategory()));
 
+static llvm::cl::opt<OnOff> FlagTriRanges(
+    "tri-ranges",
+    llvm::cl::desc("Bound a loop range that mentions another loop's "
+                   "variable through that variable's range (Phase 2.5)"),
+    llvm::cl::values(
+        clEnumValN(OnOff::On, "on", "j <= i gives j <= max i (default)"),
+        clEnumValN(OnOff::Off, "off", "no bound (ablation baseline)")),
+    llvm::cl::init(OnOff::On), llvm::cl::cat(optionCategory()));
+
+static llvm::cl::opt<OnOff> FlagSiblingRanges(
+    "sibling-ranges",
+    llvm::cl::desc("Bound a counter of several sibling loops by the span of "
+                   "their ranges (Phase 2.5)"),
+    llvm::cl::values(
+        clEnumValN(OnOff::On, "on",
+                   "when the ends differ by constants (default)"),
+        clEnumValN(OnOff::Off, "off", "no bound (ablation baseline)")),
+    llvm::cl::init(OnOff::On), llvm::cl::cat(optionCategory()));
+
+bool triRangesFromFlags() { return FlagTriRanges == OnOff::On; }
+bool siblingRangesFromFlags() { return FlagSiblingRanges == OnOff::On; }
 bool fieldScalarsFromFlags() { return FlagFieldScalars == OnOff::On; }
 bool valueBoundsFromFlags() { return FlagValueBounds == OnOff::On; }
 bool sizeBoundsFromFlags() { return FlagSizeBounds == OnOff::On; }
@@ -1787,10 +1808,11 @@ private:
   /// with the induction variables in scope at L's header.
   void recordRange(const LoopInfo &L, llvm::ArrayRef<IVBinding> InScope) {
     const VarDecl *V = canon(L.InductionVar);
-    if (Out.Ranges.count(V)) { // bound by two loops: no single range
-      Out.Ranges[V] = IVRange();
-      return;
-    }
+    // Bound by two loops: no single range. Phase 2.5: each binding's range
+    // is kept in SiblingRanges (the first one's from Ranges).
+    const bool Again = Out.Ranges.count(V);
+    if (Again && !Out.SiblingRanges.count(V))
+      Out.SiblingRanges[V].push_back(Out.Ranges[V]);
     AffineBuilder B(C, InScope, IVsAtDecl);
     std::string Why;
     std::optional<AffineExpr> Start, Bound;
@@ -1820,6 +1842,12 @@ private:
     }
     R.Exact = R.Lo && R.Hi && L.Step && (*L.Step == 1 || *L.Step == -1) &&
               !hasJump(L.Loop->getBody());
+    if (Again) {
+      R.Exact = false;
+      Out.SiblingRanges[V].push_back(R);
+      Out.Ranges[V] = IVRange();
+      return;
+    }
     Out.Ranges[V] = R;
     // Phase 2.5: an inner loop's loaded bound may become an assumption.
     if (!Bound && RootIndex != NoRoot && L.Loop != C.Root)

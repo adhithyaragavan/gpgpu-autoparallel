@@ -67,7 +67,6 @@
  },
  "96": {
   "categories": [
-   "pointer-overlap",
    "unproven-dependence"
   ],
   "function": "kernel_adi",
@@ -75,11 +74,9 @@
   "target": "SEQUENTIAL"
  },
  "98": {
-  "categories": [
-   "pointer-overlap"
-  ],
+  "categories": [],
   "function": "kernel_adi",
-  "safety": "UNKNOWN",
-  "target": "SEQUENTIAL"
+  "safety": "SAFE",
+  "target": "CPU_PARALLEL"
  }
 }

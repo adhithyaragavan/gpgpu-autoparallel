@@ -40,12 +40,10 @@
   "target": "SEQUENTIAL"
  },
  "83": {
-  "categories": [
-   "pointer-overlap"
-  ],
+  "categories": [],
   "function": "kernel_syrk",
-  "safety": "UNKNOWN",
-  "target": "SEQUENTIAL"
+  "safety": "SAFE",
+  "target": "CPU_PARALLEL"
  },
  "84": {
   "categories": [],

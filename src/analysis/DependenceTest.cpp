@@ -143,6 +143,89 @@ struct Extreme {
   }
 };
 
+/// Phase 2.5: a range for V while the analyzed loop runs, for bounds only
+/// (subscriptBounds), never for the dependence equations. Where usableRange
+/// has both ends it is that. Otherwise (-tri-ranges) an end that mentions
+/// another variable of the nest is bounded through that variable's own
+/// range (`j <= i` with i <= n - 1 gives j <= n - 1), and (-sibling-ranges)
+/// a variable bound by several sibling loops gets the span of their ranges
+/// when their ends differ by constants. Both contain every value V takes,
+/// but are wider than one loop's range: never Exact.
+IVRange boundingRange(const LoopAccesses &A, const VarDecl *V,
+                      unsigned Depth = 0) {
+  IVRange Usable = usableRange(A, V);
+  if ((Usable.Lo && Usable.Hi) || Depth > 8)
+    return Usable;
+  std::vector<IVRange> Rs;
+  if (auto S = A.SiblingRanges.find(V); S != A.SiblingRanges.end()) {
+    if (!siblingRangesFromFlags())
+      return Usable;
+    Rs = S->second;
+  } else if (auto R = A.Ranges.find(V); R != A.Ranges.end()) {
+    Rs.push_back(R->second);
+  } else {
+    return Usable;
+  }
+  // One end of a binding's range, with the nest's other variables at their
+  // extremes.
+  auto Bound = [&](const std::optional<AffineExpr> &E,
+                   bool WantMax) -> std::optional<AffineExpr> {
+    if (!E)
+      return std::nullopt;
+    if (onlyFixed(*E, A))
+      return E;
+    if (!triRangesFromFlags())
+      return std::nullopt;
+    Extreme X;
+    AffineExpr Fixed;
+    Fixed.SymTerms = E->SymTerms;
+    Fixed.Const = E->Const;
+    X.add(Fixed, 1);
+    for (const auto &[W, C] : E->IVTerms) {
+      if (llvm::is_contained(A.OuterIVs, W)) {
+        AffineExpr T;
+        T.IVTerms[W] = C;
+        X.add(T, 1);
+        continue;
+      }
+      if (W == V)
+        return std::nullopt;
+      IVRange WR = boundingRange(A, W, Depth + 1);
+      X.addTerm(C, WR.Lo, WR.Hi, WantMax);
+    }
+    if (X.Inf)
+      return std::nullopt;
+    return X.E;
+  };
+  IVRange Out;
+  for (const bool WantMax : {false, true}) {
+    std::optional<AffineExpr> Acc;
+    bool Ok = true;
+    for (const IVRange &R : Rs) {
+      std::optional<AffineExpr> E = Bound(WantMax ? R.Hi : R.Lo, WantMax);
+      if (!E) {
+        Ok = false;
+        break;
+      }
+      if (!Acc) {
+        Acc = E;
+        continue;
+      }
+      // The span's end: the further of two ends a constant apart.
+      AffineExpr D = *E;
+      if (!addScaled(D, *Acc, -1) || !D.isConstant()) {
+        Ok = false;
+        break;
+      }
+      if (WantMax ? D.Const > 0 : D.Const < 0)
+        Acc = E;
+    }
+    (WantMax ? Out.Hi : Out.Lo) = Ok ? Acc : std::nullopt;
+  }
+  Out.Exact = false;
+  return Out;
+}
+
 /// One dimension of the dependence equation
 ///   a*i1 - b*i2 + sum(p*x) - sum(q*y) + Fixed = 0
 /// where i1/i2 are the analyzed loop's variable in the two accesses, x/y the
@@ -354,7 +437,7 @@ llvm::StringRef toString(AliasProof P) {
 }
 
 bool subscriptBounds(const AffineExpr &S, const LoopAccesses &A,
-                     AffineExpr &Lo, AffineExpr &Hi) {
+                     AffineExpr &Lo, AffineExpr &Hi, bool Widen) {
   Extreme Min, Max;
   for (Extreme *X : {&Min, &Max}) {
     const bool WantMax = X == &Max;
@@ -370,7 +453,7 @@ bool subscriptBounds(const AffineExpr &S, const LoopAccesses &A,
         X->add(T, 1);
         continue;
       }
-      IVRange R = usableRange(A, V);
+      IVRange R = Widen ? boundingRange(A, V) : usableRange(A, V);
       X->addTerm(C, R.Lo, R.Hi, WantMax);
     }
   }
