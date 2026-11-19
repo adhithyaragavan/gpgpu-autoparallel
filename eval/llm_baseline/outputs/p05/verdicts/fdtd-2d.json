@@ -1,8 +1,8 @@
 {
  "102": {
   "categories": [
-   "loop-shape",
-   "pointer-overlap"
+   "pointer-overlap",
+   "unproven-dependence"
   ],
   "function": "kernel_fdtd_2d",
   "safety": "UNKNOWN",

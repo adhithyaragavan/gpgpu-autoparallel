@@ -41,7 +41,6 @@
  },
  "83": {
   "categories": [
-   "loop-shape",
    "pointer-overlap"
   ],
   "function": "kernel_syrk",

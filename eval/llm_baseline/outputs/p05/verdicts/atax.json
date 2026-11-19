@@ -33,8 +33,8 @@
  },
  "76": {
   "categories": [
-   "loop-shape",
-   "pointer-overlap"
+   "pointer-overlap",
+   "unproven-dependence"
   ],
   "function": "kernel_atax",
   "safety": "UNKNOWN",

@@ -435,10 +435,22 @@ public:
   }
   bool TraverseSwitchStmt(SwitchStmt *S, DataRecursionQueue * = nullptr) {
     ++BreakTargets;
+    ++Switches;
     bool Ok = Base::TraverseSwitchStmt(S, nullptr);
+    --Switches;
     --BreakTargets;
     return Ok;
   }
+  // A case label of a switch around the loop: the switch can jump into the
+  // body, which OpenMP forbids (clang refuses the pragma).
+  bool VisitCaseStmt(CaseStmt *) { return outerCase(); }
+  bool VisitDefaultStmt(DefaultStmt *) { return outerCase(); }
+  bool outerCase() {
+    if (Switches == 0)
+      note("loop body contains a 'case' label of a switch outside the loop");
+    return true;
+  }
+  unsigned Switches = 0;
   bool VisitBreakStmt(BreakStmt *) {
     if (BreakTargets == 0)
       note("loop body can 'break' out of the loop");
@@ -454,6 +466,14 @@ public:
   }
   bool VisitIndirectGotoStmt(IndirectGotoStmt *) {
     note("loop body contains 'goto'");
+    return true;
+  }
+  // A label some goto (or `&&label`) uses: a goto from outside could enter
+  // the body, and OpenMP forbids branching into a structured block (clang
+  // refuses the pragma). An unused label is harmless.
+  bool VisitLabelStmt(LabelStmt *LS) {
+    if (LS->getDecl()->isUsed())
+      note("loop body contains a label a 'goto' can jump to");
     return true;
   }
   bool VisitAtomicExpr(AtomicExpr *) {
@@ -530,6 +550,28 @@ LoopSafety SafetyAnalyzer::analyzeLoop(const LoopInfo &LI,
                               "loop shape not recognized (" +
                                   LI.UnrecognizedReason +
                                   "); safety not evaluated"});
+    return Safety;
+  }
+
+  // `for (j = j + 1; ...)`: the start is whatever an earlier statement left
+  // in j, and OpenMP forbids an init that reads the loop variable.
+  std::function<bool(const Stmt *)> Mentions = [&](const Stmt *S) {
+    if (const auto *E = dyn_cast<Expr>(S); E && refersToVar(E, LI.InductionVar))
+      return true;
+    for (const Stmt *C : S->children())
+      if (C && Mentions(C))
+        return true;
+    return false;
+  };
+  if (const auto *Init = dyn_cast_or_null<BinaryOperator>(LI.Loop->getInit());
+      Init && LI.InductionVar &&
+      (Init->isCompoundAssignmentOp() ||
+       (Init->getOpcode() == BO_Assign && Mentions(Init->getRHS())))) {
+    Safety.Verdict = SafetyVerdict::Unknown;
+    Safety.Reasons.push_back(
+        {RejectCategory::LoopShape,
+         "loop's init reads its own induction variable '" +
+             LI.InductionVar->getNameAsString() + "'"});
     return Safety;
   }
 

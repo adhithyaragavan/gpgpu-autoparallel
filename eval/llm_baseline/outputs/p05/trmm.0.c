@@ -31,13 +31,12 @@ void init_array(int m, int n,
   int i, j;
 
   *alpha = 1.5;
+  #pragma omp parallel for if(parallel: ((__INTPTR_TYPE__)A + (8 * ((((__INTPTR_TYPE__)m - 1)) * 200 + 199 + 1) > 8 * ((((__INTPTR_TYPE__)m - 1)) * 200 + ((__INTPTR_TYPE__)m - 1) + 1) ? 8 * ((((__INTPTR_TYPE__)m - 1)) * 200 + 199 + 1) : 8 * ((((__INTPTR_TYPE__)m - 1)) * 200 + ((__INTPTR_TYPE__)m - 1) + 1)) <= (__INTPTR_TYPE__)B + 8 * ((0) * 240 + 0) || (__INTPTR_TYPE__)B + 8 * ((((__INTPTR_TYPE__)m - 1)) * 240 + 239 + 1) <= (__INTPTR_TYPE__)A + 8 * ((0) * 200 + 0))) private(j)
   for (i = 0; i < m; i++) {
-    #pragma omp parallel for
     for (j = 0; j < i; j++) {
       A[i][j] = (DATA_TYPE)((i+j) % m)/m;
     }
     A[i][i] = 1.0;
-    #pragma omp parallel for
     for (j = 0; j < n; j++) {
       B[i][j] = (DATA_TYPE)((n+(i-j)) % n)/n;
     }

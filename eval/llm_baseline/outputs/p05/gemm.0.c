@@ -89,12 +89,11 @@ void kernel_gemm(int ni, int nj, int nk,
 //B is NKxNJ
 //C is NIxNJ
 #pragma scop
+  #pragma omp parallel for if(parallel: ((__INTPTR_TYPE__)C + 8 * ((((__INTPTR_TYPE__)ni - 1)) * 220 + 219 + 1) <= (__INTPTR_TYPE__)A + 8 * ((0) * 240 + 0) || (__INTPTR_TYPE__)A + 8 * ((((__INTPTR_TYPE__)ni - 1)) * 240 + ((__INTPTR_TYPE__)nk - 1) + 1) <= (__INTPTR_TYPE__)C + 8 * ((0) * 220 + 0)) && ((__INTPTR_TYPE__)C + 8 * ((((__INTPTR_TYPE__)ni - 1)) * 220 + 219 + 1) <= (__INTPTR_TYPE__)B + 8 * ((0) * 220 + 0) || (__INTPTR_TYPE__)B + 8 * ((((__INTPTR_TYPE__)nk - 1)) * 220 + 219 + 1) <= (__INTPTR_TYPE__)C + 8 * ((0) * 220 + 0))) private(j, k)
   for (i = 0; i < _PB_NI; i++) {
-    #pragma omp parallel for
     for (j = 0; j < _PB_NJ; j++)
 	C[i][j] *= beta;
     for (k = 0; k < _PB_NK; k++) {
-       #pragma omp parallel for if(parallel: ((__INTPTR_TYPE__)C + 8 * (((__INTPTR_TYPE__)i) * 220 + ((__INTPTR_TYPE__)nj - 1) + 1) <= (__INTPTR_TYPE__)A + 8 * (((__INTPTR_TYPE__)i) * 240 + (__INTPTR_TYPE__)k) || (__INTPTR_TYPE__)A + 8 * (((__INTPTR_TYPE__)i) * 240 + (__INTPTR_TYPE__)k + 1) <= (__INTPTR_TYPE__)C + 8 * (((__INTPTR_TYPE__)i) * 220 + 0)) && ((__INTPTR_TYPE__)C + 8 * (((__INTPTR_TYPE__)i) * 220 + ((__INTPTR_TYPE__)nj - 1) + 1) <= (__INTPTR_TYPE__)B + 8 * (((__INTPTR_TYPE__)k) * 220 + 0) || (__INTPTR_TYPE__)B + 8 * (((__INTPTR_TYPE__)k) * 220 + ((__INTPTR_TYPE__)nj - 1) + 1) <= (__INTPTR_TYPE__)C + 8 * (((__INTPTR_TYPE__)i) * 220 + 0)))
        for (j = 0; j < _PB_NJ; j++)
 	  C[i][j] += alpha * A[i][k] * B[k][j];
     }

@@ -3531,3 +3531,87 @@ nested-wrong: races that the dumped output did not show.
 ("wrong on P05-SAFE loops" and "correct, P05 not SAFE" are the overlap). Correct means "no
 difference seen and no race reported at MEDIUM size on this machine", not proven. LLM results are
 for one model, one prompt, provider defaults, on a date; PolyBench is likely in its training data.
+
+### 2026-11-19 — Phase 2.5: loop counters reused by sibling loops
+
+**The gap** (found by the item 4 baseline): PolyBench declares `int i, j, k;` at function scope,
+so `for (i..) { for (j..) ..; for (k..) for (j..) .. }` (gemm, syrk, syr2k, adi, ...) has two
+loops writing `j`. Analyzing the outer loop, `isCleanIV` allowed only the binding loop's own header
+to write `j`, so the sibling's header made every `j` subscript non-affine and the outer loop
+UNKNOWN. P05 parallelized the inner loops instead (finer grain, more fork-joins). The LLMs got
+these loops right, and gpt-oss's most common error was exactly this shape without `private(j)`.
+
+**The rule** (`isCleanIV`, `-reuse-counters`, default on): a write to the counter outside the
+binding loop L (a sibling's header, `j = 7;` between loops) cannot change it inside L, because
+inside L only L's header runs between uses. So such writes are allowed, provided
+- L's init assigns the counter (`j = e`) and `e` does not mention it, so the start does not come
+  from those writes (`for (; j < n; j++)` and `for (j = j + 1; ...)` keep the old rule), and
+- L's body has no label (a goto could enter L with any value).
+Everything else (address taken, volatile, a global with a call, an aliasing indirect write) is
+still checked over the whole analyzed loop. Writes inside L other than its header (a nested loop
+reusing `j`, `j++` in the body) still poison L's binding. In function mode (`analyzeFunction`)
+the facts were already per-loop, so nothing changes there. ScalarAnalysis needed no change: it
+already privatizes (or lastprivates) a counter every iteration writes before reading.
+
+**Two pre-existing codegen bugs** found while writing the fixture, now rejections (not behind
+the flag; they only make loops UNKNOWN):
+- a loop whose body holds a label some goto uses (`LabelDecl::isUsed`): OpenMP forbids a jump
+  into a structured block and clang refuses the pragma. Unused labels stay allowed
+  (nests.c `labelled_inner` keeps its SAFE verdict). Category early-exit.
+- a loop whose init reads its own counter (`for (j = j + 1; ...)`) or is a compound assignment:
+  clang refuses the pragma ("the loop initializer expression depends on the current loop control
+  variable"). Category loop-shape.
+HEAD gave both of these loops a pragma that didn't compile. Neither shape occurs in the fixtures,
+benchmarks or PolyBench.
+
+**Results.**
+- `-reuse-counters=off` is byte-identical to 42a974d (reports and rewrites) on every fixture,
+  benchmark and the 30 PolyBench kernels; only the new `tests/reuse.c` differs (the two
+  rejections).
+- PolyBench, newly SAFE outer loops: two kernel loops (gemm:89, adi:113) and five `init_array`
+  loops (symm:42, trmm:34, cholesky:31, lu:31, ludcmp:42). Their inner pragmas go away (one outer `parallel for
+  private(j)`), so P05's groups drop from 107 to 102. syrk:83, syr2k:88, gramschmidt:97 and adi:98
+  now get past the counter and stop at the overlap guard ("a loop range in A[j][k] can't be
+  bounded": triangular `j <= i` and descending ranges), the same limit as covariance:85 and
+  correlation:110. atax:76 needs an array reduction.
+- Item 4 checker re-run (Archer, Linux container): P05 102 groups, 0 wrong, also with every guard
+  stripped. The verdict cache `outputs/p05/verdicts/` was stale (`--make-p05` only writes it when
+  missing), so it was deleted and regenerated, and the other tools' `p05_*` columns were
+  refreshed from it (their own verdicts don't depend on P05). "Correct, P05 not SAFE":
+  ompar-long 11 -> 9, gpt-oss-120b 9.3 -> 7.3, ompar 4 -> 4.
+- `tests/affine.c` r1b_reused_iv: reason text only (the outer loop, still UNSAFE with 0 affine
+  accesses, is now reported through the "iteration space is unknown" poison instead of the inner
+  binding, which is now correctly clean).
+
+**Fixture** `tests/reuse.c` (+ `reuse.test` for the ablation, `eval/runtime/reuse_main.c`, in
+CI, also OFFLOAD and gated): SAFE gemm, a write and a read of `j` between the loops, ascending +
+descending siblings (adi), `j` live after the nest (`lastprivate(j)`), nested `for (j) for (j)`
+whose only access uses the inner `j` (correctly SAFE). Twins: an access through the middle `j` of
+that nest, no init, self-reading init, goto into the second loop, `&j` taken, `j++` in the first
+loop's body, a carried row dependence, `j` read before the loops write it. Sizes 64, 37, 2, 1, 0.
+The first Linux run caught a fixture bug: `last = j` read an uninitialized `j` at n = 0 (UB in
+the sequential program too); `j` now starts at -1.
+
+**Fuzzer:** it already declares counters at function scope, but never puts two loops at one
+level of a body. A variant that does (separate RNG stream) fired on 0 of ~400 loops over 40 seeds
+(`-reuse-counters=off` gave the same SAFE count): random bodies almost never leave the outer
+loop parallel. Reverted rather than kept as coverage it doesn't give; the fixture and PolyBench
+under Archer are the evidence here.
+
+**Adversarial review** (separate agent, runtime-checked repros): 1 false SAFE + 1 codegen bug,
+both fixed; same cause. A `case`/`default` label of a switch *around* the loop is an entry point
+just like a goto label, and neither new check looked for it:
+- (new with this change, false SAFE) `j = -10; switch (sel) { case 0: for (j = 0; j < 10; j++) {
+  case 1: V[10*i + j + 10] = i; } }` inside `for (i)`: entering at `case 1` skips the init, so the
+  outer loop's `private(j)` pragma raced (output mismatch at -O0). `hasLabel` now also counts a
+  `SwitchCase` not inside a switch of its own within the loop body.
+- (pre-existing) such a loop got its own `parallel for`, which clang refuses ("'case' statement
+  not in switch statement"). BodyHazardVisitor now rejects a case label whose switch is outside
+  the loop (early-exit). Pinned as `u_switch` in tests/reuse.c (sel 0 and 1 in the driver).
+Held up: lastprivate with conditional, zero-trip and `break` siblings; starts taken from a
+sibling's exit value; `while`/`if` writes between siblings; the outer counter reused inside;
+globals/statics; writes to `j` in the root's own header; init forms (`(j) = 0` ok;
+`j = (j)`, casts, `j = k = j + 1`, statement expressions, `sizeof(j)` all rejected); goto and
+computed goto; the other `isCleanIV` callers (linked counters, `rowIndexInRange`, function mode,
+the enclosing-chain poison). Missed opportunity, not a bug: siblings over different ranges of
+one row stay UNKNOWN, since a doubly bound `j` gets no range.

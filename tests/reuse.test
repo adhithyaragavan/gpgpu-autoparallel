@@ -1,0 +1,17 @@
+# Phase 2.5 counter reuse (tests/reuse.c pins the default verdicts).
+#
+# -reuse-counters=off: any write to a loop's counter other than its own
+# header's makes it unknown again, so every outer loop of a sibling pair is
+# UNKNOWN (the ablation baseline; byte-identical to 42a974d).
+RUN: %p05 %S/reuse.c -reuse-counters=off -- %cflags | FileCheck --check-prefix=OFF %s
+OFF-LABEL: reuse.c:37:3
+OFF: induction variable 'j' is modified inside the loop
+OFF: safety     : UNKNOWN
+OFF-LABEL: reuse.c:101:3
+OFF: safety     : UNKNOWN
+OFF-LABEL: reuse.c:156:3
+OFF: safety     : UNKNOWN
+OFF-LABEL: reuse.c:210:3
+OFF: safety     : UNKNOWN
+OFF-LABEL: reuse.c:260:3
+OFF: safety     : UNKNOWN

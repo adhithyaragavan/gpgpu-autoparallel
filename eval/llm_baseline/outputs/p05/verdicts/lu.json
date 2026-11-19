@@ -1,23 +1,21 @@
 {
  "31": {
-  "categories": [
-   "loop-shape"
-  ],
+  "categories": [],
   "function": "init_array",
-  "safety": "UNKNOWN",
-  "target": "SEQUENTIAL"
+  "safety": "SAFE",
+  "target": "CPU_PARALLEL"
  },
  "33": {
   "categories": [],
   "function": "init_array",
   "safety": "SAFE",
-  "target": "GPU_OFFLOAD"
+  "target": "CPU_PARALLEL"
  },
  "35": {
   "categories": [],
   "function": "init_array",
   "safety": "SAFE",
-  "target": "GPU_OFFLOAD"
+  "target": "CPU_PARALLEL"
  },
  "45": {
   "categories": [
@@ -93,7 +91,7 @@
  },
  "90": {
   "categories": [
-   "loop-shape"
+   "unproven-dependence"
   ],
   "function": "kernel_lu",
   "safety": "UNKNOWN",

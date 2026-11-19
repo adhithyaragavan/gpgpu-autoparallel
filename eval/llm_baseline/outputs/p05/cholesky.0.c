@@ -28,12 +28,11 @@ void init_array(int n,
 {
   int i, j;
 
+  #pragma omp parallel for private(j)
   for (i = 0; i < n; i++)
     {
-      #pragma omp parallel for
       for (j = 0; j <= i; j++)
 	A[i][j] = (DATA_TYPE)(-j % n) / n + 1;
-      #pragma omp parallel for
       for (j = i+1; j < n; j++) {
 	A[i][j] = 0;
       }

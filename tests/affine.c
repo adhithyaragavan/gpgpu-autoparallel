@@ -694,8 +694,8 @@ void r1b_reused_iv(int *a, int n) {
   // CHECK: nest       : depth 0, 1 child loop(s), perfect nest{{$}}
   // CHECK: nest ivs   : i{{$}}
   // CHECK: accesses   : 2 (0 affine){{$}}
-  // CHECK-NEXT: W a[i] : non-affine: induction variable 'i' is modified inside the loop{{$}}
-  // CHECK-NEXT: R a[i + 1] : non-affine: induction variable 'i' is modified inside the loop{{$}}
+  // CHECK-NEXT: W a[i] : non-affine: induction variable 'i' is modified inside the loop, so the loop's iteration space is unknown{{$}}
+  // CHECK-NEXT: R a[i + 1] : non-affine: induction variable 'i' is modified inside the loop, so the loop's iteration space is unknown{{$}}
   // CHECK-NEXT: safety     : UNSAFE{{$}}
   // CHECK: - loop body reassigns the induction variable 'i'{{$}}
   // CHECK: deps       : 2 pair(s), 0 independent{{$}}

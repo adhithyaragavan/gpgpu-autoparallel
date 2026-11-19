@@ -74,6 +74,17 @@ static llvm::cl::opt<OnOff> FlagFieldScalars(
                    "such a value is unknown (ablation baseline)")),
     llvm::cl::init(OnOff::On), llvm::cl::cat(optionCategory()));
 
+static llvm::cl::opt<OnOff> FlagReuseCounters(
+    "reuse-counters",
+    llvm::cl::desc("A counter shared by sibling loops (Phase 2.5)"),
+    llvm::cl::values(
+        clEnumValN(OnOff::On, "on",
+                   "writes outside a loop don't change its counter inside "
+                   "it (default)"),
+        clEnumValN(OnOff::Off, "off",
+                   "any other write makes it unknown (ablation baseline)")),
+    llvm::cl::init(OnOff::On), llvm::cl::cat(optionCategory()));
+
 bool fieldScalarsFromFlags() { return FlagFieldScalars == OnOff::On; }
 bool valueBoundsFromFlags() { return FlagValueBounds == OnOff::On; }
 bool sizeBoundsFromFlags() { return FlagSizeBounds == OnOff::On; }
@@ -756,6 +767,20 @@ struct IVBinding {
   const LoopInfo *Loop;
 };
 
+/// Does S contain a place control can enter from outside it: a label (a
+/// goto could jump there), or a `case`/`default` of a switch around S?
+bool hasLabel(const Stmt *S, bool InSwitch = false) {
+  if (!S)
+    return false;
+  if (isa<LabelStmt>(S) || (isa<SwitchCase>(S) && !InSwitch))
+    return true;
+  const bool Inner = InSwitch || isa<SwitchStmt>(S);
+  for (const Stmt *C : S->children())
+    if (hasLabel(C, Inner))
+      return true;
+  return false;
+}
+
 /// Does S contain a statement that leaves or skips part of a loop around it
 /// (break, continue, goto, return)? Conservative: one belonging to a nested
 /// loop or switch counts too.
@@ -844,11 +869,35 @@ bool otherWrites(const VarDecl *VD, const BodyFacts &F,
   return false;
 }
 
+bool mentions(const Stmt *S, const VarDecl *VD);
+
 /// Is the binding's variable a well-behaved induction variable: changed only
 /// by its own loop's header, and nothing else in F?
 bool isCleanIV(const IVBinding &B, const BodyFacts &F, const Context &C,
                std::string &Why) {
-  return !otherWrites(B.Var, F, headerUpdates(*B.Loop), C, Why);
+  llvm::SmallVector<const Stmt *, 4> Allowed = headerUpdates(*B.Loop);
+  // A counter reused by sibling loops (`for (j..) ..; for (k..) for (j..)`,
+  // j declared at function scope): writes outside B's own loop cannot change
+  // it inside that loop, provided the loop's init assigns it (so its start
+  // does not come from them) and nothing can jump into the loop's body.
+  if (FlagReuseCounters == OnOff::Off)
+    return !otherWrites(B.Var, F, Allowed, C, Why);
+  auto It = F.WriteSites.find(B.Var);
+  const auto *Init =
+      dyn_cast_or_null<BinaryOperator>(B.Loop->Loop->getInit());
+  if (It != F.WriteSites.end() && Init && Init->getOpcode() == BO_Assign &&
+      asVar(Init->getLHS()) == B.Var && !mentions(Init->getRHS(), B.Var) &&
+      !hasLabel(B.Loop->Loop->getBody())) {
+    auto Own = C.LoopFacts.find(B.Loop->Loop);
+    if (Own == C.LoopFacts.end())
+      Own = C.LoopFacts.try_emplace(B.Loop->Loop, factsOf(B.Loop->Loop)).first;
+    auto Inside = Own->second.WriteSites.find(B.Var);
+    for (const Stmt *S : It->second)
+      if (Inside == Own->second.WriteSites.end() ||
+          !llvm::is_contained(Inside->second, S))
+        Allowed.push_back(S);
+  }
+  return !otherWrites(B.Var, F, Allowed, C, Why);
 }
 
 /// Is VD (not an induction variable at this point) fixed while the code

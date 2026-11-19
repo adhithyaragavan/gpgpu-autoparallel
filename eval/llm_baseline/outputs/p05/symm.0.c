@@ -40,11 +40,10 @@ void init_array(int m, int n,
       C[i][j] = (DATA_TYPE) ((i+j) % 100) / m;
       B[i][j] = (DATA_TYPE) ((n+i-j) % 100) / m;
     }
+  #pragma omp parallel for private(j)
   for (i = 0; i < m; i++) {
-    #pragma omp parallel for
     for (j = 0; j <=i; j++)
       A[i][j] = (DATA_TYPE) ((i+j) % 100) / m;
-    #pragma omp parallel for
     for (j = i+1; j < m; j++)
       A[i][j] = -999; //regions of arrays that should not be used
   }

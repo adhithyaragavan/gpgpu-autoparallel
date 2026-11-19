@@ -12,24 +12,22 @@
   "target": "CPU_PARALLEL"
  },
  "42": {
-  "categories": [
-   "loop-shape"
-  ],
+  "categories": [],
   "function": "init_array",
-  "safety": "UNKNOWN",
-  "target": "SEQUENTIAL"
+  "safety": "SAFE",
+  "target": "CPU_PARALLEL"
  },
  "43": {
   "categories": [],
   "function": "init_array",
   "safety": "SAFE",
-  "target": "GPU_OFFLOAD"
+  "target": "CPU_PARALLEL"
  },
  "45": {
   "categories": [],
   "function": "init_array",
   "safety": "SAFE",
-  "target": "GPU_OFFLOAD"
+  "target": "CPU_PARALLEL"
  },
  "61": {
   "categories": [

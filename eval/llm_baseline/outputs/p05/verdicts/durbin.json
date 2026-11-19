@@ -15,9 +15,9 @@
  },
  "77": {
   "categories": [
-   "loop-shape",
    "pointer-overlap",
-   "scalar-dependence"
+   "scalar-dependence",
+   "unproven-dependence"
   ],
   "function": "kernel_durbin",
   "safety": "UNSAFE",

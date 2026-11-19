@@ -71,8 +71,8 @@
  },
  "89": {
   "categories": [
-   "loop-shape",
-   "pointer-overlap"
+   "pointer-overlap",
+   "unproven-dependence"
   ],
   "function": "kernel_gramschmidt",
   "safety": "UNKNOWN",
@@ -94,7 +94,6 @@
  },
  "97": {
   "categories": [
-   "loop-shape",
    "pointer-overlap"
   ],
   "function": "kernel_gramschmidt",

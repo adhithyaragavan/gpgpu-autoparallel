@@ -23,8 +23,8 @@ ompar,gemver,0,5,6,112,kernel_gemver,True,#pragma omp parallel for,True,ok,clean
 ompar,gemver,0,6,,113,kernel_gemver,True,#pragma omp parallel for private(j),True,mismatch,race,wrong,UNSAFE,SEQUENTIAL,array-dependence,2 threads
 ompar,gemver,0,file,,,,,7 pragmas,True,ok,clean,correct,,,,
 ompar,gesummv,0,file,,,,,0 pragmas,,,,none,,,,
-ompar,symm,0,0,,43,init_array,False,#pragma omp parallel for private(j),True,ok,clean,correct,SAFE,GPU_OFFLOAD,,
-ompar,symm,0,1,,45,init_array,False,#pragma omp parallel for,True,ok,clean,correct,SAFE,GPU_OFFLOAD,,
+ompar,symm,0,0,,43,init_array,False,#pragma omp parallel for private(j),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+ompar,symm,0,1,,45,init_array,False,#pragma omp parallel for,True,ok,clean,correct,SAFE,CPU_PARALLEL,,
 ompar,symm,0,2,,97,kernel_symm,True,#pragma omp parallel for,True,mismatch,race,wrong,UNSAFE,SEQUENTIAL,fp-reduction,2 threads
 ompar,symm,0,file,,,,,3 pragmas,True,mismatch,race,wrong,,,,2 threads
 ompar,syr2k,0,0,,43,init_array,False,#pragma omp parallel for private(j),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
@@ -71,8 +71,8 @@ ompar,mvt,0,2,,89,kernel_mvt,True,#pragma omp parallel for private(j),True,misma
 ompar,mvt,0,3,4,91,kernel_mvt,True,#pragma omp parallel for,True,ok,clean,correct,SAFE,CPU_PARALLEL,,
 ompar,mvt,0,4,,92,kernel_mvt,True,#pragma omp parallel for private(j),True,mismatch,race,wrong,UNSAFE,SEQUENTIAL,array-dependence,2 threads
 ompar,mvt,0,file,,,,,5 pragmas,True,ok,clean,correct,,,,
-ompar,cholesky,0,0,,33,init_array,False,#pragma omp parallel for private(j),True,ok,clean,correct,SAFE,GPU_OFFLOAD,,
-ompar,cholesky,0,1,,35,init_array,False,#pragma omp parallel for,True,ok,clean,correct,SAFE,GPU_OFFLOAD,,
+ompar,cholesky,0,0,,33,init_array,False,#pragma omp parallel for private(j),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+ompar,cholesky,0,1,,35,init_array,False,#pragma omp parallel for,True,ok,clean,correct,SAFE,CPU_PARALLEL,,
 ompar,cholesky,0,2,,45,init_array,False,#pragma omp parallel for,True,ok,clean,correct,UNKNOWN,SEQUENTIAL,unknown-base,
 ompar,cholesky,0,3,4,48,init_array,False,#pragma omp parallel for,True,ok,clean,correct,UNKNOWN,SEQUENTIAL,unknown-base,
 ompar,cholesky,0,4,,49,init_array,False,#pragma omp parallel for,True,ok,clean,correct,UNKNOWN,SEQUENTIAL,unknown-base,
@@ -92,8 +92,8 @@ ompar,gramschmidt,0,3,,95,kernel_gramschmidt,True,#pragma omp parallel for,True,
 ompar,gramschmidt,0,4,,100,kernel_gramschmidt,True,#pragma omp parallel for,True,mismatch,race,wrong,UNSAFE,SEQUENTIAL,array-dependence,2 threads
 ompar,gramschmidt,0,5,,102,kernel_gramschmidt,True,#pragma omp parallel for,True,ok,clean,correct,SAFE,CPU_PARALLEL,,
 ompar,gramschmidt,0,file,,,,,6 pragmas,True,fp-mismatch,race,wrong,,,,2 threads: beyond the tolerance
-ompar,lu,0,0,,33,init_array,False,#pragma omp parallel for private(j),True,ok,clean,correct,SAFE,GPU_OFFLOAD,,
-ompar,lu,0,1,,35,init_array,False,#pragma omp parallel for,True,ok,clean,correct,SAFE,GPU_OFFLOAD,,
+ompar,lu,0,0,,33,init_array,False,#pragma omp parallel for private(j),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+ompar,lu,0,1,,35,init_array,False,#pragma omp parallel for,True,ok,clean,correct,SAFE,CPU_PARALLEL,,
 ompar,lu,0,2,,46,init_array,False,#pragma omp parallel for,True,ok,clean,correct,UNKNOWN,SEQUENTIAL,unknown-base,
 ompar,lu,0,3,4,49,init_array,False,#pragma omp parallel for,True,ok,clean,correct,UNKNOWN,SEQUENTIAL,unknown-base,
 ompar,lu,0,4,,50,init_array,False,#pragma omp parallel for,True,ok,clean,correct,UNKNOWN,SEQUENTIAL,unknown-base,
@@ -103,8 +103,8 @@ ompar,lu,0,7,,92,kernel_lu,True,#pragma omp parallel for,True,mismatch,race,wron
 ompar,lu,0,8,,98,kernel_lu,True,#pragma omp parallel for,True,mismatch,race,wrong,UNSAFE,SEQUENTIAL,array-dependence unproven-dependence,2 threads
 ompar,lu,0,file,,,,,9 pragmas,True,mismatch,race,wrong,,,,2 threads
 ompar,ludcmp,0,0,,35,init_array,False,#pragma omp parallel for,True,ok,clean,correct,SAFE,CPU_PARALLEL,,
-ompar,ludcmp,0,1,,44,init_array,False,#pragma omp parallel for private(j),True,ok,clean,correct,SAFE,GPU_OFFLOAD,,
-ompar,ludcmp,0,2,,46,init_array,False,#pragma omp parallel for,True,ok,clean,correct,SAFE,GPU_OFFLOAD,,
+ompar,ludcmp,0,1,,44,init_array,False,#pragma omp parallel for private(j),True,ok,clean,correct,SAFE,CPU_PARALLEL,,
+ompar,ludcmp,0,2,,46,init_array,False,#pragma omp parallel for,True,ok,clean,correct,SAFE,CPU_PARALLEL,,
 ompar,ludcmp,0,3,,57,init_array,False,#pragma omp parallel for,True,ok,clean,correct,UNKNOWN,SEQUENTIAL,unknown-base,
 ompar,ludcmp,0,4,5,60,init_array,False,#pragma omp parallel for,True,ok,clean,correct,UNKNOWN,SEQUENTIAL,unknown-base,
 ompar,ludcmp,0,5,,61,init_array,False,#pragma omp parallel for,True,ok,clean,correct,UNKNOWN,SEQUENTIAL,unknown-base,

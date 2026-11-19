@@ -29,8 +29,8 @@
  },
  "73": {
   "categories": [
-   "loop-shape",
-   "pointer-overlap"
+   "pointer-overlap",
+   "unproven-dependence"
   ],
   "function": "kernel_jacobi_2d",
   "safety": "UNKNOWN",

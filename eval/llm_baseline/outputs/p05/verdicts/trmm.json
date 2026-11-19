@@ -1,12 +1,9 @@
 {
  "34": {
-  "categories": [
-   "loop-shape",
-   "pointer-overlap"
-  ],
+  "categories": [],
   "function": "init_array",
-  "safety": "UNKNOWN",
-  "target": "SEQUENTIAL"
+  "safety": "SAFE",
+  "target": "CPU_PARALLEL"
  },
  "35": {
   "categories": [],

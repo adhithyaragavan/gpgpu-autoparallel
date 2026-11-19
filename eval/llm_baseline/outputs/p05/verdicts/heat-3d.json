@@ -43,8 +43,8 @@
  },
  "72": {
   "categories": [
-   "loop-shape",
-   "pointer-overlap"
+   "pointer-overlap",
+   "unproven-dependence"
   ],
   "function": "kernel_heat_3d",
   "safety": "UNKNOWN",

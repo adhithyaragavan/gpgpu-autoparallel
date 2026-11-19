@@ -55,8 +55,8 @@
  },
  "73": {
   "categories": [
-   "loop-shape",
-   "pointer-overlap"
+   "pointer-overlap",
+   "unproven-dependence"
   ],
   "function": "kernel_doitgen",
   "safety": "UNKNOWN",
@@ -64,8 +64,8 @@
  },
  "74": {
   "categories": [
-   "loop-shape",
-   "pointer-overlap"
+   "pointer-overlap",
+   "unproven-dependence"
   ],
   "function": "kernel_doitgen",
   "safety": "UNKNOWN",

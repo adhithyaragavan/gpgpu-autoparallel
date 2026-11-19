@@ -52,13 +52,10 @@
   "target": "SEQUENTIAL"
  },
  "89": {
-  "categories": [
-   "loop-shape",
-   "pointer-overlap"
-  ],
+  "categories": [],
   "function": "kernel_gemm",
-  "safety": "UNKNOWN",
-  "target": "SEQUENTIAL"
+  "safety": "SAFE",
+  "target": "CPU_PARALLEL"
  },
  "90": {
   "categories": [],

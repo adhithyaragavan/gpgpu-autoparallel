@@ -16,13 +16,10 @@
   "target": "SEQUENTIAL"
  },
  "113": {
-  "categories": [
-   "loop-shape",
-   "pointer-overlap"
-  ],
+  "categories": [],
   "function": "kernel_adi",
-  "safety": "UNKNOWN",
-  "target": "SEQUENTIAL"
+  "safety": "SAFE",
+  "target": "CPU_PARALLEL"
  },
  "117": {
   "categories": [
@@ -70,8 +67,8 @@
  },
  "96": {
   "categories": [
-   "loop-shape",
-   "pointer-overlap"
+   "pointer-overlap",
+   "unproven-dependence"
   ],
   "function": "kernel_adi",
   "safety": "UNKNOWN",
@@ -79,7 +76,6 @@
  },
  "98": {
   "categories": [
-   "loop-shape",
    "pointer-overlap"
   ],
   "function": "kernel_adi",
