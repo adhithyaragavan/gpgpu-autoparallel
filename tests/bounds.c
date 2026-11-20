@@ -457,7 +457,7 @@ static void sz_tri_gpu(int n, double A[NR][NR], const double x[NR]) {
     // CHECK-NEXT: safety     : SAFE{{$}}
     // CHECK: deps       : 2 pair(s), 2 independent (2 SIV){{$}}
     // CHECK: alias      : 'A' and 'x' can't overlap (every call passes disjoint objects){{$}}
-    // CHECK: profitability : CPU_PARALLEL if (i >= {{[0-9]+}}){{$}}
+    // CHECK: profitability : GPU_OFFLOAD if (i >= {{[0-9]+}}){{$}}
     for (int j = 0; j <= i; j++)
       A[i][j] = A[i][j] * x[j];
 }

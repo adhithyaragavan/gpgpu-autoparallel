@@ -253,7 +253,7 @@ void linear(long *restrict a, const long *restrict b, int n, int m) {
   // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
   // CHECK: alias      : 'a' and 'b' can't overlap (restrict){{$}}
   // CHECK: collapse   : 2 (with 'j'){{$}}
-  // CHECK: profitability : GPU_OFFLOAD if (n >= {{[0-9]+}}){{$}}
+  // CHECK: profitability : GPU_OFFLOAD if ((double)(n) * ((53 * (double)(m)) - {{[0-9]+}}) >= {{[0-9]+}}){{$}}
   // CHECK: - data/iteration: 16 B across 2 region(s): a (map(tofrom: a[0:((((__INTPTR_TYPE__)n - 1)) * (__INTPTR_TYPE__)m + ((__INTPTR_TYPE__)m - 1)) + 1]), 8 B/elem), b (map(to: b[0:((((__INTPTR_TYPE__)n - 1)) * (__INTPTR_TYPE__)m + ((__INTPTR_TYPE__)m - 1)) + 1]), 8 B/elem){{$}}
   // CHECK: - map guard: n >= 1 && m >= 1{{$}}
   for (int i = 0; i < n; i++)
@@ -496,7 +496,7 @@ void cover_inner(int n, int m) {
   // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
   // CHECK: collapse   : no, the inner loop is not SAFE on its own{{$}}
-  // CHECK: profitability : GPU_OFFLOAD if (n >= {{[0-9]+}}){{$}}
+  // CHECK: profitability : GPU_OFFLOAD if ((double)(n) * ((49 * (double)(m)) - {{[0-9]+}}) >= {{[0-9]+}}){{$}}
   // CHECK: - data/iteration: 8 B across 1 region(s): g_a (map(from: g_a[0:(((((__INTPTR_TYPE__)n - 1) > 4095 ? 4095 : ((__INTPTR_TYPE__)n - 1))) + 1 > 0 ? ((((__INTPTR_TYPE__)n - 1) > 4095 ? 4095 : ((__INTPTR_TYPE__)n - 1))) + 1 : 0)]), 8 B/elem){{$}}
   // CHECK: - map guard: n >= 1 && m >= 1{{$}}
   for (int i = 0; i < n; i++)

@@ -175,6 +175,7 @@ def main(paths):
             if coll:
                 c.append("collapse   : " + lit(coll) + A)
             prof = field("profitability")
+            prof = re.sub(r" - \d+\) >= ", " - {{[0-9]+}}) >= ", prof)  # GPU guard's transfer
             c.append("profitability : " + re.sub(r">= \d+\)", ">= {{[0-9]+}})", prof) + A)
             # For a GPU target the map() clauses are part of the verdict.
             if prof.startswith("GPU_OFFLOAD"):

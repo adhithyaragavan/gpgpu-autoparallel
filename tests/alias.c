@@ -49,7 +49,7 @@ void rt_rows(long *a, const long *b, int n, int m) {
   // CHECK: alias      : 'a' and 'b' may overlap: checked at run time{{$}}
   // CHECK: alias guard: ((__INTPTR_TYPE__)a + 8 * ((((__INTPTR_TYPE__)n - 1)) * (__INTPTR_TYPE__)m + ((__INTPTR_TYPE__)m - 1) + 1) <= (__INTPTR_TYPE__)b + 8 * ((0) * (__INTPTR_TYPE__)m + 0) || (__INTPTR_TYPE__)b + 8 * ((((__INTPTR_TYPE__)n - 1)) * (__INTPTR_TYPE__)m + ((__INTPTR_TYPE__)m - 1) + 1) <= (__INTPTR_TYPE__)a + 8 * ((0) * (__INTPTR_TYPE__)m + 0)){{$}}
   // CHECK: collapse   : no, the inner loop needs its own run-time alias check{{$}}
-  // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
+  // CHECK: profitability : CPU_PARALLEL if ((double)(n) * (6 * (double)(m)) >= {{[0-9]+}}){{$}}
   for (int i = 0; i < n; i++)
     // CHECK: alias.c:[[#LOOP2:@LINE+13]]:5{{$}}
     // CHECK: kind       : VARIABLE_BOUND{{$}}
@@ -208,7 +208,7 @@ void k_prefix(long *a, const long *b, int n) {
   // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
   // CHECK: alias      : 'b' and 'a' may overlap: checked at run time{{$}}
   // CHECK: alias guard: ((__INTPTR_TYPE__)b + 8 * (((__INTPTR_TYPE__)n - 2) + 1) <= (__INTPTR_TYPE__)a + 0 || (__INTPTR_TYPE__)a + 8 * (((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)b + 0){{$}}
-  // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
+  // CHECK: profitability : CPU_PARALLEL if ((double)(n) * (2 * (double)(((__INTPTR_TYPE__)n - 1))) >= {{[0-9]+}}){{$}}
   for (int i = 0; i < n; i++) {
     long s = 0;
     // CHECK: alias.c:[[#LOOP10:@LINE+11]]:5{{$}}

@@ -33,7 +33,7 @@ void s_gemm(int n, double alpha, double beta) {
   // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: deps       : 3 pair(s), 3 independent (3 SIV){{$}}
   // CHECK: scalars    : private(j, k){{$}}
-  // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
+  // CHECK: profitability : GPU_OFFLOAD if ((double)(n) * ((3 * (double)(n) + 4 * (double)(n) * (double)(n)) - {{[0-9]+}}) >= {{[0-9]+}}){{$}}
   for (i = 0; i < n; i++) {
     // CHECK: reuse.c:[[#LOOP1:@LINE+10]]:5{{$}}
     // CHECK: kind       : VARIABLE_BOUND{{$}}
@@ -44,7 +44,7 @@ void s_gemm(int n, double alpha, double beta) {
     // CHECK-NEXT: RW C[i][j] : [i][j]{{$}}
     // CHECK-NEXT: safety     : SAFE{{$}}
     // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
-    // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
+    // CHECK: profitability : GPU_OFFLOAD if (n >= {{[0-9]+}}){{$}}
     for (j = 0; j < n; j++)
       C[i][j] *= beta;
     // CHECK: reuse.c:[[#LOOP2:@LINE+14]]:5{{$}}
@@ -73,7 +73,7 @@ void s_gemm(int n, double alpha, double beta) {
       // CHECK-NEXT: R B[k][j] : [k][j]{{$}}
       // CHECK-NEXT: safety     : SAFE{{$}}
       // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
-      // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
+      // CHECK: profitability : GPU_OFFLOAD if (n >= {{[0-9]+}}){{$}}
       for (j = 0; j < n; j++)
         C[i][j] += alpha * A[i][k] * B[k][j];
   }
@@ -97,7 +97,7 @@ void s_between(int n) {
   // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: deps       : 4 pair(s), 4 independent (4 SIV){{$}}
   // CHECK: scalars    : private(j){{$}}
-  // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
+  // CHECK: profitability : GPU_OFFLOAD if ((double)(n) * ((4 * (double)(n)) - {{[0-9]+}}) >= {{[0-9]+}}){{$}}
   for (i = 0; i < n; i++) {
     // CHECK: reuse.c:[[#LOOP5:@LINE+13]]:5{{$}}
     // CHECK: kind       : VARIABLE_BOUND{{$}}
@@ -126,7 +126,7 @@ void s_between(int n) {
     // CHECK-NEXT: R A[i][j - 1] : [i][j - 1]{{$}}
     // CHECK-NEXT: safety     : SAFE{{$}}
     // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
-    // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
+    // CHECK: profitability : GPU_OFFLOAD if (n >= {{[0-9]+}}){{$}}
     for (j = 1; j < n; j++)
       C[i][j] = A[i][j - 1];
   }
@@ -152,7 +152,7 @@ void s_updown(int n) {
   // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: deps       : 14 pair(s), 14 independent (14 SIV){{$}}
   // CHECK: scalars    : private(j){{$}}
-  // CHECK: profitability : CPU_PARALLEL if (n - 1 >= {{[0-9]+}}){{$}}
+  // CHECK: profitability : GPU_OFFLOAD if ((double)(n - 1) * ((2 + 8 * (double)(((__INTPTR_TYPE__)n - 2))) - {{[0-9]+}}) >= {{[0-9]+}}){{$}}
   for (i = 1; i < n - 1; i++) {
     B[i][0] = 1.0;
     // CHECK: reuse.c:[[#LOOP8:@LINE+14]]:5{{$}}
@@ -206,7 +206,7 @@ void s_live_after(int n) {
   // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: deps       : 3 pair(s), 3 independent (3 SIV){{$}}
   // CHECK: scalars    : lastprivate(j){{$}}
-  // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
+  // CHECK: profitability : GPU_OFFLOAD if ((double)(n) * ((2 * (double)(n)) - {{[0-9]+}}) >= {{[0-9]+}}){{$}}
   for (i = 0; i < n; i++) {
     // CHECK: reuse.c:[[#LOOP11:@LINE+10]]:5{{$}}
     // CHECK: kind       : VARIABLE_BOUND{{$}}
@@ -217,7 +217,7 @@ void s_live_after(int n) {
     // CHECK-NEXT: W A[i][j] : [i][j]{{$}}
     // CHECK-NEXT: safety     : SAFE{{$}}
     // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
-    // CHECK: profitability : CPU_PARALLEL if (i >= {{[0-9]+}}){{$}}
+    // CHECK: profitability : GPU_OFFLOAD if (i >= {{[0-9]+}}){{$}}
     for (j = 0; j < i; j++)
       A[i][j] = 2.0;
     // CHECK: reuse.c:[[#LOOP12:@LINE+13]]:5{{$}}
@@ -256,7 +256,7 @@ void s_nested(int n) {
   // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
   // CHECK: scalars    : private(j){{$}}
   // CHECK: collapse   : no, the inner loop is not SAFE on its own{{$}}
-  // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
+  // CHECK: profitability : GPU_OFFLOAD if ((double)(n) * ((1 * (double)(n) + 1 * (double)(n) * (double)(n)) - {{[0-9]+}}) >= {{[0-9]+}}){{$}}
   for (i = 0; i < n; i++)
     // CHECK: reuse.c:[[#LOOP14:@LINE+13]]:5{{$}}
     // CHECK: kind       : VARIABLE_BOUND{{$}}
@@ -589,7 +589,7 @@ void u_bodywrite(int n) {
     // CHECK-NEXT: W B[i][j] : [i][j]{{$}}
     // CHECK-NEXT: safety     : SAFE{{$}}
     // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
-    // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
+    // CHECK: profitability : GPU_OFFLOAD if (n >= {{[0-9]+}}){{$}}
     // CHECK: - data region (line {{[0-9]+}}): not hoisted: 'i' changes inside it{{$}}
     for (j = 0; j < n; j++)
       B[i][j] = 1.0;
@@ -625,9 +625,9 @@ void u_carried(int n) {
     // CHECK-NEXT: R A[i - 1][j] : [i - 1][j]{{$}}
     // CHECK-NEXT: safety     : SAFE{{$}}
     // CHECK: deps       : 2 pair(s), 2 independent (1 ZIV, 1 SIV){{$}}
-    // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
+    // CHECK: profitability : GPU_OFFLOAD{{$}}
     // CHECK: - data region (line {{[0-9]+}}): not hoisted: 'i' changes inside it{{$}}
-    // CHECK: - data region (line {{[0-9]+}}): not hoisted: with the transfer shared across its kernel runs, no loop in it is cheapest on the GPU{{$}}
+    // CHECK: - data region (line {{[0-9]+}}): resident in target data if(n >= {{[0-9]+}}); transfer 1x of its own maps per run (4 section copies over 2 kernel runs per entry){{$}}
     for (j = 0; j < n; j++)
       A[i][j] = A[i - 1][j] + 1.0;
     // CHECK: reuse.c:[[#LOOP36:@LINE+13]]:5{{$}}
@@ -640,9 +640,9 @@ void u_carried(int n) {
     // CHECK-NEXT: R A[i][j] : [i][j]{{$}}
     // CHECK-NEXT: safety     : SAFE{{$}}
     // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
-    // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
+    // CHECK: profitability : GPU_OFFLOAD{{$}}
     // CHECK: - data region (line {{[0-9]+}}): not hoisted: 'i' changes inside it{{$}}
-    // CHECK: - data region (line {{[0-9]+}}): not hoisted: with the transfer shared across its kernel runs, no loop in it is cheapest on the GPU{{$}}
+    // CHECK: - data region (line {{[0-9]+}}): resident in target data if(n >= {{[0-9]+}}); transfer 0.667x of its own maps per run (4 section copies over 2 kernel runs per entry){{$}}
     for (j = 0; j < n; j++)
       B[i][j] = A[i][j];
   }
@@ -677,7 +677,7 @@ void u_read_first(int n) {
     // CHECK-NEXT: W A[i][j] : [i][j]{{$}}
     // CHECK-NEXT: safety     : SAFE{{$}}
     // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
-    // CHECK: profitability : CPU_PARALLEL if (i >= {{[0-9]+}}){{$}}
+    // CHECK: profitability : GPU_OFFLOAD if (i >= {{[0-9]+}}){{$}}
     // CHECK: - data region (line {{[0-9]+}}): not hoisted: 'i' changes inside it{{$}}
     for (j = 0; j < i; j++)
       A[i][j] = 1.0;

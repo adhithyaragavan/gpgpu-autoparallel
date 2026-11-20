@@ -61,6 +61,8 @@ namespace p05 {
 
 enum class MapMode { Ranges, Bound };
 MapMode mapModeFromFlags();
+/// Phase 3: price inner loops of unknown trip count by their ranges.
+bool symbolicTripsFromFlags();
 
 /// One array or pointer the loop touches, with everything codegen needs to
 /// emit a map clause for it.
@@ -109,7 +111,20 @@ struct ArrayRegion {
   std::string listItem() const;
 };
 
+/// Phase 3: an inner loop's trip count when it isn't a constant: the C
+/// text of its range's length (`(double)(nk)`), times Scale (1/|step|).
+/// Only for the cost model: an estimate, evaluated once before the loop.
+struct TripFactor {
+  std::string Text;
+  double Scale = 1.0;
+};
+
 struct RegionPlan {
+  /// Phase 3 (-symbolic-trips): inner loops of unknown trip count whose
+  /// range's length can be written before the loop, and the names that
+  /// text uses (a guard built from them must see them unchanged).
+  llvm::DenseMap<const clang::ForStmt *, TripFactor> InnerTrips;
+  std::vector<const clang::ValueDecl *> WorkNames;
   /// Every base got a section.
   bool Mappable = true;
   /// Why not, one line per base that didn't.

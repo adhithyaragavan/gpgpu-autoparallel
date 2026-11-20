@@ -143,6 +143,8 @@ struct Extreme {
   }
 };
 
+} // namespace
+
 /// Phase 2.5: a range for V while the analyzed loop runs, for bounds only
 /// (subscriptBounds), never for the dependence equations. Where usableRange
 /// has both ends it is that. Otherwise (-tri-ranges) an end that mentions
@@ -152,7 +154,7 @@ struct Extreme {
 /// when their ends differ by constants. Both contain every value V takes,
 /// but are wider than one loop's range: never Exact.
 IVRange boundingRange(const LoopAccesses &A, const VarDecl *V,
-                      unsigned Depth = 0) {
+                      unsigned Depth) {
   IVRange Usable = usableRange(A, V);
   if ((Usable.Lo && Usable.Hi) || Depth > 8)
     return Usable;
@@ -225,6 +227,8 @@ IVRange boundingRange(const LoopAccesses &A, const VarDecl *V,
   Out.Exact = false;
   return Out;
 }
+
+namespace {
 
 /// One dimension of the dependence equation
 ///   a*i1 - b*i2 + sum(p*x) - sum(q*y) + Fixed = 0

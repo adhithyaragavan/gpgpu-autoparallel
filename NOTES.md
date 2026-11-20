@@ -3720,3 +3720,61 @@ measured here, neither seen by the fixtures (they check guarded/unguarded, not w
 Where P05 wins without Polly: symm (3.2x vs polly 1.4x), deriche (3.6x vs 1.0x), heat-3d and
 jacobi-2d (p05-all 2.8/3.0x; Polly 0.5/0.7x: no parallel loops, tiling hurts). Where Polly wins
 big: tiling (polly-seq alone 1.31x geomean) on top of parallelism; cholesky/lu (wavefront).
+
+## 2026-11-20 — Phase 3.1 fix: pricing inner loops of unknown trip count
+
+Both pricing bugs from the PolyBench baseline (entry above), behind two flags; both off =
+byte-identical to 6281a85 (all fixtures, benchmarks, PolyBench; default, m4 and colab-t4 models).
+- **`-symbolic-trips`** (DataRegions `RegionPlan::InnerTrips`, Profitability `WorkCounter`). An
+  inner loop whose trip count isn't a constant counts as its range's length: `boundingRange` of
+  its variable (so `j <= i` counts i's largest value), `Hi - Lo + 1`, times 1/|step|, as C text
+  when every name is a plain variable nameable before the loop and fixed while it runs (no field
+  paths: a guard must not load what the loop may not). The work per iteration is then a
+  polynomial `W` in those texts, and a loop with a symbolic term is priced compute-bound per op:
+  CPU guard `n * W >= Fixed / (t_seq/op - t_cpu/op)`; GPU guard `n * (W - K) >= T`, K the
+  iteration's transfer in ops, T the launch-minus-thread-start in ops. Inner loops that can't be
+  written keep counting once. gemm:89 `ni >= 262144` -> `ni * (2·nj + 4·nj·nk + nk) >= 2^21`.
+  `RegionPlan::WorkNames` (names in W) go into Hoisting's name check, like the bound's names.
+- **`-fixed-sections`**. A constant-size section of a loop of unknown trip count (atax:81's
+  `A[i:1][0:2100]` row in a `j` loop) costs its transfer once per run (GPU fixed cost); each
+  iteration still touches one scalar element of it (memory rate). Before, the whole row counted
+  per iteration, so a 2-op loop looked like 0.19 us/iter and started a thread team 1900 times.
+  First version also charged the host for reading the section once, which made several guards
+  vanish (the section is a hull, often far more than a run reads): removed.
+- Effects. m4 (no GPU): only guard values move, no target changes. Default model (has a GPU):
+  100 loops CPU -> GPU, guarded on total work (nests now show their work; inner loops' rows move
+  once per run); reuse.c's u_carried sibling loops now share a `target data` region per `i`.
+  Fixtures: profitability lines only (plus those two data-region lines); the GPU guard's transfer
+  constant is wildcarded like thresholds (`gen_filecheck.py`). All runtime checks pass (Mac, and
+  Docker OFFLOAD naive + gated).
+- Known, not fixed: a guard may read a plain local that only an un-taken branch would have
+  initialized (same exposure as alias guards since 1.6); the CPU model per op ignores memory
+  bandwidth once W is symbolic.
+
+**Adversarial review** (separate agent; runtime-checked on the Mac and in Docker OFFLOAD, naive and
+gated, with guards forced true): no wrong code, no ablation break; 2 wrong decisions + 2 nits, fixed.
+- **A window counted as n.** `for (j = i; j < i + 4; j++)` took `boundingRange`'s ends one at a time
+  (Lo -> 0, Hi -> n + 3), so W = 3·(n + 3) and the guard passed at n ≈ 590. Now the inner loop's
+  own range is subtracted first and widened only if the length still mentions a variable that
+  changes in the loop: 4 (a constant factor), a stencil `j = i - r .. i + r` gives `2r + 1`.
+- **Hoisting lost** when a name in W changes inside the region (`m = m / 2 + 1` in a time loop;
+  `j <= k` with k the enclosing loop): the whole region was refused, so A and B moved once per k
+  instead of once per call. Such loops are now priced for the region with their inner loops
+  counted once (`priceResident(..., NoInnerTrips)`), so C needn't name them; HEAD's regions back.
+- Nits: the new branch left out the bound inspector's per-iteration cost (now `N * (W - Ki)`, as
+  the GPU guard's transfer); a non-finite K or T (a machine model with zero bandwidth) no longer
+  prints `inf` into a guard.
+- Pinned in new `tests/work.{c,test}` + `eval/runtime/work_main.c` (in CI, also OFFLOAD naive +
+  gated). Pre-existing, noticed there: a loop `for (i = r; i < n - r; i++)` uses its bound text
+  `n - r` as its trip count (the old and new guards alike); not changed here.
+
+**Result (full sweep re-run after the fix, LARGE, min of 5, same M4; `results/m4-large.csv`, the
+6281a85 numbers kept as `results/m4-large-baseline.csv`, tables in `results/m4-large.md`).**
+Gated P05 geomean speedup over clang -O3: 1.85x at 4 threads, 2.08x at 10 (baseline 1.00x at 10);
+p05-all 1.46x / 1.37x, Polly 2.22x / 2.62x, gcc autopar 0.98x. The gated decision is within 10% of
+the better of sequential and p05-all on 25/30 kernels at T4 and 27/30 at T10 (baseline 10/30).
+Remaining misses: trmm (1.94x vs 2.99x at T10) and heat-3d, jacobi-2d, symm (T4) still decline
+some profitable loops; jacobi-1d stays slower than sequential (0.80x; p05-all 0.01x), its time
+loop's two small parallel loops cost more than they save. Polly-only `differs` on ludcmp (rel.
+2.6e-9) is the same as in the baseline. Clang-seq varies up to 14% between sweeps, so before/after
+comparisons use one sweep's numbers only.

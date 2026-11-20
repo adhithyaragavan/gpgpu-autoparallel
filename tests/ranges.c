@@ -26,7 +26,7 @@ void s_lower(long *a, const long *b, int n) {
   // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
   // CHECK: alias      : 'b' and 'a' may overlap: checked at run time{{$}}
   // CHECK: alias guard: ((__INTPTR_TYPE__)b + 8 * (((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)a + 0 || (__INTPTR_TYPE__)a + 8 * (((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)b + 0){{$}}
-  // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
+  // CHECK: profitability : CPU_PARALLEL if ((double)(n) * (2 * (double)(n)) >= {{[0-9]+}}){{$}}
   for (int i = 0; i < n; i++) {
     long s = 0;
     // CHECK: ranges.c:[[#LOOP1:@LINE+11]]:5{{$}}
@@ -60,7 +60,7 @@ void s_upper(long *a, const long *b, int n) {
   // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
   // CHECK: alias      : 'b' and 'a' may overlap: checked at run time{{$}}
   // CHECK: alias guard: ((__INTPTR_TYPE__)b + 8 * (((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)a + 0 || (__INTPTR_TYPE__)a + 8 * (((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)b + 0){{$}}
-  // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
+  // CHECK: profitability : CPU_PARALLEL if ((double)(n) * (2 * (double)(n)) >= {{[0-9]+}}){{$}}
   for (int i = 0; i < n; i++) {
     long s = 0;
     // CHECK: ranges.c:[[#LOOP3:@LINE+11]]:5{{$}}
@@ -94,7 +94,7 @@ void s_chain(long *a, const long *b, int n) {
   // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
   // CHECK: alias      : 'b' and 'a' may overlap: checked at run time{{$}}
   // CHECK: alias guard: ((__INTPTR_TYPE__)b + 8 * (((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)a + 0 || (__INTPTR_TYPE__)a + 8 * (((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)b + 0){{$}}
-  // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
+  // CHECK: profitability : CPU_PARALLEL if ((double)(n) * (1 * (double)(n) + 3 * (double)(n) * (double)(n)) >= {{[0-9]+}}){{$}}
   for (int i = 0; i < n; i++) {
     long s = 0;
     // CHECK: ranges.c:[[#LOOP5:@LINE+13]]:5{{$}}
@@ -108,7 +108,7 @@ void s_chain(long *a, const long *b, int n) {
     // CHECK: deps       : 0 pair(s), 0 independent{{$}}
     // CHECK: scalars    : reduction(+: s){{$}}
     // CHECK: collapse   : no, the inner loop's range is not a fixed, exact rectangle{{$}}
-    // CHECK: profitability : CPU_PARALLEL if (i >= {{[0-9]+}}){{$}}
+    // CHECK: profitability : CPU_PARALLEL if ((double)(i) * (3 * (double)(n)) >= {{[0-9]+}}){{$}}
     // CHECK: - GPU offload declined: no map() section: can't map 'b': no access to it runs on every iteration, so the ends of its range aren't surely touched -> CPU_PARALLEL, which needs no map{{$}}
     for (int j = 0; j <= i; j++)
       // CHECK: ranges.c:[[#LOOP6:@LINE+11]]:7{{$}}
@@ -143,7 +143,7 @@ void s_rows(int n, int m, long c[][16], const long x[][16]) {
   // CHECK: alias      : 'c' and 'x' may overlap: checked at run time{{$}}
   // CHECK: alias guard: ((__INTPTR_TYPE__)c + 8 * ((((__INTPTR_TYPE__)n - 1)) * 16 + ((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)x + 8 * ((0) * 16 + 0) || (__INTPTR_TYPE__)x + 8 * ((((__INTPTR_TYPE__)n - 1)) * 16 + ((__INTPTR_TYPE__)m - 1) + 1) <= (__INTPTR_TYPE__)c + 8 * ((0) * 16 + 0)){{$}}
   // CHECK: collapse   : no, the inner loop needs its own run-time alias check{{$}}
-  // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
+  // CHECK: profitability : CPU_PARALLEL if ((double)(n) * (2 * (double)(m) * (double)(n) + 1 * (double)(n)) >= {{[0-9]+}}){{$}}
   for (int i = 0; i < n; i++)
     // CHECK: ranges.c:[[#LOOP8:@LINE+14]]:5{{$}}
     // CHECK: kind       : VARIABLE_BOUND{{$}}
@@ -158,7 +158,7 @@ void s_rows(int n, int m, long c[][16], const long x[][16]) {
     // CHECK: alias      : 'c' and 'x' may overlap: checked at run time{{$}}
     // CHECK: alias guard: ((__INTPTR_TYPE__)c + 8 * (((__INTPTR_TYPE__)i) * 16 + (__INTPTR_TYPE__)i + 1) <= (__INTPTR_TYPE__)x + 8 * ((0) * 16 + 0) || (__INTPTR_TYPE__)x + 8 * (((__INTPTR_TYPE__)i) * 16 + ((__INTPTR_TYPE__)m - 1) + 1) <= (__INTPTR_TYPE__)c + 8 * (((__INTPTR_TYPE__)i) * 16 + 0)){{$}}
     // CHECK: collapse   : no, the inner loop is not SAFE on its own{{$}}
-    // CHECK: profitability : CPU_PARALLEL if (i >= {{[0-9]+}}){{$}}
+    // CHECK: profitability : CPU_PARALLEL if ((double)(i) * (2 * (double)(m)) >= {{[0-9]+}}){{$}}
     for (int j = 0; j <= i; j++)
       // CHECK: ranges.c:[[#LOOP9:@LINE+14]]:7{{$}}
       // CHECK: kind       : VARIABLE_BOUND{{$}}
@@ -203,7 +203,7 @@ void s_siblings(long p[][64], long v[][64], const long *u, int n) {
   // CHECK: alias      : 'p' and 'v' may overlap: checked at run time{{$}}
   // CHECK: alias      : 'u' and 'v' may overlap: checked at run time{{$}}
   // CHECK: alias guard: ((__INTPTR_TYPE__)p + ((8 * ((((__INTPTR_TYPE__)n - 2)) * 64 + 0 + 1) > 8 * ((((__INTPTR_TYPE__)n - 2)) * 64 + ((__INTPTR_TYPE__)n - 2) + 1) ? 8 * ((((__INTPTR_TYPE__)n - 2)) * 64 + 0 + 1) : 8 * ((((__INTPTR_TYPE__)n - 2)) * 64 + ((__INTPTR_TYPE__)n - 2) + 1)) > 8 * ((((__INTPTR_TYPE__)n - 2)) * 64 + ((__INTPTR_TYPE__)n - 3) + 1) ? (8 * ((((__INTPTR_TYPE__)n - 2)) * 64 + 0 + 1) > 8 * ((((__INTPTR_TYPE__)n - 2)) * 64 + ((__INTPTR_TYPE__)n - 2) + 1) ? 8 * ((((__INTPTR_TYPE__)n - 2)) * 64 + 0 + 1) : 8 * ((((__INTPTR_TYPE__)n - 2)) * 64 + ((__INTPTR_TYPE__)n - 2) + 1)) : 8 * ((((__INTPTR_TYPE__)n - 2)) * 64 + ((__INTPTR_TYPE__)n - 3) + 1)) <= (__INTPTR_TYPE__)u + 8 || (__INTPTR_TYPE__)u + 8 * (((__INTPTR_TYPE__)n - 2) + 1) <= (__INTPTR_TYPE__)p + (8 * ((1) * 64 + 0) < 8 * ((1) * 64 + 1) ? 8 * ((1) * 64 + 0) : 8 * ((1) * 64 + 1))) && ((__INTPTR_TYPE__)p + ((8 * ((((__INTPTR_TYPE__)n - 2)) * 64 + 0 + 1) > 8 * ((((__INTPTR_TYPE__)n - 2)) * 64 + ((__INTPTR_TYPE__)n - 2) + 1) ? 8 * ((((__INTPTR_TYPE__)n - 2)) * 64 + 0 + 1) : 8 * ((((__INTPTR_TYPE__)n - 2)) * 64 + ((__INTPTR_TYPE__)n - 2) + 1)) > 8 * ((((__INTPTR_TYPE__)n - 2)) * 64 + ((__INTPTR_TYPE__)n - 3) + 1) ? (8 * ((((__INTPTR_TYPE__)n - 2)) * 64 + 0 + 1) > 8 * ((((__INTPTR_TYPE__)n - 2)) * 64 + ((__INTPTR_TYPE__)n - 2) + 1) ? 8 * ((((__INTPTR_TYPE__)n - 2)) * 64 + 0 + 1) : 8 * ((((__INTPTR_TYPE__)n - 2)) * 64 + ((__INTPTR_TYPE__)n - 2) + 1)) : 8 * ((((__INTPTR_TYPE__)n - 2)) * 64 + ((__INTPTR_TYPE__)n - 3) + 1)) <= (__INTPTR_TYPE__)v + ((8 * ((((__INTPTR_TYPE__)n - 1)) * 64 + 1) < 8 * ((1) * 64 + 1) ? 8 * ((((__INTPTR_TYPE__)n - 1)) * 64 + 1) : 8 * ((1) * 64 + 1)) < 8 * ((2) * 64 + 1) ? (8 * ((((__INTPTR_TYPE__)n - 1)) * 64 + 1) < 8 * ((1) * 64 + 1) ? 8 * ((((__INTPTR_TYPE__)n - 1)) * 64 + 1) : 8 * ((1) * 64 + 1)) : 8 * ((2) * 64 + 1)) || (__INTPTR_TYPE__)v + (8 * ((((__INTPTR_TYPE__)n - 1)) * 64 + ((__INTPTR_TYPE__)n - 2) + 1) > 8 * ((((__INTPTR_TYPE__)n - 2)) * 64 + ((__INTPTR_TYPE__)n - 2) + 1) ? 8 * ((((__INTPTR_TYPE__)n - 1)) * 64 + ((__INTPTR_TYPE__)n - 2) + 1) : 8 * ((((__INTPTR_TYPE__)n - 2)) * 64 + ((__INTPTR_TYPE__)n - 2) + 1)) <= (__INTPTR_TYPE__)p + (8 * ((1) * 64 + 0) < 8 * ((1) * 64 + 1) ? 8 * ((1) * 64 + 0) : 8 * ((1) * 64 + 1))) && ((__INTPTR_TYPE__)u + 8 * (((__INTPTR_TYPE__)n - 2) + 1) <= (__INTPTR_TYPE__)v + ((8 * ((((__INTPTR_TYPE__)n - 1)) * 64 + 1) < 8 * ((1) * 64 + 1) ? 8 * ((((__INTPTR_TYPE__)n - 1)) * 64 + 1) : 8 * ((1) * 64 + 1)) < 8 * ((2) * 64 + 1) ? (8 * ((((__INTPTR_TYPE__)n - 1)) * 64 + 1) < 8 * ((1) * 64 + 1) ? 8 * ((((__INTPTR_TYPE__)n - 1)) * 64 + 1) : 8 * ((1) * 64 + 1)) : 8 * ((2) * 64 + 1)) || (__INTPTR_TYPE__)v + (8 * ((((__INTPTR_TYPE__)n - 1)) * 64 + ((__INTPTR_TYPE__)n - 2) + 1) > 8 * ((((__INTPTR_TYPE__)n - 2)) * 64 + ((__INTPTR_TYPE__)n - 2) + 1) ? 8 * ((((__INTPTR_TYPE__)n - 1)) * 64 + ((__INTPTR_TYPE__)n - 2) + 1) : 8 * ((((__INTPTR_TYPE__)n - 2)) * 64 + ((__INTPTR_TYPE__)n - 2) + 1)) <= (__INTPTR_TYPE__)u + 8){{$}}
-  // CHECK: profitability : CPU_PARALLEL if (n - 1 >= {{[0-9]+}}){{$}}
+  // CHECK: profitability : CPU_PARALLEL if ((double)(n - 1) * (2 + 7 * (double)(((__INTPTR_TYPE__)n - 2))) >= {{[0-9]+}}){{$}}
   for (i = 1; i < n - 1; i++) {
     p[i][0] = 0;
     // CHECK: ranges.c:[[#LOOP11:@LINE+15]]:5{{$}}
@@ -261,7 +261,7 @@ void s_offset(long *a, const long *b, int n) {
   // CHECK: scalars    : private(j){{$}}
   // CHECK: alias      : 'b' and 'a' may overlap: checked at run time{{$}}
   // CHECK: alias guard: ((__INTPTR_TYPE__)b + 8 * ((__INTPTR_TYPE__)n + 1) <= (__INTPTR_TYPE__)a + 0 || (__INTPTR_TYPE__)a + 8 * (((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)b + 0){{$}}
-  // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
+  // CHECK: profitability : CPU_PARALLEL if ((double)(n) * (4 * (double)(((__INTPTR_TYPE__)n + 1))) >= {{[0-9]+}}){{$}}
   for (i = 0; i < n; i++) {
     long s = 0;
     // CHECK: ranges.c:[[#LOOP14:@LINE+11]]:5{{$}}
@@ -405,7 +405,7 @@ void s_tri_write(int n) {
   // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
   // CHECK: collapse   : no, the inner loop's range is not a fixed, exact rectangle{{$}}
-  // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
+  // CHECK: profitability : GPU_OFFLOAD if ((double)(n) * ((2 * (double)(n)) - {{[0-9]+}}) >= {{[0-9]+}}){{$}}
   for (int i = 0; i < n; i++)
     // CHECK: ranges.c:[[#LOOP22:@LINE+10]]:5{{$}}
     // CHECK: kind       : VARIABLE_BOUND{{$}}
@@ -416,7 +416,7 @@ void s_tri_write(int n) {
     // CHECK-NEXT: W T[i][j] : [i][j]{{$}}
     // CHECK-NEXT: safety     : SAFE{{$}}
     // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
-    // CHECK: profitability : CPU_PARALLEL if (i >= {{[0-9]+}}){{$}}
+    // CHECK: profitability : GPU_OFFLOAD if (i >= {{[0-9]+}}){{$}}
     for (int j = 0; j <= i; j++)
       T[i][j] = i + j;
 }
@@ -434,7 +434,7 @@ void s_tri_ptr(long (*o)[64], int n) {
   // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
   // CHECK: collapse   : no, the inner loop's range is not a fixed, exact rectangle{{$}}
-  // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
+  // CHECK: profitability : CPU_PARALLEL if ((double)(n) * (2 * (double)(n)) >= {{[0-9]+}}){{$}}
   for (int i = 0; i < n; i++)
     // CHECK: ranges.c:[[#LOOP24:@LINE+10]]:5{{$}}
     // CHECK: kind       : VARIABLE_BOUND{{$}}
@@ -445,7 +445,7 @@ void s_tri_ptr(long (*o)[64], int n) {
     // CHECK-NEXT: W o[i][j] : [i][j]{{$}}
     // CHECK-NEXT: safety     : SAFE{{$}}
     // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
-    // CHECK: profitability : CPU_PARALLEL if (i >= {{[0-9]+}}){{$}}
+    // CHECK: profitability : GPU_OFFLOAD if (i >= {{[0-9]+}}){{$}}
     for (int j = 0; j <= i; j++)
       o[i][j] = i - j;
 }

@@ -13,6 +13,7 @@
 #include <functional>
 #include <cmath>
 #include <limits>
+#include <map>
 
 using namespace clang;
 using namespace llvm;
@@ -540,7 +541,108 @@ private:
   double &Own, &Calls;
 };
 
+/// Phase 3: operations per iteration as a polynomial in inner loops' trip
+/// counts: {factor texts (sorted)} -> coefficient. The empty key is the
+/// constant part.
+using WorkPoly = std::map<std::vector<std::string>, double>;
+
+class WorkCounter : public RecursiveASTVisitor<WorkCounter> {
+public:
+  WorkCounter(const llvm::DenseMap<const ForStmt *, const LoopInfo *> &LoopOf,
+              const llvm::DenseMap<const ForStmt *, TripFactor> &Trips,
+              std::function<double(const FunctionDecl *)> Ops, WorkPoly &Out,
+              std::vector<std::string> Key = {}, double Mult = 1.0)
+      : LoopOf(LoopOf), Trips(Trips), Ops(std::move(Ops)), Out(Out),
+        Key(std::move(Key)), Mult(Mult) {}
+
+  bool TraverseForStmt(ForStmt *FS) {
+    std::vector<std::string> K = Key;
+    double M = Mult;
+    auto It = LoopOf.find(FS);
+    if (It != LoopOf.end() && It->second->TripCount &&
+        *It->second->TripCount > 0) {
+      M *= static_cast<double>(*It->second->TripCount);
+    } else if (auto T = Trips.find(FS); T != Trips.end()) {
+      M *= T->second.Scale;
+      if (!T->second.Text.empty()) {
+        K.push_back(T->second.Text);
+        llvm::sort(K);
+      }
+    } else {
+      return RecursiveASTVisitor::TraverseForStmt(FS); // counted once
+    }
+    TraverseStmt(FS->getInit());
+    WorkCounter Inner(LoopOf, Trips, Ops, Out, K, M);
+    Inner.TraverseStmt(FS->getCond());
+    Inner.TraverseStmt(FS->getInc());
+    Inner.TraverseStmt(FS->getBody());
+    return true;
+  }
+  bool VisitBinaryOperator(BinaryOperator *BO) {
+    double N = 0.0;
+    OpCountVisitor(N).VisitBinaryOperator(BO);
+    add(N);
+    return true;
+  }
+  bool VisitUnaryOperator(UnaryOperator *UO) {
+    double N = 0.0;
+    OpCountVisitor(N).VisitUnaryOperator(UO);
+    add(N);
+    return true;
+  }
+  bool VisitCallExpr(CallExpr *CE) {
+    if (const FunctionDecl *F = CE->getDirectCallee())
+      add(Ops(F));
+    return true;
+  }
+
+private:
+  void add(double N) {
+    if (N != 0.0)
+      Out[Key] += N * Mult;
+  }
+  const llvm::DenseMap<const ForStmt *, const LoopInfo *> &LoopOf;
+  const llvm::DenseMap<const ForStmt *, TripFactor> &Trips;
+  std::function<double(const FunctionDecl *)> Ops;
+  WorkPoly &Out;
+  std::vector<std::string> Key;
+  double Mult;
+};
+
+std::string coefText(double C) {
+  if (C == std::floor(C) && std::abs(C) < 1e15)
+    return std::to_string(static_cast<int64_t>(C));
+  std::string S;
+  llvm::raw_string_ostream(S) << llvm::format("%.3g", C);
+  return S;
+}
+
+/// "(7 + 3 * (double)(nj) * (double)(nk))".
+std::string polyText(const WorkPoly &W) {
+  std::string S;
+  for (const auto &[K, C] : W) {
+    std::string T = coefText(C);
+    for (const std::string &F : K)
+      T += " * " + F;
+    S += (S.empty() ? "" : " + ") + T;
+  }
+  return "(" + (S.empty() ? std::string("0") : S) + ")";
+}
+
 } // namespace
+
+namespace {
+enum class FixedSec { On, Off };
+}
+static llvm::cl::opt<FixedSec> FlagFixedSectionsOpt(
+    "fixed-sections",
+    llvm::cl::desc("A constant-size section of a loop of unknown trip count "
+                   "costs once per run, not per iteration (Phase 3)"),
+    llvm::cl::values(
+        clEnumValN(FixedSec::On, "on", "once per run (default)"),
+        clEnumValN(FixedSec::Off, "off", "per iteration (ablation baseline)")),
+    llvm::cl::init(FixedSec::On));
+static bool FlagFixedSections() { return FlagFixedSectionsOpt == FixedSec::On; }
 
 void ProfitabilityAnalyzer::countOps(const Stmt *S, double &Own,
                                      double &Calls) {
@@ -648,7 +750,31 @@ ProfitabilityAnalyzer::priceLoop(const LoopInfo &LI, const LoopSafety &Safety,
   // Bytes per iteration: one unit per region and direction, or (Phase 2.1)
   // the section's units spread over a known trip count.
   double BytesPerIter = 0.0;
+  // Phase 3 (-fixed-sections): constant-size sections of a loop of unknown
+  // trip count, moved once per run (atax's `A[i:1][0:N]` row in a `j` loop).
+  // An iteration still reads and writes one element of it (the scalar
+  // type's size, not the section's unit: a row); only the transfer is per run.
+  double FixedBytes = 0.0, FixedTouch = 0.0;
   for (const ArrayRegion &R : V.Regions) {
+    if (FlagFixedSections() && FromPlan && R.ConstUnits && !LI.TripCount) {
+      const double Dirs = (R.Read ? 1.0 : 0.0) + (R.Written ? 1.0 : 0.0);
+      FixedBytes += Dirs * R.ElemBytes * static_cast<double>(*R.ConstUnits);
+      QualType T = R.Base->getType();
+      while (true) {
+        if (const clang::ArrayType *AT = Ctx.getAsArrayType(T))
+          T = AT->getElementType();
+        else if (T->isPointerType())
+          T = T->getPointeeType();
+        else
+          break;
+      }
+      double Scalar = static_cast<double>(R.ElemBytes);
+      if (!T->isIncompleteType() && !T->isFunctionType() && !T->isVoidType())
+        Scalar = std::min<double>(
+            Scalar, static_cast<double>(Ctx.getTypeSizeInChars(T).getQuantity()));
+      FixedTouch += Dirs * Scalar;
+      continue;
+    }
     double Units = 1.0;
     if (FromPlan && R.ConstUnits && LI.TripCount && *LI.TripCount > 0)
       // Not floored at one unit: an inner loop touches one element of its
@@ -658,6 +784,10 @@ ProfitabilityAnalyzer::priceLoop(const LoopInfo &LI, const LoopSafety &Safety,
     BytesPerIter += ((R.Read ? R.ElemBytes : 0) + (R.Written ? R.ElemBytes : 0)) *
                     Units;
   }
+
+  // What the GPU transfers per iteration; BytesPerIter is what it touches.
+  const double TransferPerIter = BytesPerIter;
+  BytesPerIter += FixedTouch;
 
   V.Costs.BreakEvenIntensity = breakEvenIntensity();
   V.Costs.Intensity = BytesPerIter > 0.0 ? OpsPerIter / BytesPerIter
@@ -681,6 +811,24 @@ ProfitabilityAnalyzer::priceLoop(const LoopInfo &LI, const LoopSafety &Safety,
                          " B across " + std::to_string(V.Regions.size()) +
                          " region(s)" +
                          (RegionsText.empty() ? "" : ": " + RegionsText));
+    if (FixedBytes > 0.0)
+      V.Reasons.push_back("data/run: " + fmtNum(FixedBytes) +
+                          " B in constant-size sections, once per run");
+  }
+
+  // Phase 3 (-symbolic-trips): the work an iteration does, inner loops of
+  // unknown trip count counted by their ranges.
+  WorkPoly Work;
+  bool SymWork = false;
+  if (Plan && !Plan->InnerTrips.empty() && !NoInnerTrips) {
+    WorkCounter WC(LoopOf, Plan->InnerTrips,
+                   [this](const FunctionDecl *F) { return functionOps(F); },
+                   Work);
+    WC.TraverseStmt(const_cast<Stmt *>(LI.Loop->getBody()));
+    SymWork = llvm::any_of(Work, [](const auto &T) { return !T.first.empty(); });
+    if (SymWork)
+      V.Reasons.push_back("work/iteration: " + polyText(Work) +
+                          " ops (inner loops by their ranges)");
   }
   V.Reasons.push_back(
       "intensity: " + fmtNum(V.Costs.Intensity) +
@@ -701,8 +849,13 @@ ProfitabilityAnalyzer::priceLoop(const LoopInfo &LI, const LoopSafety &Safety,
   StartupCharge Charge;
   if (auto It = Startup.find(LI.Loop); It != Startup.end())
     Charge = It->second;
+  // Phase 3: a run's constant-size sections cost the GPU their transfer,
+  // once per run. Not counted for the host: a section is a hull, often far
+  // more than the run reads, and both host targets read what it does read.
   const double ThreadFixedUs = Machine.ThreadStartUs + Charge.CpuUs;
-  const double LaunchFixedUs = Machine.KernelLaunchUs + Charge.GpuUs;
+  const double LaunchFixedUs =
+      Machine.KernelLaunchUs + Charge.GpuUs +
+      FixedBytes * TransferScale * usPerByte(Machine.PcieBandwidthGBs);
   if (!Charge.Note.empty())
     V.Reasons.push_back(Charge.Note);
   if (!Machine.HasGpu)
@@ -748,7 +901,73 @@ ProfitabilityAnalyzer::priceLoop(const LoopInfo &LI, const LoopSafety &Safety,
     return V;
   }
 
-  if (V.TripCount) {
+  if (SymWork) {
+    // --- Phase 3: work per iteration is a polynomial in run-time sizes -----
+    //
+    // Compute-bound per operation (an inner loop reuses what the iteration
+    // maps), so each target's time is n * W * (its time per op) plus fixed
+    // costs; the GPU also moves the iteration's sections. Guards test the
+    // loop's total work n * W against the crossover.
+    const std::string N = V.TripCount ? std::to_string(*V.TripCount)
+                                      : "(double)(" + LI.BoundText + ")";
+    const std::string W = polyText(Work);
+    const double Fs = usPerFlop(Machine.CpuThroughputGFs);
+    const double Fc = usPerFlop(CpuAggGFs);
+    const double Fg = usPerFlop(Machine.GpuThroughputGFs);
+    V.Reasons.push_back("total work n * W, n = " + N + "; per op seq=" +
+                        fmtUs(Fs) + ", cpu=" + fmtUs(Fc) + ", gpu=" + fmtUs(Fg) +
+                        ", fixed overhead launch=" + fmtUs(LaunchFixedUs) +
+                        " vs thread-start=" + fmtUs(ThreadFixedUs));
+    // A bound inspector reads on one core before the run, per iteration:
+    // as ops, Ki of them come off each iteration's gain.
+    const double Insp = inspectUsPerIter(Safety);
+    if (Fs > Fc && std::isfinite(Insp / (Fs - Fc)) &&
+        std::isfinite(ThreadFixedUs / (Fs - Fc))) {
+      V.CpuBeatsSeq = true;
+      const double Star = ThreadFixedUs / (Fs - Fc);
+      const double Ki = Insp / (Fs - Fc);
+      if (Star > 0.0 || Ki > 0.0)
+        V.CpuGuardExpr =
+            Ki > 0.0 ? N + " * (" + W + " - " + coefText(std::ceil(Ki)) + ") >= " +
+                           std::to_string(Star > 0.0 ? nextPow2(Star) : 0)
+                     : N + " * " + W + " >= " + std::to_string(nextPow2(Star));
+      V.Reasons.push_back("cpu-vs-seq: threading pays off " +
+                          (V.CpuGuardExpr ? "when (" + *V.CpuGuardExpr + ")"
+                                          : std::string("unconditionally")) +
+                          "; crossover at " + fmtNum(Star) + " ops");
+    } else {
+      V.Reasons.push_back("cpu-vs-seq: threading never beats sequential on "
+                          "this machine model (per-op cost)");
+    }
+    // n * W * (Fc - Fg) - n * B * p >= Launch - Thread.
+    const double PerIterTransfer =
+        TransferPerIter * TransferScale * usPerByte(Machine.PcieBandwidthGBs);
+    const double K = Fc > Fg ? PerIterTransfer / (Fc - Fg) : 0.0;
+    const double T = Fc > Fg ? (LaunchFixedUs - ThreadFixedUs) / (Fc - Fg) : 0.0;
+    if (Machine.HasGpu && Fc > Fg && std::isfinite(K) && std::isfinite(T)) {
+      V.Target = OffloadTarget::GpuOffload;
+      if (K > 0.0 || T > 0.0)
+        V.GuardExpr = N + " * (" + W + " - " + coefText(std::ceil(K)) +
+                      ") >= " + std::to_string(T > 0.0 ? nextPow2(T) : 0);
+      V.Reasons.push_back("-> GPU_OFFLOAD" +
+                          (V.GuardExpr ? " if (" + *V.GuardExpr + ")"
+                                       : std::string(" unconditionally")) +
+                          ": per-op cost below the host's; the guard subtracts "
+                          "the iteration's transfer (" + fmtNum(K) +
+                          " ops' worth) and needs the launch recovered");
+    } else if (V.CpuBeatsSeq) {
+      V.Target = OffloadTarget::CpuParallel;
+      V.Reasons.push_back("-> CPU_PARALLEL" +
+                          (V.CpuGuardExpr ? " if (" + *V.CpuGuardExpr + ")"
+                                          : std::string(" unconditionally")) +
+                          ": threading beats sequential " +
+                          (V.CpuGuardExpr ? "above that much work" : "at any size"));
+    } else {
+      V.Target = OffloadTarget::Sequential;
+      V.Reasons.push_back("-> SEQUENTIAL: neither GPU offload nor host "
+                          "threading beats running this loop sequentially");
+    }
+  } else if (V.TripCount) {
     // --- Concrete trip count: evaluate all three targets numerically -------
     int64_t N = *V.TripCount;
     // Span covers the mapped region [0, bound); equals the trip count when
@@ -842,7 +1061,7 @@ ProfitabilityAnalyzer::priceLoop(const LoopInfo &LI, const LoopSafety &Safety,
     // to one linear function of n, and the GPU-vs-CPU crossover has a closed
     // form rather than needing a numeric search.
     double GpuTransferRate =
-        BytesPerIter * TransferScale * usPerByte(Machine.PcieBandwidthGBs);
+        TransferPerIter * TransferScale * usPerByte(Machine.PcieBandwidthGBs);
     double GpuComputeRate =
         std::max(OpsPerIter * usPerFlop(Machine.GpuThroughputGFs),
                  BytesPerIter * usPerByte(Machine.GpuBandwidthGBs));
@@ -956,10 +1175,13 @@ ProfitabilityAnalyzer::priceLoop(const LoopInfo &LI, const LoopSafety &Safety,
 ProfitabilityVerdict
 ProfitabilityAnalyzer::priceResident(const LoopInfo &LI,
                                      const LoopSafety &Safety,
-                                     const RegionPlan &Plan, double Scale) {
+                                     const RegionPlan &Plan, double Scale,
+                                     bool NoTrips) {
   TransferScale = Scale;
+  NoInnerTrips = NoTrips;
   ProfitabilityVerdict V = priceLoop(LI, Safety, &Plan);
   TransferScale = 1.0;
+  NoInnerTrips = false;
   return V;
 }
 

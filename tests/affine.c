@@ -138,7 +138,7 @@ void vla_2d(int n, int k, double m[n][k]) {
   // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
   // CHECK: collapse   : 2 (with 'j'){{$}}
-  // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
+  // CHECK: profitability : CPU_PARALLEL if ((double)(n) * (1 * (double)(k)) >= {{[0-9]+}}){{$}}
   // CHECK: - GPU offload declined: no map() section: 'm' points to arrays of non-constant size -> CPU_PARALLEL, which needs no map{{$}}
   for (int i = 0; i < n; i++)
     // CHECK: affine.c:[[#LOOP8:@LINE+10]]:5{{$}}
@@ -221,7 +221,7 @@ void linear_2d(double *a, int n) {
   // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
   // CHECK: collapse   : 2 (with 'j'){{$}}
-  // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
+  // CHECK: profitability : GPU_OFFLOAD if ((double)(n) * ((3 * (double)(n)) - {{[0-9]+}}) >= {{[0-9]+}}){{$}}
   for (int i = 0; i < n; i++)
     // CHECK: affine.c:[[#LOOP13:@LINE+10]]:5{{$}}
     // CHECK: kind       : VARIABLE_BOUND{{$}}
@@ -249,7 +249,7 @@ void column_major(double *a, int n) {
   // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
   // CHECK: collapse   : 2 (with 'i'){{$}}
-  // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
+  // CHECK: profitability : GPU_OFFLOAD if ((double)(n) * ((3 * (double)(n)) - {{[0-9]+}}) >= {{[0-9]+}}){{$}}
   for (int j = 0; j < n; j++)
     // CHECK: affine.c:[[#LOOP15:@LINE+10]]:5{{$}}
     // CHECK: kind       : VARIABLE_BOUND{{$}}
@@ -308,7 +308,7 @@ void wrong_start(double *a, int n) {
   // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
   // CHECK: collapse   : 2 (with 'j'){{$}}
-  // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
+  // CHECK: profitability : GPU_OFFLOAD if ((double)(n) * ((3 * (double)(((__INTPTR_TYPE__)n - 1))) - {{[0-9]+}}) >= {{[0-9]+}}){{$}}
   for (int i = 0; i < n; i++)
     // CHECK: affine.c:[[#LOOP19:@LINE+10]]:5{{$}}
     // CHECK: kind       : VARIABLE_BOUND{{$}}

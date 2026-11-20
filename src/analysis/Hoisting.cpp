@@ -1273,6 +1273,13 @@ struct HoistPlanner::Impl {
       if (SiteWritten.count(B) || HostWritten.count(B))
         RegionWritten.insert(B);
     std::map<int, std::string> GuardOf;
+    // Phase 3: loops whose work guard names something C can't (changing in
+    // R): priced as if their inner loops ran once, so C needn't name it.
+    std::set<int> NoTrips;
+    for (int K : Sites)
+      for (const ValueDecl *W : Plans[K]->WorkNames)
+        if (const VarDecl *N = canon(W); N && !Names.count(N) && NameBad(N))
+          NoTrips.insert(K);
     std::map<int, std::string> ShareNote;
     std::map<int, bool> SharedGpu;
     if (!PolicyNaive()) {
@@ -1307,8 +1314,8 @@ struct HoistPlanner::Impl {
         for (int K : Sites) {
           const double Own = OwnOf(K);
           const double Scale = Own > 0.0 ? PerRun / Own : 0.0;
-          ProfitabilityVerdict A =
-              P.Profit.priceResident(P.Loops[K], Safety[K], *Plans[K], Scale);
+          ProfitabilityVerdict A = P.Profit.priceResident(
+              P.Loops[K], Safety[K], *Plans[K], Scale, NoTrips.count(K));
           const bool Gpu = A.Target == OffloadTarget::GpuOffload;
           if (V[K].Target == OffloadTarget::GpuOffload && !Gpu)
             return "a loop that picks the GPU with its own maps no longer "
@@ -1383,6 +1390,13 @@ struct HoistPlanner::Impl {
           if (!Names.count(N))
             if (std::optional<std::string> Bad = NameBad(N))
               return Fail(*Bad);
+        // Phase 3: a guard on total work also names inner loops' bounds
+        // (NoTrips: priced without them when one can't be named here).
+        if (!NoTrips.count(K))
+          for (const ValueDecl *W : Plans[K]->WorkNames)
+            if (const VarDecl *N = canon(W); N && !Names.count(N))
+              if (std::optional<std::string> Bad = NameBad(N))
+                return Fail(*Bad);
       }
     }
     std::string C;

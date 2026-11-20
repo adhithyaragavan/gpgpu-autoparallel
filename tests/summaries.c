@@ -259,7 +259,7 @@ void s_rows_inner_col(long *a, int n, int m) {
   // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
   // CHECK: collapse   : 2 (with 'j'){{$}}
-  // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
+  // CHECK: profitability : GPU_OFFLOAD if ((double)(n) * ((3 * (double)(m)) - {{[0-9]+}}) >= {{[0-9]+}}){{$}}
   for (int i = 0; i < n; i++)
     // CHECK: summaries.c:[[#LOOP13:@LINE+11]]:5{{$}}
     // CHECK: kind       : VARIABLE_BOUND{{$}}

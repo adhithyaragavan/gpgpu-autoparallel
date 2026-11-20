@@ -28,7 +28,7 @@ void transpose(double *b, const double *a, int n) {
   // CHECK: alias      : 'b' and 'a' may overlap: checked at run time{{$}}
   // CHECK: alias guard: ((__INTPTR_TYPE__)b + 8 * ((((__INTPTR_TYPE__)n - 1)) * (__INTPTR_TYPE__)n + ((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)a + 8 * ((0) * (__INTPTR_TYPE__)n + 0) || (__INTPTR_TYPE__)a + 8 * ((((__INTPTR_TYPE__)n - 1)) * (__INTPTR_TYPE__)n + ((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)b + 8 * ((0) * (__INTPTR_TYPE__)n + 0)){{$}}
   // CHECK: collapse   : no, the inner loop needs its own run-time alias check{{$}}
-  // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
+  // CHECK: profitability : CPU_PARALLEL if ((double)(n) * (5 * (double)(n)) >= {{[0-9]+}}){{$}}
   for (int i = 0; i < n; i++)
     // CHECK: dependence.c:[[#LOOP1:@LINE+13]]:5{{$}}
     // CHECK: kind       : VARIABLE_BOUND{{$}}
@@ -64,7 +64,7 @@ void matvec(double *y, const double *m, const double *x, int n) {
   // CHECK: alias      : 'm' and 'y' may overlap: checked at run time{{$}}
   // CHECK: alias      : 'x' and 'y' may overlap: checked at run time{{$}}
   // CHECK: alias guard: ((__INTPTR_TYPE__)m + 8 * ((((__INTPTR_TYPE__)n - 1)) * (__INTPTR_TYPE__)n + ((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)y + 0 || (__INTPTR_TYPE__)y + 8 * (((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)m + 8 * ((0) * (__INTPTR_TYPE__)n + 0)) && ((__INTPTR_TYPE__)x + 8 * (((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)y + 0 || (__INTPTR_TYPE__)y + 8 * (((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)x + 0){{$}}
-  // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
+  // CHECK: profitability : CPU_PARALLEL if ((double)(n) * (5 * (double)(n)) >= {{[0-9]+}}){{$}}
   for (int i = 0; i < n; i++) {
     double acc = 0.0;
     // CHECK: dependence.c:[[#LOOP3:@LINE+12]]:5{{$}}
@@ -168,7 +168,7 @@ void row_prefix(double *a, int n) {
   // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: deps       : 3 pair(s), 3 independent (3 SIV){{$}}
   // CHECK: collapse   : no, the inner loop is not SAFE on its own{{$}}
-  // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
+  // CHECK: profitability : GPU_OFFLOAD if ((double)(n) * ((9 * (double)(((__INTPTR_TYPE__)n - 1))) - {{[0-9]+}}) >= {{[0-9]+}}){{$}}
   for (int i = 0; i < n; i++)
     // CHECK: dependence.c:[[#LOOP9:@LINE+13]]:5{{$}}
     // CHECK: kind       : VARIABLE_BOUND{{$}}
@@ -236,7 +236,7 @@ void scale3(double *c, const double *a, int n) {
   // CHECK: alias      : 'c' and 'a' may overlap: checked at run time{{$}}
   // CHECK: alias guard: ((__INTPTR_TYPE__)c + 8 * (((((__INTPTR_TYPE__)n - 1)) * (__INTPTR_TYPE__)n + ((__INTPTR_TYPE__)n - 1)) * (__INTPTR_TYPE__)n + ((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)a + 8 * (((0) * (__INTPTR_TYPE__)n + 0) * (__INTPTR_TYPE__)n + 0) || (__INTPTR_TYPE__)a + 8 * (((((__INTPTR_TYPE__)n - 1)) * (__INTPTR_TYPE__)n + ((__INTPTR_TYPE__)n - 1)) * (__INTPTR_TYPE__)n + ((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)c + 8 * (((0) * (__INTPTR_TYPE__)n + 0) * (__INTPTR_TYPE__)n + 0)){{$}}
   // CHECK: collapse   : no, the inner loop needs its own run-time alias check{{$}}
-  // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
+  // CHECK: profitability : CPU_PARALLEL if ((double)(n) * (1 * (double)(n) + 12 * (double)(n) * (double)(n)) >= {{[0-9]+}}){{$}}
   for (int i = 0; i < n; i++)
     // CHECK: dependence.c:[[#LOOP13:@LINE+14]]:5{{$}}
     // CHECK: kind       : VARIABLE_BOUND{{$}}
@@ -251,7 +251,7 @@ void scale3(double *c, const double *a, int n) {
     // CHECK: alias      : 'c' and 'a' may overlap: checked at run time{{$}}
     // CHECK: alias guard: ((__INTPTR_TYPE__)c + 8 * ((((__INTPTR_TYPE__)i) * (__INTPTR_TYPE__)n + ((__INTPTR_TYPE__)n - 1)) * (__INTPTR_TYPE__)n + ((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)a + 8 * ((((__INTPTR_TYPE__)i) * (__INTPTR_TYPE__)n + 0) * (__INTPTR_TYPE__)n + 0) || (__INTPTR_TYPE__)a + 8 * ((((__INTPTR_TYPE__)i) * (__INTPTR_TYPE__)n + ((__INTPTR_TYPE__)n - 1)) * (__INTPTR_TYPE__)n + ((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)c + 8 * ((((__INTPTR_TYPE__)i) * (__INTPTR_TYPE__)n + 0) * (__INTPTR_TYPE__)n + 0)){{$}}
     // CHECK: collapse   : no, the inner loop needs its own run-time alias check{{$}}
-    // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
+    // CHECK: profitability : CPU_PARALLEL if ((double)(n) * (12 * (double)(n)) >= {{[0-9]+}}){{$}}
     for (int j = 0; j < n; j++)
       // CHECK: dependence.c:[[#LOOP14:@LINE+13]]:7{{$}}
       // CHECK: kind       : VARIABLE_BOUND{{$}}

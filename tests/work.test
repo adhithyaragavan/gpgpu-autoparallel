@@ -1,0 +1,15 @@
+# Phase 3 pricing (tests/work.c pins the defaults).
+#
+# Both off: inner loops of unknown trip count count once, constant-size
+# sections per iteration (the ablation baseline; byte-identical to 6281a85).
+# The time loop's region is then guarded on n alone.
+RUN: %p05 %S/work.c -symbolic-trips=off -fixed-sections=off -- %cflags | FileCheck --check-prefix=OFF %s
+OFF-LABEL: work.c:54:5
+OFF: data region (line 38): resident in target data if(n >= {{[0-9]+}} && (__INTPTR_TYPE__)(steps) - (__INTPTR_TYPE__)(0) >= 2)
+OFF-LABEL: work.c:456:3
+OFF: profitability : CPU_PARALLEL if (n - r >= {{[0-9]+}})
+
+# On: the stencil's work is its width 2r + 1, not n.
+RUN: %p05 %S/work.c -- %cflags | FileCheck --check-prefix=ON %s
+ON-LABEL: work.c:456:3
+ON: work/iteration: (1 + 3 * (double)((2 * (__INTPTR_TYPE__)r + 1))) ops

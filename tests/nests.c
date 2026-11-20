@@ -19,7 +19,7 @@ void perfect2(double *a, int n, int m) {
   // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
   // CHECK: collapse   : 2 (with 'j'){{$}}
-  // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
+  // CHECK: profitability : GPU_OFFLOAD if ((double)(n) * ((3 * (double)(m)) - {{[0-9]+}}) >= {{[0-9]+}}){{$}}
   for (int i = 0; i < n; i++)
     // depth 1, parent = outer, 0 children, not perfect, rectangular. ivs: i, j
     // CHECK: nests.c:[[#LOOP1:@LINE+10]]:5{{$}}
@@ -49,7 +49,7 @@ void perfect3(double *a, int n) {
   // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
   // CHECK: collapse   : 2 (with 'j'){{$}}
-  // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
+  // CHECK: profitability : GPU_OFFLOAD if ((double)(n) * ((1 * (double)(n) + 5 * (double)(n) * (double)(n)) - {{[0-9]+}}) >= {{[0-9]+}}){{$}}
   for (int i = 0; i < n; i++) {
     // depth 1, 1 child, perfect. ivs: i, j
     // CHECK: nests.c:[[#LOOP3:@LINE+11]]:5{{$}}
@@ -62,7 +62,7 @@ void perfect3(double *a, int n) {
     // CHECK-NEXT: safety     : SAFE{{$}}
     // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
     // CHECK: collapse   : 2 (with 'k'){{$}}
-    // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
+    // CHECK: profitability : GPU_OFFLOAD if ((double)(n) * ((5 * (double)(n)) - {{[0-9]+}}) >= {{[0-9]+}}){{$}}
     for (int j = 0; j < n; j++) {
       // depth 2, parent = the j loop, 0 children. ivs: i, j, k
       // CHECK: nests.c:[[#LOOP4:@LINE+10]]:7{{$}}
@@ -97,7 +97,7 @@ void imperfect(double *a, double *rowsum, int n) {
   // CHECK: deps       : 2 pair(s), 2 independent (2 SIV){{$}}
   // CHECK: alias      : 'rowsum' and 'a' may overlap: checked at run time{{$}}
   // CHECK: alias guard: ((__INTPTR_TYPE__)rowsum + 8 * (((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)a + 8 * ((0) * (__INTPTR_TYPE__)n + 0) || (__INTPTR_TYPE__)a + 8 * ((((__INTPTR_TYPE__)n - 1)) * (__INTPTR_TYPE__)n + ((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)rowsum + 0){{$}}
-  // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
+  // CHECK: profitability : CPU_PARALLEL if ((double)(n) * (3 * (double)(n)) >= {{[0-9]+}}){{$}}
   for (int i = 0; i < n; i++) {
     rowsum[i] = 0.0;
     // depth 1, parent = outer. ivs: i, j
@@ -129,7 +129,7 @@ void imperfect_null_stmt(double *a, int n) {
   // CHECK-NEXT: W a[i * n + j] : [i][j] delinearized, dims [?][n]{{$}}
   // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
-  // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
+  // CHECK: profitability : GPU_OFFLOAD if ((double)(n) * ((3 * (double)(n)) - {{[0-9]+}}) >= {{[0-9]+}}){{$}}
   for (int i = 0; i < n; i++) {
     ;
     // depth 1, parent = outer
@@ -224,7 +224,7 @@ void siblings(double *a, double *b, int n) {
   // CHECK: deps       : 2 pair(s), 2 independent (2 SIV){{$}}
   // CHECK: alias      : 'a' and 'b' may overlap: checked at run time{{$}}
   // CHECK: alias guard: ((__INTPTR_TYPE__)a + 8 * ((((__INTPTR_TYPE__)n - 1)) * (__INTPTR_TYPE__)n + ((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)b + 8 * ((0) * (__INTPTR_TYPE__)n + 0) || (__INTPTR_TYPE__)b + 8 * ((((__INTPTR_TYPE__)n - 1)) * (__INTPTR_TYPE__)n + ((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)a + 8 * ((0) * (__INTPTR_TYPE__)n + 0)){{$}}
-  // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
+  // CHECK: profitability : CPU_PARALLEL if ((double)(n) * (6 * (double)(n)) >= {{[0-9]+}}){{$}}
   for (int i = 0; i < n; i++) {
     // depth 1, parent = outer
     // CHECK: nests.c:[[#LOOP14:@LINE+10]]:5{{$}}
@@ -342,7 +342,7 @@ void for_while_for(double *a, int n, int steps) {
   // CHECK-NEXT: W a[i * n + j] : [i][j] delinearized, dims [?][n]{{$}}
   // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
-  // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
+  // CHECK: profitability : CPU_PARALLEL if ((double)(n) * (1 + 3 * (double)(n)) >= {{[0-9]+}}){{$}}
   // CHECK: - GPU offload declined: no map() section: can't map a[i * n + j]: it may not run on every iteration (or a loop around it may stop early), so the ends of its range aren't surely touched -> CPU_PARALLEL, which needs no map{{$}}
   for (int i = 0; i < n; i++) {
     int s = steps;
@@ -606,7 +606,7 @@ void pragma_body(double *a, int n) {
   // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
   // CHECK: collapse   : 2 (with 'j'){{$}}
-  // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
+  // CHECK: profitability : GPU_OFFLOAD if ((double)(n) * ((3 * (double)(n)) - {{[0-9]+}}) >= {{[0-9]+}}){{$}}
   for (int i = 0; i < n; i++) {
 #pragma clang loop unroll(disable)
     // depth 1, parent = outer
@@ -638,7 +638,7 @@ void double_braces(double *a, int n) {
   // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
   // CHECK: collapse   : 2 (with 'j'){{$}}
-  // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
+  // CHECK: profitability : GPU_OFFLOAD if ((double)(n) * ((3 * (double)(n)) - {{[0-9]+}}) >= {{[0-9]+}}){{$}}
   for (int i = 0; i < n; i++) {
     {
       // depth 1, parent = outer
@@ -670,7 +670,7 @@ void labelled_inner(double *a, int n) {
   // CHECK-NEXT: W a[i * n + j] : [i][j] delinearized, dims [?][n]{{$}}
   // CHECK-NEXT: safety     : SAFE{{$}}
   // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
-  // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
+  // CHECK: profitability : GPU_OFFLOAD if ((double)(n) * ((3 * (double)(n)) - {{[0-9]+}}) >= {{[0-9]+}}){{$}}
   for (int i = 0; i < n; i++) {
   inner:
     // depth 1, parent = outer

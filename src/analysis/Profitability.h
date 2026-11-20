@@ -377,7 +377,8 @@ public:
   ProfitabilityVerdict priceResident(const LoopInfo &LI,
                                      const LoopSafety &Safety,
                                      const RegionPlan &Plan,
-                                     double TransferScale);
+                                     double TransferScale,
+                                     bool NoInnerTrips = false);
 
   /// Phase 2.3: the startup costs (MachineModel::CpuInitUs/GpuInitUs) this
   /// loop is charged per run, should it run on the host's threads or on
@@ -423,6 +424,9 @@ private:
   Policy PolicyMode;
   /// priceResident in progress: the factor on host<->device transfer.
   double TransferScale = 1.0;
+  /// priceResident in progress: inner loops count once (the guard can't
+  /// name their bounds), as with -symbolic-trips=off.
+  bool NoInnerTrips = false;
   llvm::DenseMap<const clang::ForStmt *, StartupCharge> Startup;
   llvm::DenseMap<const clang::ForStmt *, std::string> Nested;
   llvm::DenseMap<const clang::FunctionDecl *, double> OpCache;

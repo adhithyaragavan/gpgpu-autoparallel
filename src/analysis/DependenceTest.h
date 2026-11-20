@@ -124,6 +124,11 @@ LoopDependence testLoopDependences(const LoopAccesses &A, int64_t RootStep,
 bool subscriptBounds(const AffineExpr &S, const LoopAccesses &A,
                      AffineExpr &Lo, AffineExpr &Hi, bool Widen = true);
 
+/// Phase 2.5: a range containing every value V takes while the analyzed
+/// loop runs (DependenceTest.cpp); never Exact unless usableRange's.
+IVRange boundingRange(const LoopAccesses &A, const clang::VarDecl *V,
+                      unsigned Depth = 0);
+
 /// Phase 2.5: smallest and largest value of a non-affine subscript's
 /// ValueBound while the analyzed loop runs (affine leaves through
 /// subscriptBounds). False when some part has no bound.

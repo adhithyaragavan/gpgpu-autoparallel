@@ -23,6 +23,19 @@ static llvm::cl::opt<MapMode> FlagMaps(
 
 MapMode mapModeFromFlags() { return FlagMaps; }
 
+namespace {
+enum class SymTrips { On, Off };
+}
+static llvm::cl::opt<SymTrips> FlagSymbolicTripsOpt(
+    "symbolic-trips",
+    llvm::cl::desc("Count an inner loop of unknown trip count as its range's "
+                   "length, guarding on the loop's total work (Phase 3)"),
+    llvm::cl::values(
+        clEnumValN(SymTrips::On, "on", "by its range (default)"),
+        clEnumValN(SymTrips::Off, "off", "as one iteration (ablation baseline)")),
+    llvm::cl::init(SymTrips::On));
+bool symbolicTripsFromFlags() { return FlagSymbolicTripsOpt == SymTrips::On; }
+
 std::string ArrayRegion::listItem() const {
   if (!SectionText.empty())
     return SectionText;
@@ -392,6 +405,60 @@ RegionPlan RegionPlanner::plan(const LoopInfo &LI, const LoopAccesses &A,
   };
   const IVRange *RootRange = RangeOf(A.RootIV);
   const bool RootExact = RootRange && RootRange->Exact;
+
+  // Phase 3: inner loops' trip counts, for the cost model. A range's length
+  // (widened: `j < i` counts as i's largest value) in names fixed while the
+  // loop runs; plain variables only (a field path's load could fault).
+  if (symbolicTripsFromFlags()) {
+    llvm::SetVector<const ValueDecl *> WorkUsed;
+    for (const auto &[FS, Inner] : LoopOf) {
+      if (FS == LI.Loop || Inner->TripCount || !Inner->InductionVar ||
+          !Inner->Step || *Inner->Step == 0 ||
+          !LI.Loop->getSourceRange().fullyContains(FS->getSourceRange()))
+        continue;
+      // The loop's own range first: `j = i .. i + 3` is 4 whatever i is.
+      // Widened only when its length still varies inside the loop.
+      std::optional<AffineExpr> D;
+      if (const IVRange *Own = RangeOf(canon(Inner->InductionVar));
+          Own && Own->Lo && Own->Hi) {
+        D = minus(*Own->Hi, *Own->Lo);
+        if (D && llvm::any_of(D->IVTerms,
+                              [&](const auto &T) { return !IsFixed(T.first); }))
+          D.reset();
+      }
+      if (!D) {
+        const IVRange R = boundingRange(A, canon(Inner->InductionVar));
+        if (!R.Lo || !R.Hi)
+          continue;
+        D = minus(*R.Hi, *R.Lo);
+        if (!D)
+          continue;
+      }
+      TripFactor T;
+      T.Scale = 1.0 / static_cast<double>(std::abs(*Inner->Step));
+      if (D->isConstant()) {
+        T.Scale *= static_cast<double>(std::max<int64_t>(D->Const + 1, 0));
+      } else {
+        bool Ok = true;
+        std::string Bad;
+        for (const auto &[V, K] : D->SymTerms)
+          Ok &= !fieldPath(V) && Names.nameable(V, Bad);
+        for (const auto &[V, K] : D->IVTerms)
+          Ok &= IsFixed(V) && Names.nameable(V, Bad);
+        if (!Ok)
+          continue;
+        for (const auto &[V, K] : D->SymTerms)
+          WorkUsed.insert(V);
+        for (const auto &[V, K] : D->IVTerms)
+          WorkUsed.insert(V);
+        AffineExpr Len = *D;
+        Len.Const += 1;
+        T.Text = "(double)(" + text(Len) + ")";
+      }
+      Plan.InnerTrips[FS] = T;
+    }
+    Plan.WorkNames.assign(WorkUsed.begin(), WorkUsed.end());
+  }
 
   // An access whose subscript's extremes are surely reached.
   auto Exact = [&](const ArrayAccess &X, unsigned Dims) -> bool {
