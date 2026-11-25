@@ -3778,3 +3778,51 @@ some profitable loops; jacobi-1d stays slower than sequential (0.80x; p05-all 0.
 loop's two small parallel loops cost more than they save. Polly-only `differs` on ludcmp (rel.
 2.6e-9) is the same as in the baseline. Clang-seq varies up to 14% between sweeps, so before/after
 comparisons use one sweep's numbers only.
+
+## 2026-11-20 — Phase 3.2 setup: PolyBench on the Colab T4
+
+`eval/polybench/gpu_run.py` (stdlib-only runner) and `eval/polybench/make_gpu_notebook.py`, which
+rewrites all 30 kernels with `-machine machine/colab-t4.json` (gated and `-policy naive`) and embeds
+the rewrites and the runner in `eval/colab/polybench_t4.ipynb` (the repo is private; the notebook
+fetches PolyBench at the pinned commit). Variants: `seq` (nvc -O3), `p05`, `p05-naive`, and both
+with `-warm` (an empty target region in a constructor, so the timed kernel doesn't pay the ~0.16 s
+device start-up). Correctness: exact hex dumps against `seq`; `gpu_launches` counts kernel
+launches via `NVCOMPILER_ACC_NOTIFY` (0 = every guard chose the host).
+
+- Gated rewrites have 37 GPU pragmas over 30 kernels. The stencils (jacobi-1d/2d, heat-3d, most
+  of fdtd-2d) stay on the CPU even under naive: their arrays are pointer parameters whose
+  disjointness is only checked at run time, and GPU offload needs a static proof (Phase 1.6
+  rule). main() passes separate malloc'ed arrays, which the static-caller proof can't see. A
+  candidate fix for later, not done here.
+- The rewrites hold the dataset's sizes as constants (map sections such as `A[i:1][0:1900]`), so
+  they are valid only at the dataset they were made for (`--dataset` on the generator).
+- Smoke-tested in Docker with clang 22's host-offload device (MINI rewrites, naive, all 30
+  kernels, OMP_TARGET_OFFLOAD=MANDATORY): 90/90 rows ran; exact except atax and gemver (within
+  1e-9).
+- 2026-11-25: Colab gave no T4 runtime (stuck allocating), so the notebook also runs on Kaggle: it
+  works in `/kaggle/working` when that exists, else `/content`, and on Kaggle the CSV is a file
+  of the committed version's Output (Save & Run All runs in the background). Kaggle's T4 is the
+  same GPU as the calibration's; its host CPU differs (4 vCPUs, threads = nproc), which only the
+  host side of `colab-t4.json` describes.
+
+## 2026-11-26 — Phase 3.2 first T4 run: the GPU path is blocked by the alias rule
+
+`results/t4-large.csv` (user's run of `polybench_t4.ipynb`, LARGE, min of 3, 2 host threads).
+All 150 rows ran. Geomean speedup over nvc -O3 sequential: p05 (gated) 0.83x, p05-naive 0.74x,
+-warm 0.85x / 0.73x. Gated launched **0** GPU kernels on every kernel.
+
+- **Why there is no GPU speedup:** in PolyBench every kernel gets its arrays as pointer parameters,
+  so each kernel's outer loop is "SAFE, disjointness checked at run time", and GPU offload needs a
+  static proof (Phase 1.6 rule). The gated cost model itself chose the GPU for e.g. gemm:89
+  (`ni * (4·nj·nk + ...) >= 2^29`, true at LARGE); the alias rule turned it into CPU/SEQUENTIAL.
+  The GPU pragmas that remain are in `init_array` (not timed) or inner loops (gemm:90, one
+  launch per i: 1003 launches; lu, mvt, bicg ~2000), which lose to the CPU. Naive is therefore
+  no "everything on the GPU" upper bound here.
+- Host side: gated is slower than seq on several kernels (gemm 0.42x, durbin 0.37x, lu 0.70x)
+  with 0 launches, i.e. from CPU pragmas and/or nvc's `-mp=gpu` host code vs the `seq` build
+  without `-mp`. Not separated yet: the next run should add the original compiled with the
+  OpenMP flags as a second reference.
+- ludcmp differs from seq by 2.4e-9 (gated, 0 launches) and 5.4e-9 (naive). P05's ludcmp was exact
+  on the M4 with clang, and Polly differed there by 2.6e-9: likely `-mp` code generation (FMA
+  contraction) on an ill-conditioned kernel, not a wrong pragma. Unverified until that reference
+  exists.
