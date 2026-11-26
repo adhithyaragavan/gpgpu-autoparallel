@@ -3826,3 +3826,63 @@ All 150 rows ran. Geomean speedup over nvc -O3 sequential: p05 (gated) 0.83x, p0
   on the M4 with clang, and Polly differed there by 2.6e-9: likely `-mp` code generation (FMA
   contraction) on an ill-conditioned kernel, not a wrong pragma. Unverified until that reference
   exists.
+
+## 2026-11-26 — Phase 3.2 fix: GPU loops behind their run-time overlap check (`-gpu-alias-checks`)
+
+**Problem** (first T4 run, above): every PolyBench kernel takes its arrays as pointer parameters,
+so its outer loops are SAFE only behind a run-time overlap check, and the Phase 1.6 rule kept such
+loops off the GPU: a false `if(target:)` still runs `target teams distribute parallel for` with
+teams and threads on the host, and overlapping arrays can't be mapped as separate sections.
+RegionPlanner also refused two read-only bases that may overlap (libomptarget aborts on partly
+overlapping sections; the 2.1 fix of 2026-10-16).
+
+**Change** (user's choice: the run-time check, over a static proof from main's allocations):
+- The check selects in the source: `{ if (check) { <target pragma> <loop> } else { <CPU pragma
+  when threading pays> <the original loop, copied> } }` (OmpRewriter `insertBranch`). The target
+  construct and its maps are reached only when the check holds; the else branch's CPU pragma
+  keeps its own AliasGuard, as before.
+- The check is the AliasGuard plus, per pair of mapped sections not proven apart statically
+  (read-only pairs: Unproven or restrict; written pairs: Unproven), a test that the two
+  sections' byte ranges are apart (`RegionPlan::SectionApart`, from StartText/LenText/ElemBytes;
+  integer arithmetic only). The accesses being apart isn't enough: sections can be wider
+  (`c[i] = a[i]` from i = 1 called with `c = a - 9` maps overlapping hulls).
+- Only with RegionPlanner's sections (`-maps=ranges`); not for guards calling the bound
+  inspectors (CPU only); not when the loop can't be copied (a label, address-of-label or a
+  `case` of an outer switch in the body, a begin or end inside a macro): then the guarded CPU
+  pragma, as before.
+- Never in a `target data` region (its GPU branch would use the region's device copies, and the
+  region's updates around it as host code would overwrite them): such loops aren't region sites,
+  and a region containing one is refused.
+- `-gpu-alias-checks=off` = byte-identical to 072c17a (378 runs: fixtures, benchmarks, 30
+  PolyBench kernels × default/m4/colab-t4 × gated/naive).
+
+**Fixtures:** 12 SAFE loops CPU → GPU behind the check (alias, bounds, dependence, fields, nests,
+ranges, scalars, summaries; allowed: target changes on SAFE loops); 8 loops stay on the CPU with
+a map() reason where the alias reason was pinned before. Only blocks whose verdict or decline
+line changed were patched; `.test` line references remapped. maps.c `read_pair`'s comment
+updated (naive now branches it; the driver's `b == a + 1` call takes the else branch). New
+`tests/branch.{c,test}` + `eval/runtime/branch_main.c` (in CI, also OFFLOAD naive + gated): each
+loop called with its bases apart and overlapping, at sizes on both sides of the guards.
+
+**PolyBench (T4 model):** kernel outer loops on the GPU behind a branch: 0 → 23 (naive), 22
+(gated); the remaining blockers are 3 loops whose written base isn't touched on every iteration
+(gemm/syrk/syr2k `C`: "no access to it runs on every iteration") and time-loop/UNSAFE outer
+loops. Host-offload smoke in Docker (MINI, gated + naive, 57 branches): 90/90 rows ran, exact or
+within 1e-9.
+
+**Adversarial review** (separate agent, runtime-checked in Docker): 2 aborts + 1 precision loss +
+3 nits.
+- Fixed: under `-maps=bound` the branch was taken with no SectionApart at all, so `base[0:n]`
+  maps of `b == a + 1` aborted; branches now need RegionPlanner's plan.
+- Fixed: the else branch was always sequential; when only SectionApart fails (read-only bases
+  overlapping) the accesses are still apart, so it now keeps the guarded CPU pragma.
+- **Known, not fixed (pre-existing, also with the flag off):** a written `restrict` pair counts as
+  proven apart, but restrict keeps apart what is accessed, not the sections' hulls:
+  `a[2*i] = b[2*i+1]` called with `a == b` is legal C and maps two partly overlapping sections
+  (abort). Testing those pairs too was tried and reverted: it would keep every restrict loop out
+  of `target data` regions (hoist.c, amortize.c lost theirs). The right fix needs a "the section
+  is dense" fact from the planner; `Types` proofs of interleaved type-punned buffers are the same
+  case (unconfirmed). branch_main.c leaves that call out.
+- Nits, not changed: a written Unproven pair is tested twice (AliasGuard and SectionApart);
+  `__LINE__`/`__COUNTER__` differ in the copy; the `p05_` test also matches user names (only more
+  conservative).

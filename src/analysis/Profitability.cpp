@@ -1195,6 +1195,22 @@ void ProfitabilityAnalyzer::declineNested(const ForStmt *Loop,
   Nested[Loop] = std::move(Why);
 }
 
+namespace {
+enum class GpuChecks { On, Off };
+}
+static llvm::cl::opt<GpuChecks> FlagGpuAliasChecksOpt(
+    "gpu-alias-checks",
+    llvm::cl::desc("A GPU loop whose pointers are checked apart only at run "
+                   "time runs as `if (check) <GPU loop> else <original "
+                   "loop>` (Phase 3.2)"),
+    llvm::cl::values(
+        clEnumValN(GpuChecks::On, "on", "branch on the check (default)"),
+        clEnumValN(GpuChecks::Off, "off",
+                   "such loops stay on the host (ablation baseline)")),
+    llvm::cl::init(GpuChecks::On));
+
+bool gpuAliasChecksFromFlags() { return FlagGpuAliasChecksOpt == GpuChecks::On; }
+
 ProfitabilityVerdict
 ProfitabilityAnalyzer::analyzeLoop(const LoopInfo &LI, const LoopSafety &Safety,
                                    const RegionPlan *Plan) {
@@ -1220,7 +1236,24 @@ ProfitabilityAnalyzer::analyzeLoop(const LoopInfo &LI, const LoopSafety &Safety,
   // Phase 1.6: a false if(target:) still runs teams/parallel on the host,
   // and overlapping arrays can't be mapped as separate regions, so a loop
   // whose pointers are only checked apart at run time stays on the host.
-  if (V.Target == OffloadTarget::GpuOffload && !V.AliasGuard.empty()) {
+  // Phase 3.2: unless the check selects between the GPU loop and the
+  // original one in the source (OmpRewriter): the target construct, and its
+  // maps, are then reached only when the bases are apart. Not for checks
+  // calling the bound inspectors (CPU only, Phase 2.5).
+  // The map() sections must be apart too (RegionPlan::SectionApart).
+  const bool Apart = Plan && !Plan->SectionApart.empty();
+  // Only with RegionPlanner's sections: SectionApart covers what is mapped
+  // (under -maps=bound nothing tests the base[0:extent] sections).
+  if (V.Target == OffloadTarget::GpuOffload && Plan &&
+      (!V.AliasGuard.empty() || Apart) && gpuAliasChecksFromFlags() &&
+      V.AliasGuard.find("p05_") == std::string::npos) {
+    V.AliasBranch = true; // reported at the end, if still on the GPU
+    V.BranchCheck = V.AliasGuard;
+    if (Apart)
+      for (const std::string &T : Plan->SectionApart)
+        V.BranchCheck += (V.BranchCheck.empty() ? "" : " && ") + T;
+  } else if (V.Target == OffloadTarget::GpuOffload &&
+             (!V.AliasGuard.empty() || Apart)) {
     V.GuardExpr.reset();
     if (V.CpuBeatsSeq) {
       V.Target = OffloadTarget::CpuParallel;
@@ -1322,6 +1355,14 @@ ProfitabilityAnalyzer::analyzeLoop(const LoopInfo &LI, const LoopSafety &Safety,
     V.GuardExpr.reset();
     V.CpuGuardExpr.reset();
     V.Reasons.push_back(It->second);
+  }
+  if (V.AliasBranch) {
+    V.AliasBranch = V.Target == OffloadTarget::GpuOffload;
+    if (!V.AliasBranch)
+      V.BranchCheck.clear();
+    if (V.AliasBranch)
+      V.Reasons.push_back("GPU behind the run-time overlap check: if (check) "
+                          "the GPU loop, else the original loop");
   }
   return V;
 }

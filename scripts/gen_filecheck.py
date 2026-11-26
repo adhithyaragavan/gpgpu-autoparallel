@@ -196,6 +196,9 @@ def main(paths):
             decl = next((l.strip() for l in L if "GPU offload declined" in l), None)
             if decl:
                 c.append(lit(decl) + A)
+            # Phase 3.2: on the GPU behind its run-time overlap check.
+            c += [lit(l.strip()) + A for l in L
+                  if l.strip().startswith("- GPU behind the run-time overlap check")]
             # A loop declined because a callee has a target region of its own.
             c += [lit(l.strip()) + A for l in L if l.strip().startswith("- declined: it calls")]
             checks[line] = (n, col, c)

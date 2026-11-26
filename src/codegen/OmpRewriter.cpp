@@ -1,6 +1,7 @@
 #include "codegen/OmpRewriter.h"
 
 #include "clang/AST/ParentMapContext.h"
+#include "clang/AST/RecursiveASTVisitor.h"
 #include "clang/Basic/SourceManager.h"
 #include "clang/Lex/Lexer.h"
 #include "llvm/ADT/STLExtras.h"
@@ -101,7 +102,8 @@ std::string buildCpuPragma(const ProfitabilityVerdict &V) {
 
 } // namespace
 
-bool OmpRewriter::insertPragma(const LoopInfo &LI, const std::string &Pragma) {
+bool OmpRewriter::insertPragma(const LoopInfo &LI, const std::string &Pragma,
+                               const std::string *Check) {
   const SourceManager &SM = Rewrite.getSourceMgr();
   SourceLocation Begin = LI.Loop->getBeginLoc();
 
@@ -132,6 +134,9 @@ bool OmpRewriter::insertPragma(const LoopInfo &LI, const std::string &Pragma) {
         "harmful OpenMP in every combination)");
     return false;
   }
+
+  if (Check)
+    return insertBranch(LI, *Check, Pragma);
 
   // Indent the pragma to line up with the `for` it precedes.
   unsigned Col = SM.getPresumedColumnNumber(Begin);
@@ -194,6 +199,41 @@ void OmpRewriter::rewriteLoop(const LoopInfo &LI,
           "one)");
       // No collectDeclareTargets: this site emitted the CPU pragma, which
       // calls ordinary host-compiled functions.
+      return;
+    }
+
+    if (V.AliasBranch) {
+      if (std::string Why = branchBlocker(LI); !Why.empty()) {
+        // As the Phase 1.6 rule: the loop stays on the host.
+        if (!V.CpuBeatsSeq) {
+          skip("GPU loop behind a run-time overlap check, but " + Why +
+               ", and host threading doesn't beat sequential, declined");
+          return;
+        }
+        std::string Pragma = buildCpuPragma(V);
+        if (!insertPragma(LI, Pragma))
+          return;
+        AnnotatedRanges.push_back(LI.Loop->getSourceRange());
+        Summary.Sites.push_back(
+            RewriteSite{LI.Loop, Pragma, LI.Line, OffloadTarget::CpuParallel});
+        skip("GPU loop behind a run-time overlap check, but " + Why +
+             ", degraded to the guarded CPU pragma");
+        return;
+      }
+      std::string Pragma = buildGpuPragma(V);
+      // The else branch keeps the host threads: its accesses are still
+      // checked apart by the CPU pragma's own AliasGuard.
+      ElsePragma = V.CpuBeatsSeq ? buildCpuPragma(V) : "";
+      if (!insertPragma(LI, Pragma, &V.BranchCheck))
+        return;
+      AnnotatedRanges.push_back(LI.Loop->getSourceRange());
+      Summary.Sites.push_back(
+          RewriteSite{LI.Loop, Pragma, LI.Line, OffloadTarget::GpuOffload});
+      Summary.Branches.push_back(
+          "line " + std::to_string(LI.Line) + ": if (" + V.BranchCheck +
+          ") the GPU loop, else the original loop" +
+          (ElsePragma.empty() ? "" : " with " + ElsePragma));
+      collectDeclareTargets(LI);
       return;
     }
 
@@ -260,6 +300,83 @@ bool restOfLineEmpty(SourceLocation Loc, const SourceManager &SM,
 }
 
 } // namespace
+
+namespace {
+
+/// A label, or a `case` of a switch outside S: a copy of S would define the
+/// label twice, or be entered from outside.
+struct Labels : RecursiveASTVisitor<Labels> {
+  int Switches = 0;
+  bool Found = false;
+  bool TraverseSwitchStmt(SwitchStmt *SS) {
+    ++Switches;
+    bool R = RecursiveASTVisitor::TraverseSwitchStmt(SS);
+    --Switches;
+    return R;
+  }
+  bool VisitLabelStmt(LabelStmt *) { return !(Found = true); }
+  bool VisitSwitchCase(SwitchCase *) {
+    if (Switches == 0)
+      Found = true;
+    return !Found;
+  }
+  bool VisitAddrLabelExpr(AddrLabelExpr *) { return !(Found = true); }
+};
+
+} // namespace
+
+std::string OmpRewriter::branchBlocker(const LoopInfo &LI) const {
+  const SourceManager &SM = Rewrite.getSourceMgr();
+  const LangOptions &LO = Rewrite.getLangOpts();
+  SourceLocation Begin = LI.Loop->getBeginLoc();
+  SourceLocation End = afterStmt(LI.Loop, SM, LO);
+  if (Begin.isMacroID() || End.isMacroID() || !SM.isWrittenInMainFile(Begin) ||
+      !SM.isWrittenInMainFile(End) || !Rewriter::isRewritable(End))
+    return "the loop begins or ends inside a macro, so it can't be copied";
+  Labels L;
+  L.TraverseStmt(const_cast<ForStmt *>(LI.Loop));
+  if (L.Found)
+    return "its body has a label, which a copy would define twice";
+  // Only the original text is copied: nothing inside may be rewritten.
+  SourceRange Range = LI.Loop->getSourceRange();
+  for (SourceRange R : AnnotatedRanges)
+    if (contains(SM, Range, R.getBegin()))
+      return "a loop inside it already has a pragma";
+  return "";
+}
+
+bool OmpRewriter::insertBranch(const LoopInfo &LI, const std::string &Check,
+                               const std::string &Pragma) {
+  const SourceManager &SM = Rewrite.getSourceMgr();
+  const LangOptions &LO = Rewrite.getLangOpts();
+  SourceLocation Begin = LI.Loop->getBeginLoc();
+  SourceLocation End = afterStmt(LI.Loop, SM, LO);
+  // The original text, before this pass changes anything in it.
+  bool Invalid = false;
+  llvm::StringRef Orig = Lexer::getSourceText(
+      CharSourceRange::getTokenRange(Begin, End), SM, LO, &Invalid);
+  if (Invalid || Orig.empty()) {
+    Summary.Skipped.push_back("line " + std::to_string(LI.Line) +
+                              ": loop text could not be read, declined");
+    return false;
+  }
+  unsigned Col = SM.getPresumedColumnNumber(Begin);
+  std::string Indent(Col > 0 ? Col - 1 : 0, ' ');
+  // Braced as a whole: the result is one statement wherever the loop was
+  // (an unbraced `if (c) for ...; else ...` keeps its else).
+  std::string Open = "{ if (" + Check + ") {\n" + Indent + Pragma + "\n" + Indent;
+  std::string Close = "\n" + Indent + "} else {\n" + Indent +
+                      (ElsePragma.empty() ? "" : ElsePragma + "\n" + Indent) +
+                      Orig.str() + "\n" + Indent + "} }";
+  if (Rewrite.InsertTextBefore(Begin, Open) ||
+      Rewrite.InsertTextAfterToken(End, Close)) {
+    Summary.Skipped.push_back("line " + std::to_string(LI.Line) +
+                              ": source location was not rewritable, "
+                              "declined (output may be incomplete)");
+    return false;
+  }
+  return true;
+}
 
 void OmpRewriter::emitRegions(const std::vector<DataRegion> &Regions) {
   const SourceManager &SM = Rewrite.getSourceMgr();
@@ -468,6 +585,8 @@ void printRewriteReport(llvm::raw_ostream &OS, const RewriteSummary &S) {
     OS << "  line " << Site.Line << ": " << Site.Pragma << "\n";
   for (const std::string &D : S.DataRegions)
     OS << "  data region " << D << "\n";
+  for (const std::string &B : S.Branches)
+    OS << "  branch " << B << "\n";
   for (const FunctionDecl *FD : S.DeclareTargets)
     OS << "  declare target: " << FD->getNameAsString() << "\n";
   for (const std::string &Reason : S.Skipped)

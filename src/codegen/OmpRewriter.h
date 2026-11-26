@@ -181,6 +181,10 @@ struct RewriteSummary {
 
   /// Phase 2.2: "line N: #pragma omp target data ..." and its updates.
   std::vector<std::string> DataRegions;
+
+  /// Phase 3.2: "line N: if (check) the GPU loop, else the original loop"
+  /// (ProfitabilityVerdict::AliasBranch).
+  std::vector<std::string> Branches;
 };
 
 /// Applies ProfitabilityVerdicts to a Rewriter. One instance per translation
@@ -232,7 +236,17 @@ private:
   /// and returns false. Does not touch AnnotatedRanges or Summary.Sites —
   /// the caller does that on success, since the GPU path has more to do
   /// afterward (collectDeclareTargets) before the site is fully recorded.
-  bool insertPragma(const LoopInfo &LI, const std::string &Pragma);
+  /// Check (Phase 3.2): `{ if (*Check) { Pragma loop } else { loop } }`.
+  bool insertPragma(const LoopInfo &LI, const std::string &Pragma,
+                    const std::string *Check = nullptr);
+
+  /// Phase 3.2: why LI can't become `if (check) <GPU loop> else <copy>`
+  /// (empty: it can), and the rewrite itself.
+  std::string branchBlocker(const LoopInfo &LI) const;
+  bool insertBranch(const LoopInfo &LI, const std::string &Check,
+                    const std::string &Pragma);
+  /// The else branch's pragma for the loop being branched (may be empty).
+  std::string ElsePragma;
 
   void collectDeclareTargets(const LoopInfo &LI);
 };

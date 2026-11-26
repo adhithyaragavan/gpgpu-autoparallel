@@ -85,7 +85,7 @@ void perfect3(double *a, int n) {
 // --- Imperfect nest ---------------------------------------------------------
 void imperfect(double *a, double *rowsum, int n) {
   // depth 0, 1 child, NOT perfect: a statement sits beside the inner loop
-  // CHECK: nests.c:[[#LOOP5:@LINE+13]]:3{{$}}
+  // CHECK: nests.c:[[#LOOP5:@LINE+16]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 1 child loop(s){{$}}
@@ -97,7 +97,10 @@ void imperfect(double *a, double *rowsum, int n) {
   // CHECK: deps       : 2 pair(s), 2 independent (2 SIV){{$}}
   // CHECK: alias      : 'rowsum' and 'a' may overlap: checked at run time{{$}}
   // CHECK: alias guard: ((__INTPTR_TYPE__)rowsum + 8 * (((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)a + 8 * ((0) * (__INTPTR_TYPE__)n + 0) || (__INTPTR_TYPE__)a + 8 * ((((__INTPTR_TYPE__)n - 1)) * (__INTPTR_TYPE__)n + ((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)rowsum + 0){{$}}
-  // CHECK: profitability : CPU_PARALLEL if ((double)(n) * (3 * (double)(n)) >= {{[0-9]+}}){{$}}
+  // CHECK: profitability : GPU_OFFLOAD if ((double)(n) * ((3 * (double)(n)) - {{[0-9]+}}) >= {{[0-9]+}}){{$}}
+  // CHECK: - data/iteration: 16 B across 2 region(s): rowsum (map(from: rowsum[0:n]), 8 B/elem), a (map(tofrom: a[0:((((__INTPTR_TYPE__)n - 1)) * (__INTPTR_TYPE__)n + ((__INTPTR_TYPE__)n - 1)) + 1]), 8 B/elem){{$}}
+  // CHECK: - map guard: n >= 1{{$}}
+  // CHECK: - GPU behind the run-time overlap check: if (check) the GPU loop, else the original loop{{$}}
   for (int i = 0; i < n; i++) {
     rowsum[i] = 0.0;
     // depth 1, parent = outer. ivs: i, j
@@ -212,7 +215,7 @@ void triangular_start(double *a, int n) {
 // --- Sibling inner loops ----------------------------------------------------
 void siblings(double *a, double *b, int n) {
   // depth 0, 2 children, NOT perfect (two statements in the body)
-  // CHECK: nests.c:[[#LOOP13:@LINE+13]]:3{{$}}
+  // CHECK: nests.c:[[#LOOP13:@LINE+16]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 2 child loop(s){{$}}
@@ -224,7 +227,10 @@ void siblings(double *a, double *b, int n) {
   // CHECK: deps       : 2 pair(s), 2 independent (2 SIV){{$}}
   // CHECK: alias      : 'a' and 'b' may overlap: checked at run time{{$}}
   // CHECK: alias guard: ((__INTPTR_TYPE__)a + 8 * ((((__INTPTR_TYPE__)n - 1)) * (__INTPTR_TYPE__)n + ((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)b + 8 * ((0) * (__INTPTR_TYPE__)n + 0) || (__INTPTR_TYPE__)b + 8 * ((((__INTPTR_TYPE__)n - 1)) * (__INTPTR_TYPE__)n + ((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)a + 8 * ((0) * (__INTPTR_TYPE__)n + 0)){{$}}
-  // CHECK: profitability : CPU_PARALLEL if ((double)(n) * (6 * (double)(n)) >= {{[0-9]+}}){{$}}
+  // CHECK: profitability : GPU_OFFLOAD if ((double)(n) * ((6 * (double)(n)) - {{[0-9]+}}) >= {{[0-9]+}}){{$}}
+  // CHECK: - data/iteration: 16 B across 2 region(s): a (map(tofrom: a[0:((((__INTPTR_TYPE__)n - 1)) * (__INTPTR_TYPE__)n + ((__INTPTR_TYPE__)n - 1)) + 1]), 8 B/elem), b (map(tofrom: b[0:((((__INTPTR_TYPE__)n - 1)) * (__INTPTR_TYPE__)n + ((__INTPTR_TYPE__)n - 1)) + 1]), 8 B/elem){{$}}
+  // CHECK: - map guard: n >= 1{{$}}
+  // CHECK: - GPU behind the run-time overlap check: if (check) the GPU loop, else the original loop{{$}}
   for (int i = 0; i < n; i++) {
     // depth 1, parent = outer
     // CHECK: nests.c:[[#LOOP14:@LINE+10]]:5{{$}}

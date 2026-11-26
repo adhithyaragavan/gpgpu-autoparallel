@@ -407,7 +407,7 @@ void s_addr_private(long *a, const long *b, int n) {
   // CHECK: alias      : 'b' and 'a' may overlap: checked at run time{{$}}
   // CHECK: alias guard: ((__INTPTR_TYPE__)b + 8 * (((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)a + 0 || (__INTPTR_TYPE__)a + 8 * (((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)b + 0){{$}}
   // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
-  // CHECK: - GPU offload declined: pointer disjointness is only checked at run time -> CPU_PARALLEL, guarded by the check{{$}}
+  // CHECK: - GPU offload declined: no map() section: 't' is a pointer set inside the loop -> CPU_PARALLEL, which needs no map{{$}}
   for (int i = 0; i < n; i++) {
     long t = 0;
     bump(&t, b[i]);

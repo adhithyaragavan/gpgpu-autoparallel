@@ -63,6 +63,8 @@ enum class MapMode { Ranges, Bound };
 MapMode mapModeFromFlags();
 /// Phase 3: price inner loops of unknown trip count by their ranges.
 bool symbolicTripsFromFlags();
+/// Phase 3.2: -gpu-alias-checks (defined in Profitability.cpp).
+bool gpuAliasChecksFromFlags();
 
 /// One array or pointer the loop touches, with everything codegen needs to
 /// emit a map clause for it.
@@ -139,6 +141,11 @@ struct RegionPlan {
   /// Every declaration the sections and MapGuard name (bases included):
   /// what must stay unchanged for them to mean the same thing elsewhere.
   std::vector<const clang::ValueDecl *> Names;
+  /// Phase 3.2: one test per pair of sections that may overlap (bases not
+  /// proven apart statically), each true when the two are apart. The map()
+  /// clauses are only valid when all hold: the GPU loop runs behind them
+  /// (ProfitabilityVerdict::BranchCheck), and never in a target data region.
+  std::vector<std::string> SectionApart;
 };
 
 /// Phase 2.2: one section covering every section in Regs (all of one base,

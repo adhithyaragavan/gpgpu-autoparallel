@@ -579,7 +579,9 @@ void generic(long *restrict a, const long *restrict b, int n) {
 
 // SAFE, but a and b are only read and may overlap (b == a + 1 below):
 // two overlapping sections can't both be mapped, and `restrict` doesn't
-// keep read-only pointers apart. No GPU offload.
+// keep read-only pointers apart. No GPU offload, except (Phase 3.2) behind a
+// run-time test that the two sections are apart: `if (test) <GPU loop> else
+// <original loop>` (here under -policy naive; gated picks the host).
 void read_pair(long *restrict c, const long *restrict a,
                const long *restrict b, int n) {
   // CHECK: maps.c:[[#LOOP29:@LINE+15]]:3{{$}}

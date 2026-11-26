@@ -15,7 +15,7 @@
 // Outer i: SAFE (rows distinct, delinearized [i][j] vs [j][i] on different
 // arrays; only b is written). Inner j: SAFE.
 void transpose(double *b, const double *a, int n) {
-  // CHECK: dependence.c:[[#LOOP0:@LINE+14]]:3{{$}}
+  // CHECK: dependence.c:[[#LOOP0:@LINE+17]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 1 child loop(s), perfect nest{{$}}
@@ -28,7 +28,10 @@ void transpose(double *b, const double *a, int n) {
   // CHECK: alias      : 'b' and 'a' may overlap: checked at run time{{$}}
   // CHECK: alias guard: ((__INTPTR_TYPE__)b + 8 * ((((__INTPTR_TYPE__)n - 1)) * (__INTPTR_TYPE__)n + ((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)a + 8 * ((0) * (__INTPTR_TYPE__)n + 0) || (__INTPTR_TYPE__)a + 8 * ((((__INTPTR_TYPE__)n - 1)) * (__INTPTR_TYPE__)n + ((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)b + 8 * ((0) * (__INTPTR_TYPE__)n + 0)){{$}}
   // CHECK: collapse   : no, the inner loop needs its own run-time alias check{{$}}
-  // CHECK: profitability : CPU_PARALLEL if ((double)(n) * (5 * (double)(n)) >= {{[0-9]+}}){{$}}
+  // CHECK: profitability : GPU_OFFLOAD if ((double)(n) * ((5 * (double)(n)) - {{[0-9]+}}) >= {{[0-9]+}}){{$}}
+  // CHECK: - data/iteration: 16 B across 2 region(s): b (map(tofrom: b[0:((((__INTPTR_TYPE__)n - 1)) * (__INTPTR_TYPE__)n + ((__INTPTR_TYPE__)n - 1)) + 1]), 8 B/elem), a (map(to: a[0:((((__INTPTR_TYPE__)n - 1)) * (__INTPTR_TYPE__)n + ((__INTPTR_TYPE__)n - 1)) + 1]), 8 B/elem){{$}}
+  // CHECK: - map guard: n >= 1{{$}}
+  // CHECK: - GPU behind the run-time overlap check: if (check) the GPU loop, else the original loop{{$}}
   for (int i = 0; i < n; i++)
     // CHECK: dependence.c:[[#LOOP1:@LINE+13]]:5{{$}}
     // CHECK: kind       : VARIABLE_BOUND{{$}}
@@ -50,7 +53,7 @@ void transpose(double *b, const double *a, int n) {
 // Outer i: SAFE. The scalar acc is declared inside the outer body, so it is
 // private per i. Inner j: UNSAFE (acc += ... is a reduction, Phase 1.4).
 void matvec(double *y, const double *m, const double *x, int n) {
-  // CHECK: dependence.c:[[#LOOP2:@LINE+15]]:3{{$}}
+  // CHECK: dependence.c:[[#LOOP2:@LINE+18]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 1 child loop(s){{$}}
@@ -64,7 +67,10 @@ void matvec(double *y, const double *m, const double *x, int n) {
   // CHECK: alias      : 'm' and 'y' may overlap: checked at run time{{$}}
   // CHECK: alias      : 'x' and 'y' may overlap: checked at run time{{$}}
   // CHECK: alias guard: ((__INTPTR_TYPE__)m + 8 * ((((__INTPTR_TYPE__)n - 1)) * (__INTPTR_TYPE__)n + ((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)y + 0 || (__INTPTR_TYPE__)y + 8 * (((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)m + 8 * ((0) * (__INTPTR_TYPE__)n + 0)) && ((__INTPTR_TYPE__)x + 8 * (((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)y + 0 || (__INTPTR_TYPE__)y + 8 * (((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)x + 0){{$}}
-  // CHECK: profitability : CPU_PARALLEL if ((double)(n) * (5 * (double)(n)) >= {{[0-9]+}}){{$}}
+  // CHECK: profitability : GPU_OFFLOAD if ((double)(n) * ((5 * (double)(n)) - {{[0-9]+}}) >= {{[0-9]+}}){{$}}
+  // CHECK: - data/iteration: 24 B across 3 region(s): m (map(to: m[0:((((__INTPTR_TYPE__)n - 1)) * (__INTPTR_TYPE__)n + ((__INTPTR_TYPE__)n - 1)) + 1]), 8 B/elem), x (map(to: x[0:n]), 8 B/elem), y (map(from: y[0:n]), 8 B/elem){{$}}
+  // CHECK: - map guard: n >= 1{{$}}
+  // CHECK: - GPU behind the run-time overlap check: if (check) the GPU loop, else the original loop{{$}}
   for (int i = 0; i < n; i++) {
     double acc = 0.0;
     // CHECK: dependence.c:[[#LOOP3:@LINE+12]]:5{{$}}
@@ -223,7 +229,7 @@ void column_prefix(double *a, int n) {
 
 // Three dimensions, all loops SAFE.
 void scale3(double *c, const double *a, int n) {
-  // CHECK: dependence.c:[[#LOOP12:@LINE+14]]:3{{$}}
+  // CHECK: dependence.c:[[#LOOP12:@LINE+17]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 1 child loop(s), perfect nest{{$}}
@@ -236,9 +242,12 @@ void scale3(double *c, const double *a, int n) {
   // CHECK: alias      : 'c' and 'a' may overlap: checked at run time{{$}}
   // CHECK: alias guard: ((__INTPTR_TYPE__)c + 8 * (((((__INTPTR_TYPE__)n - 1)) * (__INTPTR_TYPE__)n + ((__INTPTR_TYPE__)n - 1)) * (__INTPTR_TYPE__)n + ((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)a + 8 * (((0) * (__INTPTR_TYPE__)n + 0) * (__INTPTR_TYPE__)n + 0) || (__INTPTR_TYPE__)a + 8 * (((((__INTPTR_TYPE__)n - 1)) * (__INTPTR_TYPE__)n + ((__INTPTR_TYPE__)n - 1)) * (__INTPTR_TYPE__)n + ((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)c + 8 * (((0) * (__INTPTR_TYPE__)n + 0) * (__INTPTR_TYPE__)n + 0)){{$}}
   // CHECK: collapse   : no, the inner loop needs its own run-time alias check{{$}}
-  // CHECK: profitability : CPU_PARALLEL if ((double)(n) * (1 * (double)(n) + 12 * (double)(n) * (double)(n)) >= {{[0-9]+}}){{$}}
+  // CHECK: profitability : GPU_OFFLOAD if ((double)(n) * ((1 * (double)(n) + 12 * (double)(n) * (double)(n)) - {{[0-9]+}}) >= {{[0-9]+}}){{$}}
+  // CHECK: - data/iteration: 16 B across 2 region(s): c (map(tofrom: c[0:(((((__INTPTR_TYPE__)n - 1)) * (__INTPTR_TYPE__)n + ((__INTPTR_TYPE__)n - 1)) * (__INTPTR_TYPE__)n + ((__INTPTR_TYPE__)n - 1)) + 1]), 8 B/elem), a (map(to: a[0:(((((__INTPTR_TYPE__)n - 1)) * (__INTPTR_TYPE__)n + ((__INTPTR_TYPE__)n - 1)) * (__INTPTR_TYPE__)n + ((__INTPTR_TYPE__)n - 1)) + 1]), 8 B/elem){{$}}
+  // CHECK: - map guard: n >= 1{{$}}
+  // CHECK: - GPU behind the run-time overlap check: if (check) the GPU loop, else the original loop{{$}}
   for (int i = 0; i < n; i++)
-    // CHECK: dependence.c:[[#LOOP13:@LINE+14]]:5{{$}}
+    // CHECK: dependence.c:[[#LOOP13:@LINE+17]]:5{{$}}
     // CHECK: kind       : VARIABLE_BOUND{{$}}
     // CHECK: trip count : <not statically known>{{$}}
     // CHECK: nest       : depth 1, parent [[#LOOP12]]:3, 1 child loop(s), perfect nest{{$}}
@@ -251,7 +260,10 @@ void scale3(double *c, const double *a, int n) {
     // CHECK: alias      : 'c' and 'a' may overlap: checked at run time{{$}}
     // CHECK: alias guard: ((__INTPTR_TYPE__)c + 8 * ((((__INTPTR_TYPE__)i) * (__INTPTR_TYPE__)n + ((__INTPTR_TYPE__)n - 1)) * (__INTPTR_TYPE__)n + ((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)a + 8 * ((((__INTPTR_TYPE__)i) * (__INTPTR_TYPE__)n + 0) * (__INTPTR_TYPE__)n + 0) || (__INTPTR_TYPE__)a + 8 * ((((__INTPTR_TYPE__)i) * (__INTPTR_TYPE__)n + ((__INTPTR_TYPE__)n - 1)) * (__INTPTR_TYPE__)n + ((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)c + 8 * ((((__INTPTR_TYPE__)i) * (__INTPTR_TYPE__)n + 0) * (__INTPTR_TYPE__)n + 0)){{$}}
     // CHECK: collapse   : no, the inner loop needs its own run-time alias check{{$}}
-    // CHECK: profitability : CPU_PARALLEL if ((double)(n) * (12 * (double)(n)) >= {{[0-9]+}}){{$}}
+    // CHECK: profitability : GPU_OFFLOAD if ((double)(n) * ((12 * (double)(n)) - {{[0-9]+}}) >= {{[0-9]+}}){{$}}
+    // CHECK: - data/iteration: 16 B across 2 region(s): c (map(tofrom: c[(((__INTPTR_TYPE__)i) * (__INTPTR_TYPE__)n) * (__INTPTR_TYPE__)n:((((__INTPTR_TYPE__)i) * (__INTPTR_TYPE__)n + ((__INTPTR_TYPE__)n - 1)) * (__INTPTR_TYPE__)n + ((__INTPTR_TYPE__)n - 1)) - ((((__INTPTR_TYPE__)i) * (__INTPTR_TYPE__)n) * (__INTPTR_TYPE__)n) + 1]), 8 B/elem), a (map(to: a[(((__INTPTR_TYPE__)i) * (__INTPTR_TYPE__)n) * (__INTPTR_TYPE__)n:((((__INTPTR_TYPE__)i) * (__INTPTR_TYPE__)n + ((__INTPTR_TYPE__)n - 1)) * (__INTPTR_TYPE__)n + ((__INTPTR_TYPE__)n - 1)) - ((((__INTPTR_TYPE__)i) * (__INTPTR_TYPE__)n) * (__INTPTR_TYPE__)n) + 1]), 8 B/elem){{$}}
+    // CHECK: - map guard: (((__INTPTR_TYPE__)i) * (__INTPTR_TYPE__)n) * (__INTPTR_TYPE__)n >= 0 && n >= 1{{$}}
+    // CHECK: - GPU behind the run-time overlap check: if (check) the GPU loop, else the original loop{{$}}
     for (int j = 0; j < n; j++)
       // CHECK: dependence.c:[[#LOOP14:@LINE+13]]:7{{$}}
       // CHECK: kind       : VARIABLE_BOUND{{$}}

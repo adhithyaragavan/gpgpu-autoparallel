@@ -946,13 +946,42 @@ RegionPlan RegionPlanner::plan(const LoopInfo &LI, const LoopAccesses &A,
   // refuses to extend a mapping. A pair with a write was proven apart by
   // Phase 1.6 (GPU needs a static proof); a read-only pair was never asked,
   // and `restrict` doesn't keep two read-only pointers apart.
+  // Phase 3.2 (-gpu-alias-checks): such a pair, and a written pair Phase 1.6
+  // only checks at run time, gets a test that the two sections are apart
+  // (SectionApart), which the GPU loop runs behind.
+  const bool Checks = gpuAliasChecksFromFlags();
+  auto Apart = [](const ArrayRegion &X, const ArrayRegion &Y) {
+    auto Lo = [](const ArrayRegion &R) {
+      return "(__INTPTR_TYPE__)" + R.Base->getNameAsString() + " + " +
+             std::to_string(R.ElemBytes) + " * (__INTPTR_TYPE__)(" +
+             R.StartText + ")";
+    };
+    auto Hi = [&](const ArrayRegion &R) {
+      return Lo(R) + " + " + std::to_string(R.ElemBytes) +
+             " * (__INTPTR_TYPE__)(" + R.LenText + ")";
+    };
+    return "(" + Hi(X) + " <= " + Lo(Y) + " || " + Hi(Y) + " <= " + Lo(X) +
+           ")";
+  };
   if (Alias)
     for (size_t I = 0; I < Plan.Regions.size(); ++I)
       for (size_t J = I + 1; J < Plan.Regions.size(); ++J) {
         const ArrayRegion &X = Plan.Regions[I], &Y = Plan.Regions[J];
-        if (X.Written || Y.Written)
+        if (X.Written || Y.Written) {
+          // Known gap (review, also before Phase 3.2): `restrict` keeps apart
+          // what is accessed, not the sections' hulls: `a[2*i] = b[2*i+1]`
+          // called with a == b is legal and maps two overlapping sections.
+          // Not tested here, since that would keep every restrict loop out
+          // of target data regions; see NOTES.md 2026-11-26.
+          if (Checks && Alias->proof(F, X.Base, Y.Base) == AliasProof::Unproven)
+            Plan.SectionApart.push_back(Apart(X, Y));
           continue;
+        }
         const AliasProof P = Alias->proof(F, X.Base, Y.Base);
+        if (Checks && (P == AliasProof::Unproven || P == AliasProof::Restrict)) {
+          Plan.SectionApart.push_back(Apart(X, Y));
+          continue;
+        }
         if (P == AliasProof::Unproven || P == AliasProof::Restrict) {
           Fail("'" + X.Base->getNameAsString() + "' and '" +
                Y.Base->getNameAsString() +

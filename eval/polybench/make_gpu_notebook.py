@@ -112,9 +112,10 @@ Runs on **Colab** or **Kaggle** (it works in `/content` or `/kaggle/working`, wh
   the browser closed, and the CSV appears under the version's **Output**.
 
 Installing the NVIDIA HPC SDK takes about 10 minutes; the benchmark run takes longer (30
-kernels, 5 variants, 3 runs each at the LARGE size).
+kernels, 6 variants, 3 runs each at the LARGE size).
 
-Variants per kernel: `seq` (nvc -O3, no OpenMP), `p05` (P05's own choices with the T4
+Variants per kernel: `seq` (nvc -O3, no OpenMP), `seq-mp` (the same source with the OpenMP
+flags: what `-mp=gpu` alone does), `p05` (P05's own choices with the T4
 machine model: GPU, host threads or sequential per loop), `p05-naive` (every loop P05 can
 offload goes to the GPU), and both again as `-warm` (the device started before `main`, so
 the timed kernel doesn't pay the ~0.16 s start-up). Correctness: exact hex dumps against
@@ -174,7 +175,7 @@ t = {(r['kernel'], r['variant']): float(r['time_s']) for r in rows if r['status'
 bad = [(r['kernel'], r['variant'], r['status'], r['correct']) for r in rows
        if r['status'] != 'ok' or r['correct'] not in ('', 'exact', 'tolerance')]
 print('not ok / not correct:', bad or 'none')
-for v in ('p05', 'p05-naive', 'p05-warm', 'p05-naive-warm'):
+for v in ('seq-mp', 'p05', 'p05-naive', 'p05-warm', 'p05-naive-warm'):
     xs = [t[(k, 'seq')] / t[(k, v)] for (k, vv) in t if vv == v and (k, 'seq') in t]
     if xs:
         print(f"{v:15} geomean speedup over seq {math.exp(sum(map(math.log, xs)) / len(xs)):.2f} ({len(xs)} kernels)")

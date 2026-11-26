@@ -36,7 +36,7 @@ void s_temp(long *b, const long *a, int n) {
 // PolyBench style: counters declared at the top. Outer loop SAFE, private(j).
 void s_polybench(long *b, const long *a, int n) {
   int i, j;
-  // CHECK: scalars.c:[[#LOOP1:@LINE+15]]:3{{$}}
+  // CHECK: scalars.c:[[#LOOP1:@LINE+18]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 1 child loop(s), perfect nest{{$}}
@@ -50,7 +50,10 @@ void s_polybench(long *b, const long *a, int n) {
   // CHECK: alias      : 'b' and 'a' may overlap: checked at run time{{$}}
   // CHECK: alias guard: ((__INTPTR_TYPE__)b + 8 * ((((__INTPTR_TYPE__)n - 1)) * (__INTPTR_TYPE__)n + ((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)a + 8 * ((0) * (__INTPTR_TYPE__)n + 0) || (__INTPTR_TYPE__)a + 8 * ((((__INTPTR_TYPE__)n - 1)) * (__INTPTR_TYPE__)n + ((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)b + 8 * ((0) * (__INTPTR_TYPE__)n + 0)){{$}}
   // CHECK: collapse   : no, the inner loop needs its own run-time alias check{{$}}
-  // CHECK: profitability : CPU_PARALLEL if ((double)(n) * (6 * (double)(n)) >= {{[0-9]+}}){{$}}
+  // CHECK: profitability : GPU_OFFLOAD if ((double)(n) * ((6 * (double)(n)) - {{[0-9]+}}) >= {{[0-9]+}}){{$}}
+  // CHECK: - data/iteration: 16 B across 2 region(s): b (map(tofrom: b[0:((((__INTPTR_TYPE__)n - 1)) * (__INTPTR_TYPE__)n + ((__INTPTR_TYPE__)n - 1)) + 1]), 8 B/elem), a (map(to: a[0:((((__INTPTR_TYPE__)n - 1)) * (__INTPTR_TYPE__)n + ((__INTPTR_TYPE__)n - 1)) + 1]), 8 B/elem){{$}}
+  // CHECK: - map guard: n >= 1{{$}}
+  // CHECK: - GPU behind the run-time overlap check: if (check) the GPU loop, else the original loop{{$}}
   for (i = 0; i < n; i++)
     // CHECK: scalars.c:[[#LOOP2:@LINE+13]]:5{{$}}
     // CHECK: kind       : VARIABLE_BOUND{{$}}

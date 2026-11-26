@@ -163,6 +163,7 @@ enum class Policy {
 /// byte-identical to yesterday's tool.
 Policy policyFromFlags();
 
+
 /// Command-line category owning both the tool's own options and the machine
 /// model overrides. It lives here rather than in main.cpp because the options
 /// it owns do; the driver only needs it to hand to CommonOptionsParser, which
@@ -272,8 +273,15 @@ struct ProfitabilityVerdict {
 
   /// Phase 1.6: run-time no-overlap checks the loop's safety depends on
   /// (LoopSafety::AliasGuard). Conjoined into every parallel pragma's if(),
-  /// under every policy; a loop that has one is never GPU-offloaded.
+  /// under every policy; a loop that has one is never GPU-offloaded, except
+  /// as below.
   std::string AliasGuard;
+  /// Phase 3.2: a GPU loop with an AliasGuard: the rewriter emits
+  /// `if (AliasGuard) { <GPU loop> } else { <original loop> }`
+  /// (-gpu-alias-checks).
+  bool AliasBranch = false;
+  /// The branch's condition: AliasGuard && RegionPlan::SectionApart.
+  std::string BranchCheck;
 
   /// Phase 2.1: run-time conditions the map() sections need (RegionPlan::
   /// MapGuard), conjoined into the GPU pragma's if(target:) under every

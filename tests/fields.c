@@ -183,7 +183,7 @@ void f_types(struct vecs *s, int n) {
 // A double field read next to a double array: checked at run time; the
 // int field s->n beside an int-free loop needs nothing.
 void f_scalar(struct vecs *s, double *x, int n) {
-  // CHECK: fields.c:[[#LOOP7:@LINE+15]]:3{{$}}
+  // CHECK: fields.c:[[#LOOP7:@LINE+18]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 0 child loop(s){{$}}
@@ -197,7 +197,10 @@ void f_scalar(struct vecs *s, double *x, int n) {
   // CHECK: deps       : 3 pair(s), 3 independent (2 SIV, 1 type){{$}}
   // CHECK: alias      : 'x' and 's' may overlap: checked at run time{{$}}
   // CHECK: alias guard: ((__INTPTR_TYPE__)x + 8 * (((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)s + 0 || (__INTPTR_TYPE__)s + 40 <= (__INTPTR_TYPE__)x + 0){{$}}
-  // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
+  // CHECK: profitability : GPU_OFFLOAD if (n >= {{[0-9]+}}){{$}}
+  // CHECK: - data/iteration: 56 B across 2 region(s): x (map(tofrom: x[0:n]), 8 B/elem), s (map(to: s[0:1]), 40 B/elem){{$}}
+  // CHECK: - map guard: n >= 1{{$}}
+  // CHECK: - GPU behind the run-time overlap check: if (check) the GPU loop, else the original loop{{$}}
   for (int i = 0; i < n; i++)
     x[i] = s->scale * x[i] + s->n;
 }

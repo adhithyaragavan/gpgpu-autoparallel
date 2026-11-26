@@ -36,7 +36,7 @@ void rt_shift(long *a, const long *b, int n) {
 
 // SAFE, checked at run time, rows: a[i*m + j] vs b[i*m + j].
 void rt_rows(long *a, const long *b, int n, int m) {
-  // CHECK: alias.c:[[#LOOP1:@LINE+14]]:3{{$}}
+  // CHECK: alias.c:[[#LOOP1:@LINE+17]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 1 child loop(s), perfect nest{{$}}
@@ -49,7 +49,10 @@ void rt_rows(long *a, const long *b, int n, int m) {
   // CHECK: alias      : 'a' and 'b' may overlap: checked at run time{{$}}
   // CHECK: alias guard: ((__INTPTR_TYPE__)a + 8 * ((((__INTPTR_TYPE__)n - 1)) * (__INTPTR_TYPE__)m + ((__INTPTR_TYPE__)m - 1) + 1) <= (__INTPTR_TYPE__)b + 8 * ((0) * (__INTPTR_TYPE__)m + 0) || (__INTPTR_TYPE__)b + 8 * ((((__INTPTR_TYPE__)n - 1)) * (__INTPTR_TYPE__)m + ((__INTPTR_TYPE__)m - 1) + 1) <= (__INTPTR_TYPE__)a + 8 * ((0) * (__INTPTR_TYPE__)m + 0)){{$}}
   // CHECK: collapse   : no, the inner loop needs its own run-time alias check{{$}}
-  // CHECK: profitability : CPU_PARALLEL if ((double)(n) * (6 * (double)(m)) >= {{[0-9]+}}){{$}}
+  // CHECK: profitability : GPU_OFFLOAD if ((double)(n) * ((6 * (double)(m)) - {{[0-9]+}}) >= {{[0-9]+}}){{$}}
+  // CHECK: - data/iteration: 16 B across 2 region(s): a (map(tofrom: a[0:((((__INTPTR_TYPE__)n - 1)) * (__INTPTR_TYPE__)m + ((__INTPTR_TYPE__)m - 1)) + 1]), 8 B/elem), b (map(to: b[0:((((__INTPTR_TYPE__)n - 1)) * (__INTPTR_TYPE__)m + ((__INTPTR_TYPE__)m - 1)) + 1]), 8 B/elem){{$}}
+  // CHECK: - map guard: n >= 1 && m >= 1{{$}}
+  // CHECK: - GPU behind the run-time overlap check: if (check) the GPU loop, else the original loop{{$}}
   for (int i = 0; i < n; i++)
     // CHECK: alias.c:[[#LOOP2:@LINE+13]]:5{{$}}
     // CHECK: kind       : VARIABLE_BOUND{{$}}
@@ -196,7 +199,7 @@ void rt_callers(long *a, int n) {
 // Checked at run time: j's range depends on i (j < i), so b's touched range
 // is bounded through i's: j <= n - 2 (Phase 2.5 -tri-ranges; UNKNOWN before).
 void k_prefix(long *a, const long *b, int n) {
-  // CHECK: alias.c:[[#LOOP9:@LINE+13]]:3{{$}}
+  // CHECK: alias.c:[[#LOOP9:@LINE+14]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 1 child loop(s){{$}}
@@ -209,6 +212,7 @@ void k_prefix(long *a, const long *b, int n) {
   // CHECK: alias      : 'b' and 'a' may overlap: checked at run time{{$}}
   // CHECK: alias guard: ((__INTPTR_TYPE__)b + 8 * (((__INTPTR_TYPE__)n - 2) + 1) <= (__INTPTR_TYPE__)a + 0 || (__INTPTR_TYPE__)a + 8 * (((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)b + 0){{$}}
   // CHECK: profitability : CPU_PARALLEL if ((double)(n) * (2 * (double)(((__INTPTR_TYPE__)n - 1))) >= {{[0-9]+}}){{$}}
+  // CHECK: - GPU offload declined: no map() section: can't map 'b': no access to it runs on every iteration, so the ends of its range aren't surely touched -> CPU_PARALLEL, which needs no map{{$}}
   for (int i = 0; i < n; i++) {
     long s = 0;
     // CHECK: alias.c:[[#LOOP10:@LINE+11]]:5{{$}}

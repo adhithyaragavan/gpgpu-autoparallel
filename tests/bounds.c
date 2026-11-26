@@ -365,7 +365,7 @@ static void sz_tri(int n, double A[NR][NR], const double x[NR]) {
   // CHECK: collapse   : no, the inner loop needs its own run-time alias check{{$}}
   // CHECK: profitability : CPU_PARALLEL if (n >= {{[0-9]+}}){{$}}
   for (int i = 0; i < n; i++)
-    // CHECK: bounds.c:[[#LOOP16:@LINE+14]]:5{{$}}
+    // CHECK: bounds.c:[[#LOOP16:@LINE+17]]:5{{$}}
     // CHECK: kind       : VARIABLE_BOUND{{$}}
     // CHECK: trip count : <not statically known>{{$}}
     // CHECK: nest       : depth 1, parent [[#LOOP15]]:3, 0 child loop(s), triangular{{$}}
@@ -378,7 +378,10 @@ static void sz_tri(int n, double A[NR][NR], const double x[NR]) {
     // CHECK: deps       : 2 pair(s), 2 independent (2 SIV){{$}}
     // CHECK: alias      : 'A' and 'x' may overlap: checked at run time{{$}}
     // CHECK: alias guard: ((__INTPTR_TYPE__)A + 8 * (((__INTPTR_TYPE__)i) * 32 + (__INTPTR_TYPE__)i + 1) <= (__INTPTR_TYPE__)x + 0 || (__INTPTR_TYPE__)x + 8 * ((__INTPTR_TYPE__)i + 1) <= (__INTPTR_TYPE__)A + 8 * (((__INTPTR_TYPE__)i) * 32 + 0)){{$}}
-    // CHECK: profitability : CPU_PARALLEL if (i >= {{[0-9]+}}){{$}}
+    // CHECK: profitability : GPU_OFFLOAD if (i >= {{[0-9]+}}){{$}}
+    // CHECK: - data/iteration: 24 B across 2 region(s): A (map(tofrom: A[i:1][0:32]), 256 B/elem), x (map(to: x[0:((__INTPTR_TYPE__)i + 1)]), 8 B/elem){{$}}
+    // CHECK: - map guard: i >= 0{{$}}
+    // CHECK: - GPU behind the run-time overlap check: if (check) the GPU loop, else the original loop{{$}}
     for (int j = 0; j <= i; j++)
       A[i][j] = A[i][j] * x[j];
 }
@@ -408,7 +411,7 @@ void sz_tri_extern(int n, double A[NR][NR], const double x[NR]) {
   // CHECK: deps       : 2 pair(s), 2 independent (2 SIV){{$}}
   // CHECK: profitability : SEQUENTIAL{{$}}
   for (int i = 0; i < n; i++)
-    // CHECK: bounds.c:[[#LOOP18:@LINE+14]]:5{{$}}
+    // CHECK: bounds.c:[[#LOOP18:@LINE+17]]:5{{$}}
     // CHECK: kind       : VARIABLE_BOUND{{$}}
     // CHECK: trip count : <not statically known>{{$}}
     // CHECK: nest       : depth 1, parent [[#LOOP17]]:3, 0 child loop(s), triangular{{$}}
@@ -421,7 +424,10 @@ void sz_tri_extern(int n, double A[NR][NR], const double x[NR]) {
     // CHECK: deps       : 2 pair(s), 2 independent (2 SIV){{$}}
     // CHECK: alias      : 'A' and 'x' may overlap: checked at run time{{$}}
     // CHECK: alias guard: ((__INTPTR_TYPE__)A + 8 * (((__INTPTR_TYPE__)i) * 32 + (__INTPTR_TYPE__)i + 1) <= (__INTPTR_TYPE__)x + 0 || (__INTPTR_TYPE__)x + 8 * ((__INTPTR_TYPE__)i + 1) <= (__INTPTR_TYPE__)A + 8 * (((__INTPTR_TYPE__)i) * 32 + 0)){{$}}
-    // CHECK: profitability : CPU_PARALLEL if (i >= {{[0-9]+}}){{$}}
+    // CHECK: profitability : GPU_OFFLOAD if (i >= {{[0-9]+}}){{$}}
+    // CHECK: - data/iteration: 24 B across 2 region(s): A (map(tofrom: A[i:1][0:32]), 256 B/elem), x (map(to: x[0:((__INTPTR_TYPE__)i + 1)]), 8 B/elem){{$}}
+    // CHECK: - map guard: i >= 0{{$}}
+    // CHECK: - GPU behind the run-time overlap check: if (check) the GPU loop, else the original loop{{$}}
     for (int j = 0; j <= i; j++)
       A[i][j] = A[i][j] * x[j];
 }

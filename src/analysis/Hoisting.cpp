@@ -475,7 +475,7 @@ struct HoistPlanner::Impl {
       GpuAble[K] = Ok && V[K].Evaluated && V[K].RangeMaps &&
                    S.Verdict == SafetyVerdict::Safe && Plans[K] &&
                    Plans[K]->Mappable && S.CalleesMappable &&
-                   S.AliasGuard.empty();
+                   S.AliasGuard.empty() && Plans[K]->SectionApart.empty();
     }
     // A target construct may not run inside another construct
     // (declineNestedConstructs): no loop goes to the GPU here that calls a
@@ -864,6 +864,13 @@ struct HoistPlanner::Impl {
                                "): not hoisted: " + Why);
       return false;
     };
+    // Phase 3.2: its GPU branch would find the region's device copies, and
+    // the updates around it as host code would overwrite what it wrote.
+    for (int K : Members)
+      if (V[K].Target == OffloadTarget::GpuOffload && V[K].AliasBranch &&
+          !AncestorInR(K, [&](int A) { return Emitted[A]; }))
+        return Fail("line " + std::to_string(P.Loops[K].Line) +
+                    " offloads behind a run-time overlap check");
 
     // Mapped bases; then every other loop that touches them and can go to
     // the GPU joins (a host loop on resident data would read stale values).

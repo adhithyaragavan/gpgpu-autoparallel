@@ -14,7 +14,7 @@
 
 // syrk's shape: j <= i, so b is read in [0, n - 1].
 void s_lower(long *a, const long *b, int n) {
-  // CHECK: ranges.c:[[#LOOP0:@LINE+13]]:3{{$}}
+  // CHECK: ranges.c:[[#LOOP0:@LINE+14]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 1 child loop(s){{$}}
@@ -27,6 +27,7 @@ void s_lower(long *a, const long *b, int n) {
   // CHECK: alias      : 'b' and 'a' may overlap: checked at run time{{$}}
   // CHECK: alias guard: ((__INTPTR_TYPE__)b + 8 * (((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)a + 0 || (__INTPTR_TYPE__)a + 8 * (((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)b + 0){{$}}
   // CHECK: profitability : CPU_PARALLEL if ((double)(n) * (2 * (double)(n)) >= {{[0-9]+}}){{$}}
+  // CHECK: - GPU offload declined: no map() section: can't map 'b': no access to it runs on every iteration, so the ends of its range aren't surely touched -> CPU_PARALLEL, which needs no map{{$}}
   for (int i = 0; i < n; i++) {
     long s = 0;
     // CHECK: ranges.c:[[#LOOP1:@LINE+11]]:5{{$}}
@@ -48,7 +49,7 @@ void s_lower(long *a, const long *b, int n) {
 
 // covariance's shape: j starts at i, so b is read in [0, n - 1].
 void s_upper(long *a, const long *b, int n) {
-  // CHECK: ranges.c:[[#LOOP2:@LINE+13]]:3{{$}}
+  // CHECK: ranges.c:[[#LOOP2:@LINE+14]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 1 child loop(s){{$}}
@@ -61,6 +62,7 @@ void s_upper(long *a, const long *b, int n) {
   // CHECK: alias      : 'b' and 'a' may overlap: checked at run time{{$}}
   // CHECK: alias guard: ((__INTPTR_TYPE__)b + 8 * (((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)a + 0 || (__INTPTR_TYPE__)a + 8 * (((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)b + 0){{$}}
   // CHECK: profitability : CPU_PARALLEL if ((double)(n) * (2 * (double)(n)) >= {{[0-9]+}}){{$}}
+  // CHECK: - GPU offload declined: no map() section: can't map 'b': no access to it runs on every iteration, so the ends of its range aren't surely touched -> CPU_PARALLEL, which needs no map{{$}}
   for (int i = 0; i < n; i++) {
     long s = 0;
     // CHECK: ranges.c:[[#LOOP3:@LINE+11]]:5{{$}}
@@ -82,7 +84,7 @@ void s_upper(long *a, const long *b, int n) {
 
 // Two levels: k starts at j, which runs to i: k in [0, n - 1].
 void s_chain(long *a, const long *b, int n) {
-  // CHECK: ranges.c:[[#LOOP4:@LINE+13]]:3{{$}}
+  // CHECK: ranges.c:[[#LOOP4:@LINE+14]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 1 child loop(s){{$}}
@@ -95,6 +97,7 @@ void s_chain(long *a, const long *b, int n) {
   // CHECK: alias      : 'b' and 'a' may overlap: checked at run time{{$}}
   // CHECK: alias guard: ((__INTPTR_TYPE__)b + 8 * (((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)a + 0 || (__INTPTR_TYPE__)a + 8 * (((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)b + 0){{$}}
   // CHECK: profitability : CPU_PARALLEL if ((double)(n) * (1 * (double)(n) + 3 * (double)(n) * (double)(n)) >= {{[0-9]+}}){{$}}
+  // CHECK: - GPU offload declined: no map() section: can't map 'b': no access to it runs on every iteration, so the ends of its range aren't surely touched -> CPU_PARALLEL, which needs no map{{$}}
   for (int i = 0; i < n; i++) {
     long s = 0;
     // CHECK: ranges.c:[[#LOOP5:@LINE+13]]:5{{$}}
@@ -130,7 +133,7 @@ void s_chain(long *a, const long *b, int n) {
 
 // Rows: c[i][j] += x[j][k] over j <= i, as in syrk.
 void s_rows(int n, int m, long c[][16], const long x[][16]) {
-  // CHECK: ranges.c:[[#LOOP7:@LINE+14]]:3{{$}}
+  // CHECK: ranges.c:[[#LOOP7:@LINE+15]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 1 child loop(s), perfect nest{{$}}
@@ -144,8 +147,9 @@ void s_rows(int n, int m, long c[][16], const long x[][16]) {
   // CHECK: alias guard: ((__INTPTR_TYPE__)c + 8 * ((((__INTPTR_TYPE__)n - 1)) * 16 + ((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)x + 8 * ((0) * 16 + 0) || (__INTPTR_TYPE__)x + 8 * ((((__INTPTR_TYPE__)n - 1)) * 16 + ((__INTPTR_TYPE__)m - 1) + 1) <= (__INTPTR_TYPE__)c + 8 * ((0) * 16 + 0)){{$}}
   // CHECK: collapse   : no, the inner loop needs its own run-time alias check{{$}}
   // CHECK: profitability : CPU_PARALLEL if ((double)(n) * (2 * (double)(m) * (double)(n) + 1 * (double)(n)) >= {{[0-9]+}}){{$}}
+  // CHECK: - GPU offload declined: no map() section: can't map 'x': no access to it runs on every iteration, so the ends of its range aren't surely touched -> CPU_PARALLEL, which needs no map{{$}}
   for (int i = 0; i < n; i++)
-    // CHECK: ranges.c:[[#LOOP8:@LINE+14]]:5{{$}}
+    // CHECK: ranges.c:[[#LOOP8:@LINE+17]]:5{{$}}
     // CHECK: kind       : VARIABLE_BOUND{{$}}
     // CHECK: trip count : <not statically known>{{$}}
     // CHECK: nest       : depth 1, parent [[#LOOP7]]:3, 1 child loop(s), perfect nest, triangular{{$}}
@@ -158,7 +162,10 @@ void s_rows(int n, int m, long c[][16], const long x[][16]) {
     // CHECK: alias      : 'c' and 'x' may overlap: checked at run time{{$}}
     // CHECK: alias guard: ((__INTPTR_TYPE__)c + 8 * (((__INTPTR_TYPE__)i) * 16 + (__INTPTR_TYPE__)i + 1) <= (__INTPTR_TYPE__)x + 8 * ((0) * 16 + 0) || (__INTPTR_TYPE__)x + 8 * (((__INTPTR_TYPE__)i) * 16 + ((__INTPTR_TYPE__)m - 1) + 1) <= (__INTPTR_TYPE__)c + 8 * (((__INTPTR_TYPE__)i) * 16 + 0)){{$}}
     // CHECK: collapse   : no, the inner loop is not SAFE on its own{{$}}
-    // CHECK: profitability : CPU_PARALLEL if ((double)(i) * (2 * (double)(m)) >= {{[0-9]+}}){{$}}
+    // CHECK: profitability : GPU_OFFLOAD if ((double)(i) * ((2 * (double)(m)) - {{[0-9]+}}) >= {{[0-9]+}}){{$}}
+    // CHECK: - data/iteration: 144 B across 2 region(s): c (map(tofrom: c[i:1][0:16]), 128 B/elem), x (map(to: x[0:((__INTPTR_TYPE__)i + 1)][0:16]), 128 B/elem){{$}}
+    // CHECK: - map guard: i >= 0 && m >= 1{{$}}
+    // CHECK: - GPU behind the run-time overlap check: if (check) the GPU loop, else the original loop{{$}}
     for (int j = 0; j <= i; j++)
       // CHECK: ranges.c:[[#LOOP9:@LINE+14]]:7{{$}}
       // CHECK: kind       : VARIABLE_BOUND{{$}}
@@ -182,7 +189,7 @@ void s_rows(int n, int m, long c[][16], const long x[][16]) {
 // the same range.
 void s_siblings(long p[][64], long v[][64], const long *u, int n) {
   int i, j;
-  // CHECK: ranges.c:[[#LOOP10:@LINE+22]]:3{{$}}
+  // CHECK: ranges.c:[[#LOOP10:@LINE+23]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 2 child loop(s){{$}}
@@ -204,6 +211,7 @@ void s_siblings(long p[][64], long v[][64], const long *u, int n) {
   // CHECK: alias      : 'u' and 'v' may overlap: checked at run time{{$}}
   // CHECK: alias guard: ((__INTPTR_TYPE__)p + ((8 * ((((__INTPTR_TYPE__)n - 2)) * 64 + 0 + 1) > 8 * ((((__INTPTR_TYPE__)n - 2)) * 64 + ((__INTPTR_TYPE__)n - 2) + 1) ? 8 * ((((__INTPTR_TYPE__)n - 2)) * 64 + 0 + 1) : 8 * ((((__INTPTR_TYPE__)n - 2)) * 64 + ((__INTPTR_TYPE__)n - 2) + 1)) > 8 * ((((__INTPTR_TYPE__)n - 2)) * 64 + ((__INTPTR_TYPE__)n - 3) + 1) ? (8 * ((((__INTPTR_TYPE__)n - 2)) * 64 + 0 + 1) > 8 * ((((__INTPTR_TYPE__)n - 2)) * 64 + ((__INTPTR_TYPE__)n - 2) + 1) ? 8 * ((((__INTPTR_TYPE__)n - 2)) * 64 + 0 + 1) : 8 * ((((__INTPTR_TYPE__)n - 2)) * 64 + ((__INTPTR_TYPE__)n - 2) + 1)) : 8 * ((((__INTPTR_TYPE__)n - 2)) * 64 + ((__INTPTR_TYPE__)n - 3) + 1)) <= (__INTPTR_TYPE__)u + 8 || (__INTPTR_TYPE__)u + 8 * (((__INTPTR_TYPE__)n - 2) + 1) <= (__INTPTR_TYPE__)p + (8 * ((1) * 64 + 0) < 8 * ((1) * 64 + 1) ? 8 * ((1) * 64 + 0) : 8 * ((1) * 64 + 1))) && ((__INTPTR_TYPE__)p + ((8 * ((((__INTPTR_TYPE__)n - 2)) * 64 + 0 + 1) > 8 * ((((__INTPTR_TYPE__)n - 2)) * 64 + ((__INTPTR_TYPE__)n - 2) + 1) ? 8 * ((((__INTPTR_TYPE__)n - 2)) * 64 + 0 + 1) : 8 * ((((__INTPTR_TYPE__)n - 2)) * 64 + ((__INTPTR_TYPE__)n - 2) + 1)) > 8 * ((((__INTPTR_TYPE__)n - 2)) * 64 + ((__INTPTR_TYPE__)n - 3) + 1) ? (8 * ((((__INTPTR_TYPE__)n - 2)) * 64 + 0 + 1) > 8 * ((((__INTPTR_TYPE__)n - 2)) * 64 + ((__INTPTR_TYPE__)n - 2) + 1) ? 8 * ((((__INTPTR_TYPE__)n - 2)) * 64 + 0 + 1) : 8 * ((((__INTPTR_TYPE__)n - 2)) * 64 + ((__INTPTR_TYPE__)n - 2) + 1)) : 8 * ((((__INTPTR_TYPE__)n - 2)) * 64 + ((__INTPTR_TYPE__)n - 3) + 1)) <= (__INTPTR_TYPE__)v + ((8 * ((((__INTPTR_TYPE__)n - 1)) * 64 + 1) < 8 * ((1) * 64 + 1) ? 8 * ((((__INTPTR_TYPE__)n - 1)) * 64 + 1) : 8 * ((1) * 64 + 1)) < 8 * ((2) * 64 + 1) ? (8 * ((((__INTPTR_TYPE__)n - 1)) * 64 + 1) < 8 * ((1) * 64 + 1) ? 8 * ((((__INTPTR_TYPE__)n - 1)) * 64 + 1) : 8 * ((1) * 64 + 1)) : 8 * ((2) * 64 + 1)) || (__INTPTR_TYPE__)v + (8 * ((((__INTPTR_TYPE__)n - 1)) * 64 + ((__INTPTR_TYPE__)n - 2) + 1) > 8 * ((((__INTPTR_TYPE__)n - 2)) * 64 + ((__INTPTR_TYPE__)n - 2) + 1) ? 8 * ((((__INTPTR_TYPE__)n - 1)) * 64 + ((__INTPTR_TYPE__)n - 2) + 1) : 8 * ((((__INTPTR_TYPE__)n - 2)) * 64 + ((__INTPTR_TYPE__)n - 2) + 1)) <= (__INTPTR_TYPE__)p + (8 * ((1) * 64 + 0) < 8 * ((1) * 64 + 1) ? 8 * ((1) * 64 + 0) : 8 * ((1) * 64 + 1))) && ((__INTPTR_TYPE__)u + 8 * (((__INTPTR_TYPE__)n - 2) + 1) <= (__INTPTR_TYPE__)v + ((8 * ((((__INTPTR_TYPE__)n - 1)) * 64 + 1) < 8 * ((1) * 64 + 1) ? 8 * ((((__INTPTR_TYPE__)n - 1)) * 64 + 1) : 8 * ((1) * 64 + 1)) < 8 * ((2) * 64 + 1) ? (8 * ((((__INTPTR_TYPE__)n - 1)) * 64 + 1) < 8 * ((1) * 64 + 1) ? 8 * ((((__INTPTR_TYPE__)n - 1)) * 64 + 1) : 8 * ((1) * 64 + 1)) : 8 * ((2) * 64 + 1)) || (__INTPTR_TYPE__)v + (8 * ((((__INTPTR_TYPE__)n - 1)) * 64 + ((__INTPTR_TYPE__)n - 2) + 1) > 8 * ((((__INTPTR_TYPE__)n - 2)) * 64 + ((__INTPTR_TYPE__)n - 2) + 1) ? 8 * ((((__INTPTR_TYPE__)n - 1)) * 64 + ((__INTPTR_TYPE__)n - 2) + 1) : 8 * ((((__INTPTR_TYPE__)n - 2)) * 64 + ((__INTPTR_TYPE__)n - 2) + 1)) <= (__INTPTR_TYPE__)u + 8){{$}}
   // CHECK: profitability : CPU_PARALLEL if ((double)(n - 1) * (2 + 7 * (double)(((__INTPTR_TYPE__)n - 2))) >= {{[0-9]+}}){{$}}
+  // CHECK: - GPU offload declined: no map() section: can't map 'u': no access to it runs on every iteration, so the ends of its range aren't surely touched -> CPU_PARALLEL, which needs no map{{$}}
   for (i = 1; i < n - 1; i++) {
     p[i][0] = 0;
     // CHECK: ranges.c:[[#LOOP11:@LINE+15]]:5{{$}}
@@ -247,7 +255,7 @@ void s_siblings(long p[][64], long v[][64], const long *u, int n) {
 // Sibling ranges a constant apart: j in [0, n - 1] and [1, n], span [0, n].
 void s_offset(long *a, const long *b, int n) {
   int i, j;
-  // CHECK: ranges.c:[[#LOOP13:@LINE+15]]:3{{$}}
+  // CHECK: ranges.c:[[#LOOP13:@LINE+16]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 2 child loop(s){{$}}
@@ -262,6 +270,7 @@ void s_offset(long *a, const long *b, int n) {
   // CHECK: alias      : 'b' and 'a' may overlap: checked at run time{{$}}
   // CHECK: alias guard: ((__INTPTR_TYPE__)b + 8 * ((__INTPTR_TYPE__)n + 1) <= (__INTPTR_TYPE__)a + 0 || (__INTPTR_TYPE__)a + 8 * (((__INTPTR_TYPE__)n - 1) + 1) <= (__INTPTR_TYPE__)b + 0){{$}}
   // CHECK: profitability : CPU_PARALLEL if ((double)(n) * (4 * (double)(((__INTPTR_TYPE__)n + 1))) >= {{[0-9]+}}){{$}}
+  // CHECK: - GPU offload declined: no map() section: can't map 'b': no access to it runs on every iteration, so the ends of its range aren't surely touched -> CPU_PARALLEL, which needs no map{{$}}
   for (i = 0; i < n; i++) {
     long s = 0;
     // CHECK: ranges.c:[[#LOOP14:@LINE+11]]:5{{$}}
@@ -424,7 +433,7 @@ void s_tri_write(int n) {
 // The same through a pointer: now mappable, and the section is the widened
 // range, so `from` would copy back the unwritten upper triangle.
 void s_tri_ptr(long (*o)[64], int n) {
-  // CHECK: ranges.c:[[#LOOP23:@LINE+11]]:3{{$}}
+  // CHECK: ranges.c:[[#LOOP23:@LINE+12]]:3{{$}}
   // CHECK: kind       : VARIABLE_BOUND{{$}}
   // CHECK: trip count : <not statically known>{{$}}
   // CHECK: nest       : depth 0, 1 child loop(s), perfect nest{{$}}
@@ -435,6 +444,7 @@ void s_tri_ptr(long (*o)[64], int n) {
   // CHECK: deps       : 1 pair(s), 1 independent (1 SIV){{$}}
   // CHECK: collapse   : no, the inner loop's range is not a fixed, exact rectangle{{$}}
   // CHECK: profitability : CPU_PARALLEL if ((double)(n) * (2 * (double)(n)) >= {{[0-9]+}}){{$}}
+  // CHECK: - GPU offload declined: no map() section: can't test before the loop that the loop over 'j' runs -> CPU_PARALLEL, which needs no map{{$}}
   for (int i = 0; i < n; i++)
     // CHECK: ranges.c:[[#LOOP24:@LINE+10]]:5{{$}}
     // CHECK: kind       : VARIABLE_BOUND{{$}}

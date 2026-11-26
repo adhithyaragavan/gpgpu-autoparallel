@@ -11,7 +11,7 @@ OFF: safety     : UNSAFE
 
 # 2. -ipa=coarse composes no callee: a loop with a call keeps no path.
 RUN: %p05 -ipa=coarse %S/fields.c -- %cflags | FileCheck --check-prefix=COARSE %s
-COARSE-LABEL: fields.c:224:3
+COARSE-LABEL: fields.c:227:3
 COARSE: R s->b[i] : non-affine: base is a pointer loaded from memory ('s->b'), which the loop may change: a call's writes are not known (-ipa=coarse){{$}}
 
 # 3. No map() section for a path: the GPU is declined (-policy naive), also

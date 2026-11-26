@@ -1,0 +1,37 @@
+# Phase 3.2 rewrites (tests/branch.c pins the gated defaults, where these
+# streaming loops stay on the host).
+#
+# Naive: each loop (but the restrict pair at line 68, proven apart) is `{ if (check) { GPU } else { original } }`; the else
+# keeps the CPU pragma with its own overlap check.
+RUN: %p05 %S/branch.c -policy naive -rewrite -o %t.c -- %cflags | FileCheck --check-prefix=NAIVE %s
+NAIVE: branch line 31: if ({{.*}}) the GPU loop, else the original loop with #pragma omp parallel for if(parallel:
+NAIVE: branch line 50: if (
+NAIVE-NOT: branch line 68:
+NAIVE: branch line 90: if (
+NAIVE: branch line 147: if (
+NAIVE: skipped: line 125: GPU loop behind a run-time overlap check, but its body has a label, which a copy would define twice, degraded to the guarded CPU pragma
+RUN: FileCheck --check-prefix=CODE %s < %t.c
+CODE-LABEL: void b_add3(
+CODE: { if (
+CODE-NEXT: #pragma omp target teams distribute parallel for if(target: n >= 1) map(from: c[0:n]) map(to: a[0:n]) map(to: b[0:n])
+CODE-NEXT: for (int i = 0; i < n; i++)
+CODE-NEXT: c[i] = a[i] + b[i] * 3.0;
+CODE-NEXT: } else {
+CODE-NEXT: #pragma omp parallel for if(parallel:
+CODE-NEXT: for (int i = 0; i < n; i++)
+CODE-NEXT: c[i] = a[i] + b[i] * 3.0;
+CODE-NEXT: } }
+CODE-LABEL: void b_label(
+CODE: #pragma omp parallel for if(parallel:
+
+# Off: no branches; such loops stay on the host (the ablation baseline).
+RUN: %p05 %S/branch.c -policy naive -gpu-alias-checks=off -rewrite -o %t.off.c -- %cflags | FileCheck --check-prefix=OFF %s
+OFF-NOT: branch line
+OFF: GPU offload declined: pointer disjointness is only checked at run time
+OFF-NOT: branch line
+
+# -maps=bound: no sections to test, so no branch (review: base[0:n] maps of
+# b == a + 1 aborted).
+RUN: %p05 %S/branch.c -policy naive -maps=bound -rewrite -o %t.bound.c -- %cflags | FileCheck --check-prefix=BOUND %s
+BOUND-NOT: branch line
+BOUND-NOT: GPU behind

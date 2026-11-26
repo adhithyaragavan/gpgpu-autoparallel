@@ -17,9 +17,9 @@ MAPS: safety     : UNKNOWN
 #    sz_tri's A has no extent; sz_tri_gpu's A maps by its extent.
 MAPS-LABEL: bounds.c:367:3
 MAPS: A (map(tofrom: A[0:n][0:32]), 256 B/elem), x (map(to: x[0:32]), 8 B/elem)
-MAPS-LABEL: bounds.c:447:3
+MAPS-LABEL: bounds.c:453:3
 MAPS: A (map(tofrom: A[0:(((((__INTPTR_TYPE__)n - 1) > 31 ? 31 : ((__INTPTR_TYPE__)n - 1))) + 1 > 0 ? ((((__INTPTR_TYPE__)n - 1) > 31 ? 31 : ((__INTPTR_TYPE__)n - 1))) + 1 : 0)][0:32]), 256 B/elem), x (map(to: x[0:32]), 8 B/elem)
-MAPS-LABEL: bounds.c:484:3
+MAPS-LABEL: bounds.c:490:3
 MAPS: o_tab (map(to: o_tab[0:262144]), 8 B/elem)
 
 # 2. -value-bounds=off: the value-bounded loops are UNKNOWN again, the
@@ -46,18 +46,18 @@ NOSIZE: safety     : UNKNOWN
 
 # 4. Calls that pass arrays of different sizes give no extent: no section.
 RUN: %p05 -tri-ranges=off -policy naive %S/bounds.c -- %cflags | FileCheck --check-prefix=SIZES %s
-SIZES-LABEL: bounds.c:505:3
+SIZES-LABEL: bounds.c:511:3
 SIZES: GPU offload declined: no map() section: q[idx[i]] is non-affine
 
 # 5. Review 2026-10-20: a row, a struct member, or an extent an affine access
 #    contradicts gives no bound: the gathers stay UNKNOWN.
 RUN: %p05 -tri-ranges=off %S/bounds.c -- %cflags | FileCheck --check-prefix=SUBOBJ %s
-SUBOBJ-LABEL: bounds.c:535:3
+SUBOBJ-LABEL: bounds.c:541:3
 SUBOBJ: R b[idx[i]] : non-affine: subscript reads memory ('idx[i]'){{$}}
 SUBOBJ: safety     : UNKNOWN
-SUBOBJ-LABEL: bounds.c:559:3
+SUBOBJ-LABEL: bounds.c:565:3
 SUBOBJ: R d[idx[i]] : non-affine: subscript reads memory ('idx[i]'){{$}}
 SUBOBJ: safety     : UNKNOWN
-SUBOBJ-LABEL: bounds.c:585:3
+SUBOBJ-LABEL: bounds.c:591:3
 SUBOBJ: R p[idx[i]] : non-affine: subscript reads memory ('idx[i]'){{$}}
 SUBOBJ: safety     : UNKNOWN

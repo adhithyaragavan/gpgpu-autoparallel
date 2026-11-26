@@ -12,6 +12,8 @@ development machine with -machine machine/colab-t4.json:
 
 Per kernel (LARGE_DATASET, -O3):
   seq          the original, no OpenMP
+  seq-mp       the original with the OpenMP flags (no pragmas): what -mp=gpu
+               alone does to the host code and its floating point
   p05          gated rewrite, OpenMP offload
   p05-naive    naive rewrite
   p05-warm, p05-naive-warm
@@ -39,7 +41,8 @@ import sys
 
 FIELDS = ["kernel", "variant", "threads", "status", "time_s", "times", "correct",
           "max_rel_err", "gpu_launches", "target_pragmas", "cpu_pragmas", "detail"]
-VARIANTS = [("seq", "orig", False, False), ("p05", "gated", True, False),
+VARIANTS = [("seq", "orig", False, False), ("seq-mp", "orig", True, False),
+            ("p05", "gated", True, False),
             ("p05-naive", "naive", True, False), ("p05-warm", "gated", True, True),
             ("p05-naive-warm", "naive", True, True)]
 WARM_C = """#include <omp.h>
