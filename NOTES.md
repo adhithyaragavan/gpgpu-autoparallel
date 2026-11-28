@@ -3915,3 +3915,23 @@ within 1e-9.
   first run (no branch), and the M4/clang run was exact. Suspected: nvc contracts FMAs
   differently in the outlined parallel loop, amplified by LU without pivoting. Unverified; next
   run adds a `-Mnofma` check.
+
+## 2026-11-28 — Phase 3.2 fix: the target's guard goes in the branch test; no-FMA check
+
+- **Branch test carries the whole target condition.** For an AliasBranch loop the rewrite is now
+  `{ if ((GuardExpr) && MapGuard && overlap checks) { GPU pragma, no if() } else { [CPU pragma]
+  original } }`. Before, the guards stayed in `if(target:)`, and a false one ran the teams region
+  on the host once per execution of the loop (gemm's inner `j` loop: 1.2M times, 0.10x). The
+  cost guard goes first, so the overlap checks are skipped when it fails (they have no side
+  effects). No new flag: only branch sites change; HEAD vs new over tests, benchmarks and the 30
+  PolyBench kernels (gated/naive x `-gpu-alias-checks` on/off, 256 runs): only the 59 runs with
+  branches differ, `=off` byte-identical. `tests/branch.test` pins the gated form (GATED/GCODE).
+  Review: no bugs (precedence, scope, side effects, else branch, hoisting all checked).
+- **Still open, same cause:** a plain GPU pragma with a false `if(target:)` (no branch) also runs
+  host teams, e.g. gemm's `C *= beta` loop (1000 times). nvc runs that fallback multithreaded, so
+  outer loops behave like the CPU pragma; inner loops pay per execution. Candidate: the same
+  `if (guard) { GPU } else { CPU }` form for every guarded GPU loop.
+- **ludcmp check:** gpu_run.py gains `seq-nofma` / `p05-nofma` (ludcmp and lu; `-Mnofma` for
+  nvc, `-ffp-contract=off` otherwise), p05-nofma checked against seq-nofma. Host code only
+  (device FMA is `-gpu=nofma`), enough while gated ludcmp/lu launch no kernels. Docker host
+  offload: all 32 runtime checks and the PolyBench MINI smoke (incl. the nofma variants) clean.

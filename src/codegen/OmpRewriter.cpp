@@ -220,17 +220,35 @@ void OmpRewriter::rewriteLoop(const LoopInfo &LI,
              ", degraded to the guarded CPU pragma");
         return;
       }
-      std::string Pragma = buildGpuPragma(V);
+      // The branch test carries the target's whole condition: the cost
+      // guard (cheapest, first), the map guard, then the overlap checks.
+      // Left in if(target:), a false guard still runs teams on the host,
+      // once per execution of the loop (gemm's inner loop on the T4: 1.2M
+      // times, 10x slower than sequential), where the else branch runs
+      // the host threads or the plain loop.
+      ProfitabilityVerdict G = V;
+      std::string Test;
+      auto conj = [&Test](const std::string &C) {
+        Test += Test.empty() ? C : " && " + C;
+      };
+      if (G.GuardExpr)
+        conj("(" + *G.GuardExpr + ")");
+      if (!G.MapGuard.empty())
+        conj(G.MapGuard);
+      conj(V.BranchCheck);
+      G.GuardExpr.reset();
+      G.MapGuard.clear();
+      std::string Pragma = buildGpuPragma(G);
       // The else branch keeps the host threads: its accesses are still
       // checked apart by the CPU pragma's own AliasGuard.
       ElsePragma = V.CpuBeatsSeq ? buildCpuPragma(V) : "";
-      if (!insertPragma(LI, Pragma, &V.BranchCheck))
+      if (!insertPragma(LI, Pragma, &Test))
         return;
       AnnotatedRanges.push_back(LI.Loop->getSourceRange());
       Summary.Sites.push_back(
           RewriteSite{LI.Loop, Pragma, LI.Line, OffloadTarget::GpuOffload});
       Summary.Branches.push_back(
-          "line " + std::to_string(LI.Line) + ": if (" + V.BranchCheck +
+          "line " + std::to_string(LI.Line) + ": if (" + Test +
           ") the GPU loop, else the original loop" +
           (ElsePragma.empty() ? "" : " with " + ElsePragma));
       collectDeclareTargets(LI);

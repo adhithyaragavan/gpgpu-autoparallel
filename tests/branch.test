@@ -2,7 +2,8 @@
 # streaming loops stay on the host).
 #
 # Naive: each loop (but the restrict pair at line 68, proven apart) is `{ if (check) { GPU } else { original } }`; the else
-# keeps the CPU pragma with its own overlap check.
+# keeps the CPU pragma with its own overlap check. The map guard (n >= 1)
+# is in the test, so the GPU pragma has no if().
 RUN: %p05 %S/branch.c -policy naive -rewrite -o %t.c -- %cflags | FileCheck --check-prefix=NAIVE %s
 NAIVE: branch line 31: if ({{.*}}) the GPU loop, else the original loop with #pragma omp parallel for if(parallel:
 NAIVE: branch line 50: if (
@@ -12,8 +13,8 @@ NAIVE: branch line 147: if (
 NAIVE: skipped: line 125: GPU loop behind a run-time overlap check, but its body has a label, which a copy would define twice, degraded to the guarded CPU pragma
 RUN: FileCheck --check-prefix=CODE %s < %t.c
 CODE-LABEL: void b_add3(
-CODE: { if (
-CODE-NEXT: #pragma omp target teams distribute parallel for if(target: n >= 1) map(from: c[0:n]) map(to: a[0:n]) map(to: b[0:n])
+CODE: { if (n >= 1 && ((__INTPTR_TYPE__)c
+CODE-NEXT: #pragma omp target teams distribute parallel for map(from: c[0:n]) map(to: a[0:n]) map(to: b[0:n]){{$}}
 CODE-NEXT: for (int i = 0; i < n; i++)
 CODE-NEXT: c[i] = a[i] + b[i] * 3.0;
 CODE-NEXT: } else {
@@ -23,6 +24,19 @@ CODE-NEXT: c[i] = a[i] + b[i] * 3.0;
 CODE-NEXT: } }
 CODE-LABEL: void b_label(
 CODE: #pragma omp parallel for if(parallel:
+
+# Gated, with a device where these loops pay off from a size on: the cost
+# guard goes in the branch test (first), not in if(target:), so a false guard
+# runs the else branch instead of host teams (gemm on the T4, NOTES.md
+# 2026-11-28).
+RUN: %p05 %S/branch.c -gpu-throughput=1000000 -gpu-bandwidth=1000000 -pcie-bandwidth=1000 -kernel-launch-us=200 -rewrite -o %t.gated.c -- %cflags | FileCheck --check-prefix=GATED %s
+GATED: branch line 31: if ((n >= {{[0-9]+}}) && n >= 1 && (
+RUN: FileCheck --check-prefix=GCODE %s < %t.gated.c
+GCODE-LABEL: void b_add3(
+GCODE: { if ((n >= {{[0-9]+}}) && n >= 1 && (
+GCODE-NEXT: #pragma omp target teams distribute parallel for map(from: c[0:n]) map(to: a[0:n]) map(to: b[0:n]){{$}}
+GCODE: } else {
+GCODE-NEXT: #pragma omp parallel for if(parallel: (n >= {{[0-9]+}}) && (
 
 # Off: no branches; such loops stay on the host (the ablation baseline).
 RUN: %p05 %S/branch.c -policy naive -gpu-alias-checks=off -rewrite -o %t.off.c -- %cflags | FileCheck --check-prefix=OFF %s
