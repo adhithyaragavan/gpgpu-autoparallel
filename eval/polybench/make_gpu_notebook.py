@@ -128,14 +128,15 @@ Runs on **Colab** or **Kaggle** (it works in `/content` or `/kaggle/working`, wh
   the browser closed, and the CSV appears under the version's **Output**.
 
 Installing the NVIDIA HPC SDK takes about 10 minutes; the benchmark run takes longer (30
-kernels, 6 variants, 3 runs each at the LARGE size, plus two no-FMA builds of ludcmp and lu).
+kernels, 6 variants, 3 runs each at the LARGE size, plus two strict-IEEE builds of ludcmp and lu).
 
 Variants per kernel: `seq` (nvc -O3, no OpenMP), `seq-mp` (the same source with the OpenMP
 flags: what `-mp=gpu` alone does), `p05` (P05's own choices with the T4
 machine model: GPU, host threads or sequential per loop), `p05-naive` (every loop P05 can
 offload goes to the GPU), and both again as `-warm` (the device started before `main`, so
-the timed kernel doesn't pay the ~0.16 s start-up). For ludcmp and lu, `seq-nofma` and
-`p05-nofma` are built with `-Mnofma` (no fused multiply-adds), checked against each other.
+the timed kernel doesn't pay the ~0.16 s start-up). For ludcmp and lu, `seq-ieee` and
+`p05-ieee` are built with `-Kieee -Mnofma` (correctly rounded division, no fused
+multiply-adds), checked against each other.
 Correctness: exact hex dumps against `seq`. `gpu_launches` counts kernel launches (0 = every guard chose the host).
 
 **When it finishes, download `polybench-t4.csv` (Colab: the last cell offers it; Kaggle: the
@@ -194,8 +195,8 @@ t = {(r['kernel'], r['variant']): float(r['time_s']) for r in rows if r['status'
 bad = [(r['kernel'], r['variant'], r['status'], r['correct']) for r in rows
        if r['status'] != 'ok' or r['correct'] not in ('', 'exact', 'tolerance')]
 print('not ok / not correct:', bad or 'none')
-for v in ('seq-mp', 'p05', 'p05-naive', 'p05-warm', 'p05-naive-warm', 'p05-nofma'):
-    s = 'seq-nofma' if v == 'p05-nofma' else 'seq'
+for v in ('seq-mp', 'p05', 'p05-naive', 'p05-warm', 'p05-naive-warm', 'p05-ieee'):
+    s = 'seq-ieee' if v == 'p05-ieee' else 'seq'
     xs = [t[(k, s)] / t[(k, v)] for (k, vv) in t if vv == v and (k, s) in t]
     if xs:
         print(f"{v:15} geomean speedup over {s} {math.exp(sum(map(math.log, xs)) / len(xs)):.2f} ({len(xs)} kernels)")

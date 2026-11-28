@@ -3957,3 +3957,31 @@ within 1e-9.
   outlined). Suspect: nvc's default `-Knoieee` (faster, not correctly rounded division in
   vectorized code) compiled differently in the outlined loop; the division feeds b, which LU
   without pivoting amplifies. Unverified; next check `-Kieee` builds.
+
+## 2026-11-28 — Phase 3.2: `-cpu-branches`, strict-IEEE check, Kaggle calibration
+
+User's choices after run 3 (1-3 of the proposal), and run 1 was Kaggle too (2 host threads then,
+4 in runs 2-3: the Kaggle host varies between sessions).
+
+- **`-cpu-branches` (default on; `=off` byte-identical to 50c545f, 256 runs).** A CPU_PARALLEL
+  loop with an if(parallel:) condition inside another loop (Depth > 0 or a repeating context)
+  becomes `{ if (cond) { parallel for, no if } else { original } }`: a false if(parallel:) still
+  enters a serialized region per execution (gemm's inner loop, 1.2M times, 0.41x in run 3). A GPU
+  loop behind the overlap check whose else would carry such a pragma becomes
+  `if (gpu test) { GPU } else if (cpu cond) { CPU } else { original }` (gemm:97). Outermost
+  loops keep if(parallel:) (one entry, no copy). LARGE rewrites (all 30 kernels, init
+  code included): 55 branches gated (2 three-way), 56 naive (10 three-way).
+- **Review (separate agent):** 4 real bugs, fixed. (1) inspector helpers (`p05_all_le_<T>`) are
+  found by scanning pragmas, and a guard in a plain if hid them: undeclared function. Branch texts
+  are scanned too (b_insp). (2) the fuzzer's oracle reads one pragma line per loop with its
+  condition: it runs `-cpu-branches=off` now. (3) item 4's checker only accepts inserted pragma
+  lines, so 12 kernels would silently drop out: also `-cpu-branches=off`. (4) older, now far more
+  exposed: a copy splits a conditional directive closed after the loop (`#ifdef` in the body,
+  `#endif` past it): `branchBlocker` declines any loop whose text has a directive line (b_ifdef).
+  Confirmed by the reviewer: lastprivate values agree between the copies; unbraced if/else and
+  enclosing for, macro bodies, nesting order, target updates (outside the whole branch).
+  `tests/branch.c` gains b_nest, b_insp, b_ifdef (+ runtime driver); lit 38/38; CPU runtime
+  suite, Docker offload suite (32) and the PolyBench MINI smoke clean; fuzzer 15 files clean.
+- **ludcmp:** the no-FMA variants became `seq-ieee` / `p05-ieee` (`-Kieee -Mnofma` for nvc).
+- **Calibration on Kaggle:** `eval/colab/calibrate.ipynb` runs on Colab or Kaggle and names the
+  file after the platform (`kaggle-t4.json`); it also prints lscpu's cores and threads.

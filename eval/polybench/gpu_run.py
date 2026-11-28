@@ -21,11 +21,12 @@ Per kernel (LARGE_DATASET, -O3):
                constructor in warm.c): the timed kernel no longer pays the
                device's start-up (about 0.16 s on the T4, NOTES 2026-10-16),
                which a long-running application pays once
-  seq-nofma, p05-nofma
-               seq and p05 built with --nofma-flag (no fused multiply-adds),
-               only for --nofma-kernels; p05-nofma is checked against
-               seq-nofma. Tells FMA contraction apart from a real ordering
-               change (ludcmp differs by 2.4e-9, NOTES 2026-11-28)
+  seq-ieee, p05-ieee
+               seq and p05 built with --ieee-flag (nvc: -Kieee -Mnofma,
+               correctly rounded division and no fused multiply-adds), only
+               for --ieee-kernels; p05-ieee is checked against seq-ieee. Tells
+               compiler floating point apart from a real ordering change
+               (ludcmp differs by 2.4e-9 even without FMA, NOTES 2026-11-28)
 Host threads: OMP_NUM_THREADS = --threads (Colab: 2 vCPUs).
 
 Correctness: a POLYBENCH_DUMP_ARRAYS build of each variant printing exact
@@ -46,12 +47,12 @@ import sys
 
 FIELDS = ["kernel", "variant", "threads", "status", "time_s", "times", "correct",
           "max_rel_err", "gpu_launches", "target_pragmas", "cpu_pragmas", "detail"]
-# name, source, OpenMP, warm-up constructor, no-FMA build
+# name, source, OpenMP, warm-up constructor, strict IEEE build
 VARIANTS = [("seq", "orig", False, False, False), ("seq-mp", "orig", True, False, False),
             ("p05", "gated", True, False, False),
             ("p05-naive", "naive", True, False, False), ("p05-warm", "gated", True, True, False),
             ("p05-naive-warm", "naive", True, True, False),
-            ("seq-nofma", "orig", False, False, True), ("p05-nofma", "gated", True, False, True)]
+            ("seq-ieee", "orig", False, False, True), ("p05-ieee", "gated", True, False, True)]
 WARM_C = """#include <omp.h>
 __attribute__((constructor)) static void p05_warm(void) {
   int x = 0;
@@ -130,7 +131,7 @@ class Bench:
                     open(os.path.join(d, f), "w").write(t)
         return d
 
-    def build(self, name, kpath, src, omp, warm, exact, nofma=False):
+    def build(self, name, kpath, src, omp, warm, exact, ieee=False):
         d = os.path.join(self.work, "bin", os.path.basename(os.path.dirname(kpath)))
         os.makedirs(d, exist_ok=True)
         exe = os.path.join(d, name + ("-dump" if exact else ""))
@@ -141,7 +142,7 @@ class Bench:
         defs = ["-D" + self.a.dataset,
                 "-DPOLYBENCH_DUMP_ARRAYS" if exact else "-DPOLYBENCH_TIME"]
         flags = (["-O3"] + (self.a.omp_flags.split() if omp else []) + self.extra
-                 + (self.a.nofma_flag.split() if nofma else []))
+                 + (self.a.ieee_flag.split() if ieee else []))
         cmd = ([self.a.cc] + flags + defs + ["-I", self.headers(kpath, exact), "-I",
                os.path.join(self.pb, "utilities"), copy,
                os.path.join(self.pb, "utilities", "polybench.c")]
@@ -181,15 +182,15 @@ def main():
     ap.add_argument("--timeout", type=int, default=600, help="seconds per run")
     ap.add_argument("--kernels", nargs="*")
     ap.add_argument("--variants", nargs="*")
-    ap.add_argument("--nofma-flag",
-                    help="no fused multiply-adds in host code (default: -Mnofma for "
-                         "nvc, else -ffp-contract=off); device code keeps its own, "
+    ap.add_argument("--ieee-flag",
+                    help="strict floating point in host code (default: -Kieee -Mnofma "
+                         "for nvc, else -ffp-contract=off); device code keeps its own, "
                          "which is fine while gated ludcmp/lu launch no kernels")
-    ap.add_argument("--nofma-kernels", nargs="*", default=["ludcmp", "lu"])
+    ap.add_argument("--ieee-kernels", nargs="*", default=["ludcmp", "lu"])
     args = ap.parse_args()
-    if args.nofma_flag is None:
-        args.nofma_flag = ("-Mnofma" if os.path.basename(args.cc).startswith("nvc")
-                           else "-ffp-contract=off")
+    if args.ieee_flag is None:
+        args.ieee_flag = ("-Kieee -Mnofma" if os.path.basename(args.cc).startswith("nvc")
+                          else "-ffp-contract=off")
     b = Bench(args)
 
     done, new = set(), True
@@ -208,11 +209,11 @@ def main():
         k = os.path.splitext(os.path.basename(kpath))[0]
         if args.kernels and k not in args.kernels:
             continue
-        ref = {}  # no-FMA build -> seq's dump
-        for name, source, omp, warm, nofma in VARIANTS:
-            if nofma and k not in args.nofma_kernels:
+        ref = {}  # strict build -> seq's dump
+        for name, source, omp, warm, ieee in VARIANTS:
+            if ieee and k not in args.ieee_kernels:
                 continue
-            base = "seq-nofma" if nofma else "seq"
+            base = "seq-ieee" if ieee else "seq"
             if args.variants and name not in args.variants and name != base:
                 continue
             if (k, name) in done and name != base:
@@ -224,7 +225,7 @@ def main():
                        target_pragmas=tp, cpu_pragmas=cp)
             # Correctness and GPU launches.
             check, err, launches = "", 0.0, ""
-            exe, log = b.build(name, kpath, src, omp, warm, exact=True, nofma=nofma)
+            exe, log = b.build(name, kpath, src, omp, warm, exact=True, ieee=ieee)
             if exe:
                 env = b.env(omp)
                 if omp:
@@ -236,12 +237,12 @@ def main():
                 if rc != 0:
                     check = "timeout" if rc == -1 else f"exit {rc}"
                 elif name == base:
-                    ref[nofma] = dump
-                elif nofma in ref:
-                    check, err = compare(ref[nofma], dump)
+                    ref[ieee] = dump
+                elif ieee in ref:
+                    check, err = compare(ref[ieee], dump)
             if (k, name) in done:
                 continue
-            exe, log = b.build(name, kpath, src, omp, warm, exact=False, nofma=nofma)
+            exe, log = b.build(name, kpath, src, omp, warm, exact=False, ieee=ieee)
             if not exe:
                 w.writerow(dict(row, status="build-failed", detail=log[:200]))
                 out.flush()

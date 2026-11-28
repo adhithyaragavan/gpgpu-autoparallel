@@ -480,7 +480,10 @@ def make_p05(env, kernels):
     os.makedirs(out, exist_ok=True)
     for kp in kernels:
         name = os.path.splitext(os.path.basename(kp))[0]
-        subprocess.run([env.args.p05tool, "-rewrite", "-policy", "all-cpu", "-o",
+        # -cpu-branches=off: candidates may only insert #pragma omp lines
+        # (extract_pragmas), and --strip-if needs the guards in if(parallel:).
+        subprocess.run([env.args.p05tool, "-rewrite", "-policy", "all-cpu",
+                        "-cpu-branches=off", "-o",
                         os.path.join(out, name + ".0.c"), os.path.join(env.pb, kp)]
                        + p05_cmd(env, kp), capture_output=True, check=True)
         p05_verdicts(env, kp)

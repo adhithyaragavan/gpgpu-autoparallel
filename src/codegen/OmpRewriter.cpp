@@ -5,6 +5,7 @@
 #include "clang/Basic/SourceManager.h"
 #include "clang/Lex/Lexer.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/Support/CommandLine.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <algorithm>
@@ -88,16 +89,42 @@ std::string buildGpuPragma(const ProfitabilityVerdict &V) {
 /// ambiguity reason as the GPU path's `target:`: `parallel for` is a combined
 /// construct whose constituent `parallel` directive is the one that accepts
 /// `if`, and an unqualified `if()` doesn't say so explicitly.
-std::string buildCpuPragma(const ProfitabilityVerdict &V) {
-  std::string Pragma = "#pragma omp parallel for";
+/// The CPU pragma's if(parallel:) condition (empty: none).
+std::string cpuCondition(const ProfitabilityVerdict &V) {
   // Phase 1.6: the run-time no-overlap check is a safety condition, so it is
   // conjoined with the cost model's guard, never replaced by it.
   std::string Cond = V.CpuGuardExpr ? *V.CpuGuardExpr : std::string();
   if (!V.AliasGuard.empty())
     Cond = Cond.empty() ? V.AliasGuard : "(" + Cond + ") && " + V.AliasGuard;
+  return Cond;
+}
+
+std::string buildCpuPragma(const ProfitabilityVerdict &V, bool WithIf = true) {
+  std::string Pragma = "#pragma omp parallel for";
+  std::string Cond = WithIf ? cpuCondition(V) : std::string();
   if (!Cond.empty())
     Pragma += " if(parallel: " + Cond + ")";
   return Pragma + V.ScalarClauses;
+}
+
+enum class CpuBranches { On, Off };
+llvm::cl::opt<CpuBranches> FlagCpuBranches(
+    "cpu-branches",
+    llvm::cl::desc("A guarded CPU loop inside another loop runs as `if (guard) "
+                   "<CPU loop> else <original loop>`: a false if(parallel:) "
+                   "still enters a serialized parallel region every time "
+                   "(Phase 3.2)"),
+    llvm::cl::values(
+        clEnumValN(CpuBranches::On, "on", "branch on the guard (default)"),
+        clEnumValN(CpuBranches::Off, "off",
+                   "the guard stays in if(parallel:) (ablation baseline)")),
+    llvm::cl::init(CpuBranches::On));
+
+/// Whether LI's CPU pragma should become a branch: it runs once per
+/// iteration of something (an enclosing loop), and it has a condition.
+bool cpuBranch(const LoopInfo &LI, const ProfitabilityVerdict &V) {
+  return FlagCpuBranches == CpuBranches::On &&
+         (LI.Depth > 0 || LI.InsideRepeatingContext) && !cpuCondition(V).empty();
 }
 
 } // namespace
@@ -163,6 +190,8 @@ void OmpRewriter::rewriteLoop(const LoopInfo &LI,
                               const ProfitabilityVerdict &V) {
   if (!V.Evaluated)
     return; // never priced at all — not this pass's loop.
+  ElsePragma.clear();
+  ElseCheck.clear();
 
   auto skip = [&](llvm::StringRef Reason) {
     Summary.Skipped.push_back("line " + std::to_string(LI.Line) + ": " +
@@ -242,6 +271,11 @@ void OmpRewriter::rewriteLoop(const LoopInfo &LI,
       // The else branch keeps the host threads: its accesses are still
       // checked apart by the CPU pragma's own AliasGuard.
       ElsePragma = V.CpuBeatsSeq ? buildCpuPragma(V) : "";
+      if (V.CpuBeatsSeq && cpuBranch(LI, V)) {
+        // `else if (guard) { CPU loop } else { loop }`, as for a CPU loop.
+        ElseCheck = cpuCondition(V);
+        ElsePragma = buildCpuPragma(V, /*WithIf=*/false);
+      }
       if (!insertPragma(LI, Pragma, &Test))
         return;
       AnnotatedRanges.push_back(LI.Loop->getSourceRange());
@@ -249,8 +283,11 @@ void OmpRewriter::rewriteLoop(const LoopInfo &LI,
           RewriteSite{LI.Loop, Pragma, LI.Line, OffloadTarget::GpuOffload});
       Summary.Branches.push_back(
           "line " + std::to_string(LI.Line) + ": if (" + Test +
-          ") the GPU loop, else the original loop" +
-          (ElsePragma.empty() ? "" : " with " + ElsePragma));
+          ") the GPU loop, else " +
+          (ElseCheck.empty() ? "" : "if (" + ElseCheck + ") ") +
+          "the original loop" +
+          (ElsePragma.empty() ? "" : " with " + ElsePragma) +
+          (ElseCheck.empty() ? "" : ", else the original loop"));
       collectDeclareTargets(LI);
       return;
     }
@@ -275,6 +312,21 @@ void OmpRewriter::rewriteLoop(const LoopInfo &LI,
       skip("profitability verdict is CPU_PARALLEL but the model's own "
           "CpuBeatsSeq is false, declined rather than emitting a pragma "
           "the cost model contradicts");
+      return;
+    }
+    if (cpuBranch(LI, V) && branchBlocker(LI).empty()) {
+      // A false if(parallel:) still enters a serialized parallel region,
+      // once per execution of the loop (gemm's inner loop on the T4: 1.2M
+      // times); a plain if around a copy costs a compare.
+      std::string Cond = cpuCondition(V);
+      std::string Pragma = buildCpuPragma(V, /*WithIf=*/false);
+      if (!insertPragma(LI, Pragma, &Cond))
+        return;
+      AnnotatedRanges.push_back(LI.Loop->getSourceRange());
+      Summary.Sites.push_back(
+          RewriteSite{LI.Loop, Pragma, LI.Line, OffloadTarget::CpuParallel});
+      Summary.Branches.push_back("line " + std::to_string(LI.Line) + ": if (" +
+                                 Cond + ") the CPU loop, else the original loop");
       return;
     }
     std::string Pragma = buildCpuPragma(V);
@@ -360,6 +412,19 @@ std::string OmpRewriter::branchBlocker(const LoopInfo &LI) const {
   for (SourceRange R : AnnotatedRanges)
     if (contains(SM, Range, R.getBegin()))
       return "a loop inside it already has a pragma";
+  // A conditional directive in the loop may be closed after it (`#ifdef`
+  // in the body, `#endif` past the loop): a copy would split it. Any
+  // directive line declines, conservatively.
+  bool Invalid = false;
+  llvm::StringRef Text = Lexer::getSourceText(
+      CharSourceRange::getTokenRange(Begin, End), SM, LO, &Invalid);
+  if (Invalid)
+    return "its text could not be read";
+  llvm::SmallVector<llvm::StringRef, 16> Lines;
+  Text.split(Lines, '\n');
+  for (llvm::StringRef Line : Lines)
+    if (Line.ltrim().starts_with("#"))
+      return "it contains a preprocessor directive, which a copy could split";
   return "";
 }
 
@@ -383,9 +448,14 @@ bool OmpRewriter::insertBranch(const LoopInfo &LI, const std::string &Check,
   // Braced as a whole: the result is one statement wherever the loop was
   // (an unbraced `if (c) for ...; else ...` keeps its else).
   std::string Open = "{ if (" + Check + ") {\n" + Indent + Pragma + "\n" + Indent;
-  std::string Close = "\n" + Indent + "} else {\n" + Indent +
-                      (ElsePragma.empty() ? "" : ElsePragma + "\n" + Indent) +
-                      Orig.str() + "\n" + Indent + "} }";
+  std::string Close =
+      ElseCheck.empty()
+          ? "\n" + Indent + "} else {\n" + Indent +
+                (ElsePragma.empty() ? "" : ElsePragma + "\n" + Indent) +
+                Orig.str() + "\n" + Indent + "} }"
+          : "\n" + Indent + "} else if (" + ElseCheck + ") {\n" + Indent +
+                ElsePragma + "\n" + Indent + Orig.str() + "\n" + Indent +
+                "} else {\n" + Indent + Orig.str() + "\n" + Indent + "} }";
   if (Rewrite.InsertTextBefore(Begin, Open) ||
       Rewrite.InsertTextAfterToken(End, Close)) {
     Summary.Skipped.push_back("line " + std::to_string(LI.Line) +
@@ -483,14 +553,21 @@ void OmpRewriter::finalize() {
   // Phase 2.5: the inspectors a guard calls (AliasAnalyzer::boundChecks),
   // `p05_all_le_<type>` / `p05_any_gt_<type>`, defined once at the top of
   // the file.
+  // Phase 3.2: a branch carries its guard in a plain if, so its text (in
+  // Summary.Branches) is scanned too.
   std::set<std::string> Helpers;
-  for (const RewriteSite &Site : Summary.Sites)
-    for (size_t At = Site.Pragma.find("p05_"); At != std::string::npos;
-         At = Site.Pragma.find("p05_", At + 1)) {
-      const size_t Paren = Site.Pragma.find('(', At);
+  auto scan = [&Helpers](const std::string &Text) {
+    for (size_t At = Text.find("p05_"); At != std::string::npos;
+         At = Text.find("p05_", At + 1)) {
+      const size_t Paren = Text.find('(', At);
       if (Paren != std::string::npos)
-        Helpers.insert(Site.Pragma.substr(At, Paren - At));
+        Helpers.insert(Text.substr(At, Paren - At));
     }
+  };
+  for (const RewriteSite &Site : Summary.Sites)
+    scan(Site.Pragma);
+  for (const std::string &B : Summary.Branches)
+    scan(B);
   std::string Defs;
   for (const std::string &H : Helpers) {
     const bool All = llvm::StringRef(H).starts_with("p05_all_le_");

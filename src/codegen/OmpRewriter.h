@@ -247,6 +247,9 @@ private:
                     const std::string &Pragma);
   /// The else branch's pragma for the loop being branched (may be empty).
   std::string ElsePragma;
+  /// When set, the else branch is `else if (ElseCheck) { ElsePragma loop }
+  /// else { loop }`: ElsePragma has no if() of its own (Phase 3.2).
+  std::string ElseCheck;
 
   void collectDeclareTargets(const LoopInfo &LI);
 };

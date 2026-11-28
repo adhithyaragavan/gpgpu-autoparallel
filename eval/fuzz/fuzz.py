@@ -651,7 +651,10 @@ def fuzz_file(seed, nfuncs, work, tool, cc, sysroot, omp, runs, stats, failures)
     omp_c = os.path.join(work, "prog.omp.c")
     if os.path.exists(omp_c):  # stale, from an earlier --keep run
         os.remove(omp_c)
-    res = run([tool, "-rewrite", "-policy", "all-cpu", prog, "-o", omp_c, "--"] + sysroot)
+    # -cpu-branches=off: the oracle reads one pragma line per loop, with its
+    # condition in if(parallel:) (check_parallel.sh runs the branch form).
+    res = run([tool, "-rewrite", "-policy", "all-cpu", "-cpu-branches=off", prog,
+               "-o", omp_c, "--"] + sysroot)
     if res.returncode != 0:
         fail("tool", f"p05tool exited {res.returncode}:\n{res.stderr[-2000:]}")
         return

@@ -10,6 +10,7 @@ NAIVE: branch line 50: if (
 NAIVE-NOT: branch line 68:
 NAIVE: branch line 90: if (
 NAIVE: branch line 147: if (
+NAIVE: branch line 183: if (n >= 1 && {{.*}}) the GPU loop, else if ({{.*}}) the original loop with #pragma omp parallel for, else the original loop
 NAIVE: skipped: line 125: GPU loop behind a run-time overlap check, but its body has a label, which a copy would define twice, degraded to the guarded CPU pragma
 RUN: FileCheck --check-prefix=CODE %s < %t.c
 CODE-LABEL: void b_add3(
@@ -38,14 +39,41 @@ GCODE-NEXT: #pragma omp target teams distribute parallel for map(from: c[0:n]) m
 GCODE: } else {
 GCODE-NEXT: #pragma omp parallel for if(parallel: (n >= {{[0-9]+}}) && (
 
-# Off: no branches; such loops stay on the host (the ablation baseline).
+# Gated defaults: b_nest's inner loop (line 183) and b_insp's box loop (226)
+# are CPU loops inside another loop, so their guards are plain ifs around a
+# copy (-cpu-branches); the outermost CPU loops keep if(parallel:), and so
+# does b_ifdef's loop (261; a #endif after the loop would split in a copy).
+# Off: if(parallel:) everywhere.
+RUN: %p05 %S/branch.c -rewrite -o %t.cpu.c -- %cflags | FileCheck --check-prefix=CPU %s
+CPU-NOT: the CPU loop
+CPU: branch line 183: if ((n >= {{[0-9]+}}) && ({{.*}})) the CPU loop, else the original loop
+CPU-NOT: the CPU loop
+CPU: branch line 226: if ((nb >= {{[0-9]+}}) && ({{.*}}p05_all_le_int(n, 0, {{.*}}, 64))) the CPU loop, else the original loop
+CPU-NOT: the CPU loop
+RUN: FileCheck --check-prefix=CPUCODE %s < %t.cpu.c
+# The inspector b_insp's guard calls is defined although no pragma names it.
+CPUCODE: p05_all_le_int(
+CPUCODE-LABEL: void b_nest(
+CPUCODE: for (int r = 0; r < m; r++)
+CPUCODE: { if ((n >= {{[0-9]+}}) && (
+CPUCODE-NEXT: #pragma omp parallel for{{$}}
+CPUCODE-NEXT: for (int i = 0; i < n; i++)
+CPUCODE-NEXT: c[i] += a[i] * r;
+CPUCODE-NEXT: } else {
+CPUCODE-NEXT: for (int i = 0; i < n; i++)
+CPUCODE-NEXT: c[i] += a[i] * r;
+CPUCODE-NEXT: } }
+RUN: %p05 %S/branch.c -cpu-branches=off -- %cflags | FileCheck --check-prefix=CPUOFF %s
+CPUOFF-NOT: branch line
+
+# Off: no GPU branches; such loops stay on the host (the ablation baseline).
 RUN: %p05 %S/branch.c -policy naive -gpu-alias-checks=off -rewrite -o %t.off.c -- %cflags | FileCheck --check-prefix=OFF %s
-OFF-NOT: branch line
+OFF-NOT: the GPU loop
 OFF: GPU offload declined: pointer disjointness is only checked at run time
-OFF-NOT: branch line
+OFF-NOT: the GPU loop
 
 # -maps=bound: no sections to test, so no branch (review: base[0:n] maps of
 # b == a + 1 aborted).
 RUN: %p05 %S/branch.c -policy naive -maps=bound -rewrite -o %t.bound.c -- %cflags | FileCheck --check-prefix=BOUND %s
-BOUND-NOT: branch line
+BOUND-NOT: the GPU loop
 BOUND-NOT: GPU behind
