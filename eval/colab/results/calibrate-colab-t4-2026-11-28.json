@@ -1,0 +1,21 @@
+{
+  "name": "colab-t4",
+  "measured": "2026-11-28",
+  "host": "x86_64 x86_64, 2 OpenMP threads",
+  "compiler": "nvc 26.11-0 64-bit target on x86-64 Linux -tp skylake-avx512 (-O2 -mp=gpu -gpu=cc75)",
+  "cpu": {"throughput_gflops": 10.925, "cores": 1, "dram_bandwidth_gbs": 13.446,
+          "single_core_dram_share": 0.945, "thread_start_us": 19.594, "runtime_init_us": 69.801},
+  "gpu": {"kernel_launch_us": 9.675, "pcie_bandwidth_gbs": 4.728, "throughput_gflops": 178.347,
+          "bandwidth_gbs": 258.269, "init_us": 192644.499},
+  "device": "Tesla T4, 580.82.07",
+  "notes": "colab Tesla T4, host 2 vCPU; nvc -mp=gpu. A re-measurement of Colab (the user ran calibrate.ipynb on Colab, not Kaggle); kept as a record, not used as a -machine file.",
+  "raw": {"threads": 2.0, "stream_1thread_gbs": 12.710414, "stream_all_gbs": 13.445798,
+          "ops_1thread_gops": 10.924767, "ops_all_gops": 9.418087, "empty_parallel_for_us": 19.593987,
+          "first_parallel_us": [89.395, 87.795, 90.651, 126.694, 85.718, 87.699, 110.653],
+          "first_parallel_if0_us": [2.742, 2.387, 2.282, 2.176, 2.207, 2.42, 2.336],
+          "empty_kernel_us": 9.675325,
+          "first_target_us": [228503.257, 203685.552, 206412.63, 192654.174, 190275.445, 176215.15, 158738.381],
+          "map_to_fit": {"latency_us": 0.0, "gbs": 4.787585472400996},
+          "map_from_fit": {"latency_us": 12.328403508770862, "gbs": 4.6703457408390845},
+          "device_stream_gbs": 258.269454, "device_ops_gops": 178.34655}
+}

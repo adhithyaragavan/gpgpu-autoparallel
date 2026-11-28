@@ -7,7 +7,7 @@
     python3 eval/polybench/make_gpu_notebook.py --dataset MINI_DATASET --dump-to DIR
                        # rewrites only, into DIR/{gated,naive} (smoke tests)
 
-Runs p05tool on every kernel with -machine machine/colab-t4.json, gated and
+Runs p05tool on every kernel with -machine (default machine/kaggle-t4.json), gated and
 -policy naive, and embeds the rewrites and gpu_run.py in the notebook (the
 repository is private, so the notebook can't clone it; it fetches PolyBench
 itself at the commit fetch_polybench.sh pins). Run this again after
@@ -30,7 +30,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(HERE))
 PB = os.path.join(REPO, "eval", "llm_baseline", "work", "polybench")
 TOOL = os.path.join(REPO, "build", "p05tool")
-MACHINE = os.path.join(REPO, "machine", "colab-t4.json")
+MACHINE = os.path.join(REPO, "machine", "kaggle-t4.json")
 OUT = os.path.join(REPO, "eval", "colab", "polybench_t4.ipynb")
 FETCH = os.path.join(REPO, "eval", "llm_baseline", "fetch_polybench.sh")
 
@@ -60,7 +60,7 @@ def sdk():
     return ["-isysroot", r.stdout.strip()] if r.returncode == 0 else []
 
 
-def rewrites(dataset):
+def rewrites(dataset, machine):
     """{"gated/k.c": text, "naive/k.c": text} for every kernel."""
     with open(os.path.join(PB, "utilities", "benchmark_list")) as f:
         kpaths = [l.strip()[2:] for l in f if l.strip()]
@@ -71,7 +71,7 @@ def rewrites(dataset):
         for policy in ("gated", "naive"):
             out = os.path.join(tmp, policy, os.path.basename(kpath))
             os.makedirs(os.path.dirname(out), exist_ok=True)
-            r = subprocess.run([TOOL, "-rewrite", "-o", out, "-machine=" + MACHINE,
+            r = subprocess.run([TOOL, "-rewrite", "-o", out, "-machine=" + machine,
                                 "-policy", policy, os.path.join(PB, kpath), "--",
                                 "-D" + dataset, "-I", os.path.join(PB, os.path.dirname(kpath)),
                                 "-I", os.path.join(PB, "utilities")] + sdk(),
@@ -87,6 +87,8 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--dataset", default="LARGE_DATASET")
     ap.add_argument("--dump-to", help="write the rewrites here instead of a notebook")
+    ap.add_argument("--machine", default=MACHINE,
+                    help="the -machine file: the host the notebook will run on")
     args = ap.parse_args()
     if not os.path.isdir(PB):
         sys.exit("run eval/llm_baseline/fetch_polybench.sh first")
@@ -95,7 +97,9 @@ def main():
     commit = re.search(r"^COMMIT=(\S+)", fetch, re.M).group(1)
     tool_rev = subprocess.run(["git", "-C", REPO, "rev-parse", "--short", "HEAD"],
                               capture_output=True, text=True).stdout.strip()
-    files = rewrites(args.dataset)
+    files = rewrites(args.dataset, args.machine)
+    model = json.load(open(args.machine))
+    mname, mthreads = model.get("name", "?"), int(model.get("raw", {}).get("threads", 0))
     if args.dump_to:
         for p, text in files.items():
             os.makedirs(os.path.dirname(os.path.join(args.dump_to, p)), exist_ok=True)
@@ -118,6 +122,8 @@ def main():
         cell("markdown", f"""# P05 on PolyBench with a T4 GPU (Phase 3.2)
 
 Runs on **Colab** or **Kaggle** (it works in `/content` or `/kaggle/working`, whichever exists).
+P05's choices were made for the host in `machine/{mname}.json` ({mthreads} threads): run it
+there. The second cell checks the thread count and says so if it differs.
 
 - **Colab:** Runtime → Change runtime type → **T4 GPU**, then Runtime → **Run all**. Keep the
   tab open; if the session disconnects, reconnect and Run all again: the run resumes from the
@@ -131,7 +137,7 @@ Installing the NVIDIA HPC SDK takes about 10 minutes; the benchmark run takes lo
 kernels, 6 variants, 3 runs each at the LARGE size, plus two strict-IEEE builds of ludcmp and lu).
 
 Variants per kernel: `seq` (nvc -O3, no OpenMP), `seq-mp` (the same source with the OpenMP
-flags: what `-mp=gpu` alone does), `p05` (P05's own choices with the T4
+flags: what `-mp=gpu` alone does), `p05` (P05's own choices with the `{mname}`
 machine model: GPU, host threads or sequential per loop), `p05-naive` (every loop P05 can
 offload goes to the GPU), and both again as `-warm` (the device started before `main`, so
 the timed kernel doesn't pay the ~0.16 s start-up). For ludcmp and lu, `seq-ieee` and
@@ -150,7 +156,11 @@ notebook.
         cell("code", """%%bash
 nvidia-smi --query-gpu=name,compute_cap,driver_version,memory.total --format=csv
 nproc; grep -m1 'model name' /proc/cpuinfo
-"""),
+if [ "$(nproc)" != "THREADS" ]; then
+  echo "WARNING: this host has $(nproc) threads, but P05's rewrites were made for MNAME (THREADS)."
+  echo "Its CPU choices may not fit this host: say so when you send the CSV."
+fi
+""".replace("THREADS", str(mthreads)).replace("MNAME", mname)),
         cell("code", """%%bash
 # NVIDIA HPC SDK (nvc -mp=gpu): the compiler the GPU evaluation uses (NOTES.md, 2026-10-02).
 set -e
@@ -172,7 +182,7 @@ cd "$P05_ROOT"
 git -C polybench checkout -q {commit}
 test "$(git -C polybench rev-parse HEAD)" = {commit} && echo "polybench at {commit}"
 """),
-        cell("code", "# P05's rewrites (made with -machine machine/colab-t4.json), packed by\n"
+        cell("code", f"# P05's rewrites (made with -machine machine/{mname}.json), packed by\n"
                      "# make_gpu_notebook.py (gzip + base64: one long line freezes the editor).\n"
                      "import base64, gzip, json, os\nROOT = os.environ['P05_ROOT']\n"
                      + unblob("PACKED", json.dumps(files)) + "FILES = json.loads(PACKED)\n"

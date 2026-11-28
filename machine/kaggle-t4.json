@@ -1,0 +1,153 @@
+{
+  "name": "kaggle-t4",
+  "measured": "2026-11-28",
+  "host": "x86_64 x86_64, 4 OpenMP threads",
+  "compiler": "nvc 26.11-0 64-bit target on x86-64 Linux -tp skylake-avx512 (-O2 -mp=gpu -gpu=cc75)",
+  "cpu": {
+    "throughput_gflops": 13.356,
+    "cores": 3,
+    "dram_bandwidth_gbs": 25.999,
+    "single_core_dram_share": 0.483,
+    "thread_start_us": 1.984,
+    "runtime_init_us": 300.811
+  },
+  "gpu": {
+    "kernel_launch_us": 9.747,
+    "pcie_bandwidth_gbs": 4.636,
+    "throughput_gflops": 145.811,
+    "bandwidth_gbs": 261.905,
+    "init_us": 295385.181
+  },
+  "device": "Tesla T4, 580.178.04\nTesla T4, 580.178.04",
+  "notes": "kaggle Tesla T4, host 4 vCPU; nvc -mp=gpu",
+  "raw": {
+    "threads": 4.0,
+    "stream_1thread_gbs": 12.563541,
+    "stream_all_gbs": 25.998831,
+    "ops_1thread_gops": 13.356032,
+    "ops_all_gops": 34.805742,
+    "empty_parallel_for_us": 1.983671,
+    "first_parallel_us": [
+      342.627,
+      293.513,
+      271.463,
+      312.273,
+      302.795,
+      279.738,
+      309.353
+    ],
+    "first_parallel_if0_us": [
+      2.429,
+      1.74,
+      1.726,
+      1.787,
+      1.465,
+      1.618,
+      1.668
+    ],
+    "empty_kernel_us": 9.746559,
+    "first_target_us": [
+      341528.169,
+      352152.646,
+      295458.493,
+      292305.576,
+      295108.855,
+      291827.554,
+      295394.928
+    ],
+    "map_to_us": [
+      [
+        1024,
+        7.725
+      ],
+      [
+        4096,
+        8.052
+      ],
+      [
+        16384,
+        11.626
+      ],
+      [
+        65536,
+        27.23
+      ],
+      [
+        262144,
+        76.434
+      ],
+      [
+        1048576,
+        285.124
+      ],
+      [
+        4194304,
+        925.093
+      ],
+      [
+        16777216,
+        3255.344
+      ],
+      [
+        67108864,
+        14099.028
+      ],
+      [
+        268435456,
+        59600.813
+      ]
+    ],
+    "map_from_us": [
+      [
+        1024,
+        11.162
+      ],
+      [
+        4096,
+        11.538
+      ],
+      [
+        16384,
+        14.972
+      ],
+      [
+        65536,
+        27.277
+      ],
+      [
+        262144,
+        81.893
+      ],
+      [
+        1048576,
+        306.211
+      ],
+      [
+        4194304,
+        965.469
+      ],
+      [
+        16777216,
+        3544.36
+      ],
+      [
+        67108864,
+        14034.483
+      ],
+      [
+        268435456,
+        56150.907
+      ]
+    ],
+    "map_to_fit": {
+      "latency_us": 0.0,
+      "gbs": 4.493642625804254
+    },
+    "map_from_fit": {
+      "latency_us": 60.78391666666357,
+      "gbs": 4.786831769967791
+    },
+    "device_stream_gbs": 261.904603,
+    "device_ops_gops": 145.811145
+  }
+}

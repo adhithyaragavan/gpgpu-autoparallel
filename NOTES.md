@@ -3985,3 +3985,15 @@ User's choices after run 3 (1-3 of the proposal), and run 1 was Kaggle too (2 ho
 - **ludcmp:** the no-FMA variants became `seq-ieee` / `p05-ieee` (`-Kieee -Mnofma` for nvc).
 - **Calibration on Kaggle:** `eval/colab/calibrate.ipynb` runs on Colab or Kaggle and names the
   file after the platform (`kaggle-t4.json`); it also prints lscpu's cores and threads.
+
+## 2026-11-28 — Phase 3.2: `machine/kaggle-t4.json`
+
+The user ran `calibrate.ipynb` first on Colab (kept as `eval/colab/results/calibrate-colab-t4-
+2026-11-28.json`, not a -machine file: 2 threads slower than 1, 10.9 vs 9.4 GFLOP/s; an empty
+parallel for 19.6 us, was 0.5), then on Kaggle: `machine/kaggle-t4.json`, 4 threads, cores 3
+(34.8 vs 13.4 GFLOP/s), DRAM 26 GB/s (13 on one thread), thread start 2.0 us, runtime init
+301 us; GPU launch 9.7 us, PCIe 4.6 GB/s, 146 GFLOP/s (Colab: 194), 262 GB/s, init 0.30 s.
+The PolyBench notebook now takes `--machine` (default kaggle-t4) and its host cell warns when
+`nproc` differs from the model's thread count (Kaggle gave 2 threads in run 1, 4 in runs 2-3).
+Gated LARGE rewrites: 73 GPU and 73 CPU pragmas (with colab-t4: 80 GPU, few CPU). MINI smoke
+in Docker (p05, naive, ieee): correct.
