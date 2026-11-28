@@ -3935,3 +3935,25 @@ within 1e-9.
   nvc, `-ffp-contract=off` otherwise), p05-nofma checked against seq-nofma. Host code only
   (device FMA is `-gpu=nofma`), enough while gated ludcmp/lu launch no kernels. Docker host
   offload: all 32 runtime checks and the PolyBench MINI smoke (incl. the nofma variants) clean.
+
+## 2026-11-28 — Phase 3.2 third T4 run (52c2df2): run 2's gains were nvc's host fallback
+
+`eval/polybench/results/t4-large-3.csv` (Kaggle T4, 4 host threads, as run 2). Gated p05 0.93x
+(run 2: 1.12x), warm 0.97x, naive 0.51x, seq-mp 0.96x. GPU launches (gated): 2mm and 3mm only.
+
+- **Why gated fell:** the kernels that lost their run-2 gain (correlation 1.56 -> 0.83, covariance
+  1.68 -> 0.86, heat-3d 2.18 -> 1.01, jacobi-2d, fdtd-2d, doitgen, mvt, gemver, deriche, ...) have
+  no CPU pragma at all (correlation, covariance, heat-3d, jacobi-2d, mvt: 0). Their GPU loops'
+  guards are false at LARGE, and in run 2 a false `if(target:)` ran the teams region on the host,
+  which nvc runs on all 4 threads: an accidental CPU-parallel version. Now the guard is in the
+  branch test and the else is the plain loop, because `machine/colab-t4.json` says the host has
+  1 core (Colab's 2 vCPUs), so host threads never beat sequential in the model. The fix was right;
+  the model's host is wrong for Kaggle (4 threads; run 2 measured 2x on these loops).
+- **gemm 0.41x (run 2: 0.10x):** the else branch's `parallel for if(parallel: nj >= 524288)` is
+  false and runs serialized 1.2M times (same as run 1's 0.42x, before any branch).
+- **ludcmp is not FMA:** p05-nofma differs from seq-nofma by 8.83e-9; lu (same two target loops,
+  same init code) is exact with and without FMA. ludcmp's only extra pragma is the CPU loop
+  `x[i] = 0; y[i] = 0; b[i] = (i+1)/fn/2.0 + 4;` (its guard is false, so it runs serialized but
+  outlined). Suspect: nvc's default `-Knoieee` (faster, not correctly rounded division in
+  vectorized code) compiled differently in the outlined loop; the division feeds b, which LU
+  without pivoting amplifies. Unverified; next check `-Kieee` builds.
