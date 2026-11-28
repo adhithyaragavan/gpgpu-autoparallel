@@ -3886,3 +3886,32 @@ within 1e-9.
 - Nits, not changed: a written Unproven pair is tested twice (AliasGuard and SectionApart);
   `__LINE__`/`__COUNTER__` differ in the copy; the `p05_` test also matches user names (only more
   conservative).
+
+## 2026-11-28 — Phase 3.2 second T4 run (after `-gpu-alias-checks`, 709f553)
+
+`eval/polybench/results/t4-large-2.csv`: Kaggle T4, nvc -mp=gpu, LARGE, min of 3. The host had
+4 threads this time (2 in the first run), so CPU gains are partly the extra cores.
+
+| variant | geomean vs seq | first run |
+|---|---|---|
+| seq-mp | 0.96x | (new) |
+| p05 (gated) | 1.12x (15 faster, 9 slower) | 0.83x |
+| p05-warm | 1.16x | 0.85x |
+| p05-naive | 0.50x (27; syrk, syr2k, gramschmidt time out at 600 s) | 0.74x |
+| best of seq/p05/naive per kernel | 1.42x | |
+
+- **gemm 0.10x (gated):** the inner `j` loop's branch takes the GPU side whenever the sections
+  are apart, but its `if(target: nj >= 16M)` is false, so the target region falls back to host
+  teams 1.2M times. Fix: put the target condition in the branch test, so an unprofitable GPU loop
+  runs the else (CPU pragma or plain loop).
+- **Gated almost never picks the GPU:** launches only in 2mm and 3mm. Where naive launches few
+  kernels it beats gated: covariance 2.18x vs 1.68x, correlation 1.74 vs 1.56, mvt 2.65 vs 1.91,
+  2mm 2.90 vs 2.52, symm 1.63 vs 1.00, trmm 1.79 vs 1.10. `colab-t4.json` thresholds are far
+  above LARGE (e.g. `m*n >= 1G` vs ~3M), and the host part models Colab's 2 vCPUs.
+- **Millisecond kernels lose to OpenMP start-up:** jacobi-1d 0.41x, durbin 0.34x, atax 0.75x;
+  seq-mp alone is 0.75x on jacobi-1d. The Day 20 cold-start term is still missing.
+- **ludcmp differs by 2.42e-9 (gated) / 5.42e-9 (naive) while seq-mp is exact:** the difference
+  comes from P05's rewrite on the host (0 launches), not from `-mp`; it was already there in the
+  first run (no branch), and the M4/clang run was exact. Suspected: nvc contracts FMAs
+  differently in the outlined parallel loop, amplified by LU without pivoting. Unverified; next
+  run adds a `-Mnofma` check.
